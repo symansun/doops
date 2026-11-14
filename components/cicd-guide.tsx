@@ -96,7 +96,7 @@ doops -session "$DOOPS_SESSION" ask \\
   --target <ENVIRONMENT_TARGET> \\
   --apply \\
   --credential "$DOOPS_CREDENTIAL" \\
-  --msg "target scope: <TARGET_SCOPE>; service scope: <SERVICES>; release: <RELEASE>; namespace: <NAMESPACE>; chart: <CHART_REFERENCE>; chart digest: sha256:<CHART_DIGEST>; image: <IMAGE_REPOSITORY>@sha256:<IMAGE_DIGEST>; reason: <REASON>; acceptance: <ROLLOUT, FINAL_DEPLOYMENT_SPEC_STATUS, HEALTH_CHECK, FUNCTIONAL_PATH>。"`,
+        --msg "target: <TARGET_SCOPE>; release: <RELEASE>; namespace: <NAMESPACE>; chart: <CHART_REFERENCE>; optional image/value overrides: <IMAGE_OR_VALUES>; reason: <REASON>; acceptance: <OPTIONAL_CHECKS>。"`,
       }
     }
     if (provider === "github") {
@@ -138,7 +138,7 @@ jobs:
             --target <ENVIRONMENT_TARGET> \\
             --apply \\
             --credential "$DOOPS_CREDENTIAL" \\
-            --msg "target scope: <TARGET_SCOPE>; service scope: <SERVICES>; release: <RELEASE>; namespace: <NAMESPACE>; chart: <CHART_REFERENCE>; chart digest: sha256:<CHART_DIGEST>; image: $IMAGE_REF; reason: <REASON>; acceptance: <ROLLOUT, FINAL_DEPLOYMENT_SPEC_STATUS, HEALTH_CHECK, FUNCTIONAL_PATH>。"`,
+            --msg "target: <TARGET_SCOPE>; release: <RELEASE>; namespace: <NAMESPACE>; chart: <CHART_REFERENCE>; optional image: $IMAGE_REF; reason: <REASON>; optional acceptance: <OPTIONAL_CHECKS>。"`,
       }
     }
     return {
@@ -169,7 +169,7 @@ jobs:
         --target <ENVIRONMENT_TARGET> \\
         --apply \\
         --credential "$DOOPS_CREDENTIAL" \\
-        --msg "target scope: <TARGET_SCOPE>; service scope: <SERVICES>; release: <RELEASE>; namespace: <NAMESPACE>; chart: <CHART_REFERENCE>; chart digest: sha256:<CHART_DIGEST>; image: $IMAGE_REF; reason: <REASON>; acceptance: <ROLLOUT, FINAL_DEPLOYMENT_SPEC_STATUS, HEALTH_CHECK, FUNCTIONAL_PATH>。"
+        --msg "target: <TARGET_SCOPE>; release: <RELEASE>; namespace: <NAMESPACE>; chart: <CHART_REFERENCE>; optional image: $IMAGE_REF; reason: <REASON>; optional acceptance: <OPTIONAL_CHECKS>。"
   only:
     - main`,
     }
@@ -185,7 +185,7 @@ jobs:
         </div>
         <h1 className="text-2xl font-semibold text-balance">将 DoOps 接入 CI/CD</h1>
         <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-          流水线通过明确的自然语言任务调用 DoOps。任务直接说明 target、服务范围、不可变镜像 digest、变更原因和验收条件。
+          流水线通过明确的自然语言任务调用 DoOps。任务至少说明 target、release、namespace 和 Chart；镜像、原因和验收按任务需要补充。
         </p>
       </div>
 
@@ -275,14 +275,13 @@ jobs:
           3. 在流水线中调用
         </h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          选择你的平台，复制下面的示例。发布前先确认不可变镜像 digest 和验收条件，再通过
+          选择你的平台，复制下面的示例。需要镜像或业务验收时再补充相应信息，然后通过
           <code className="mx-1 rounded bg-muted px-1">--apply</code>
           声明本次是变更任务。
         </p>
         <p className="mb-3 text-xs text-muted-foreground">
-          必须先核验成功的 CI 构建与源提交、镜像 digest 的对应关系。在线 target 发布现有 Helm release
-          不要求本机 kubeconfig、工作区干净或先同步业务源码；Chart 填写明确的 HTTPS `.tgz` 引用。
-          Helm 镜像参数使用 image.repository 和 image.digest，不混用 image.tag；Secrets 不进入命令参数或发布描述。
+          在线 target 发布现有 Helm release 不要求本机 kubeconfig、工作区干净或先同步业务源码。
+          Chart、values 和镜像参数由目标 Helm 与任务决定；Secrets 不进入命令参数或发布描述。
         </p>
 
         {/* 平台切换 */}
@@ -297,11 +296,8 @@ jobs:
         <CodeBlock code={snippet.code} lang={snippet.lang} />
 
         <p className="mt-2 text-xs text-muted-foreground text-pretty leading-relaxed">
-          <code className="rounded bg-muted px-1">ENVIRONMENT_TARGET</code>、
-          <code className="rounded bg-muted px-1">CLUSTER</code> 和
-          <code className="rounded bg-muted px-1">INSTANCE</code> 必须由发布任务明确给出。
-          target scope、服务范围、release、namespace、chart 及其 digest、不可变镜像 digest、变更原因和验收条件同样必须写入任务；
-          发布依据是已验证的 CI 产物，不要求把源码同步到目标主机，也不从旧声明文件推断。
+          target、release、namespace 和 chart 必须由发布任务明确给出；镜像、变更原因和验收条件按任务需要写入。
+          CI 产物可作为任务事实，不会成为所有 Helm Chart 的全局发布门禁。
           没有凭据时删除示例中的 <code className="rounded bg-muted px-1">--credential</code> 行。
         </p>
       </section>

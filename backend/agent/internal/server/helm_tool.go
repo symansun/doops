@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -18,55 +18,60 @@ import (
 	"github.com/user/doops/agent/api"
 )
 
-var helmValueKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
-var helmImageDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-var helmImageTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
-var helmRegistryHostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$`)
-var helmRepositoryComponentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
-
 const (
 	helmAssetSourceRemote    = "remote"
 	helmAssetSourceWorkspace = "workspace"
 )
 
 type helmCommand struct {
-	args          []string
-	cwd           string
-	release       string
-	namespace     string
-	expectedImage string
-	mutationID    string
-	revision      int
-	// rolloutTimeout bounds how long verification waits for workloads to roll out.
-	rolloutTimeout time.Duration
+	args       []string
+	cwd        string
+	release    string
+	namespace  string
+	mutationID string
+	revision   int
 }
+
+type helmToolFailure struct {
+	cause            error
+	phase            string
+	executionStarted bool
+	outcomeUnknown   bool
+}
+
+func (e *helmToolFailure) Error() string { return e.cause.Error() }
+func (e *helmToolFailure) Unwrap() error { return e.cause }
 
 func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationSender) (string, error) {
 	var params api.HelmParams
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&params); err != nil {
-		return "", fmt.Errorf("invalid helm request: %w", err)
+		return "", &helmToolFailure{cause: fmt.Errorf("invalid helm request: %w", err), phase: "validation"}
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return "", fmt.Errorf("invalid helm request")
+		return "", &helmToolFailure{cause: fmt.Errorf("invalid helm request"), phase: "validation"}
 	}
 
 	command, err := buildHelmCommand(params)
 	if err != nil {
-		return "", err
+		return "", &helmToolFailure{cause: err, phase: "validation"}
 	}
 	// The call must end before doagent's MCP tool timeout; see helmToolDeadline.
 	ctx, cancel := context.WithTimeout(ctx, helmToolDeadline)
 	defer cancel()
 	cleanup, err := prepareManagedHelmChart(ctx, params, &command)
 	if err != nil {
-		return "", err
+		return "", &helmToolFailure{cause: err, phase: "preparation"}
 	}
 	defer cleanup()
+	if err := ctx.Err(); err != nil {
+		return "", &helmToolFailure{cause: err, phase: "preparation"}
+	}
 	verification, err := runHelmCommand(ctx, command, push)
 	if err != nil {
-		return "", err
+		return "", &helmToolFailure{cause: err, phase: "execution", executionStarted: true,
+			outcomeUnknown: ctx.Err() != nil || errors.Is(err, errExecutionOutcomeUnknown)}
 	}
 	if verification == "" {
 		return "Helm operation complete.", nil
@@ -81,7 +86,6 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	params.AssetSource = strings.TrimSpace(params.AssetSource)
 	params.Chart = strings.TrimSpace(params.Chart)
 	params.Namespace = strings.TrimSpace(params.Namespace)
-	params.ExpectedImage = strings.TrimSpace(params.ExpectedImage)
 	params.Timeout = strings.TrimSpace(params.Timeout)
 	if params.AssetSource == "" {
 		params.AssetSource = helmAssetSourceRemote
@@ -92,9 +96,6 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 
 	if err := validateSession(params.SessionID); err != nil {
 		return helmCommand{}, err
-	}
-	if !params.Confirm {
-		return helmCommand{}, fmt.Errorf("confirm=true is required for helm mutation %q", params.Operation)
 	}
 	workspace := workspaceRoot()
 	workspaceInfo, err := os.Stat(workspace)
@@ -107,17 +108,12 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	if !k8sNamePattern.MatchString(params.Namespace) {
 		return helmCommand{}, fmt.Errorf("invalid kubernetes namespace")
 	}
-	if params.Timeout != "" && !k8sTimeoutPattern.MatchString(params.Timeout) {
-		return helmCommand{}, fmt.Errorf("invalid helm timeout")
-	}
 	if params.Timeout != "" {
-		// Preflight, the wait and the verification share one call budget, so a
-		// longer wait would be cut off mid-upgrade instead of failing cleanly.
-		if parsed, err := time.ParseDuration(params.Timeout); err != nil || parsed > maxHelmWaitTimeout {
-			return helmCommand{}, fmt.Errorf("helm timeout must be at most %s", maxHelmWaitTimeout)
+		parsed, err := time.ParseDuration(params.Timeout)
+		if err != nil || parsed <= 0 || parsed > maxHelmWaitTimeout {
+			return helmCommand{}, fmt.Errorf("helm timeout must be a positive duration at most %s", maxHelmWaitTimeout)
 		}
 	}
-
 	common := []string{"--namespace", params.Namespace, "--wait"}
 	if params.Timeout != "" {
 		common = append(common, "--timeout", params.Timeout)
@@ -125,13 +121,6 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 
 	switch params.Operation {
 	case "upgrade-install":
-		var expectedImage string
-		if params.ExpectedImage != "" {
-			expectedImage, err = validateExpectedHelmImage(params.ExpectedImage)
-			if err != nil {
-				return helmCommand{}, err
-			}
-		}
 		var chart string
 		var values []string
 		if params.AssetSource == helmAssetSourceWorkspace {
@@ -152,7 +141,7 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			return helmCommand{}, err
 		}
 		mutationID := fmt.Sprintf("doops:%s:%d", params.SessionID, time.Now().UnixNano())
-		args := []string{"upgrade", params.Release, chart, "--install", "--reset-values", "--description", mutationID}
+		args := []string{"upgrade", params.Release, chart, "--install", "--description", mutationID}
 		// --atomic rolls a failed upgrade back automatically. It is the caller's
 		// choice: by default a failed revision stays in place so the operator can
 		// inspect it and decide whether and where to roll back.
@@ -176,25 +165,14 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 		sort.Strings(keys)
 		for _, key := range keys {
 			value := params.SetStrings[key]
-			if !helmValueKeyPattern.MatchString(key) {
-				return helmCommand{}, fmt.Errorf("invalid helm set_strings key")
-			}
-			if credentialSecretLikeKey(key) || credentialScalarContainsInlineMaterial(value) ||
-				strings.ContainsAny(value, "\r\n") {
+			if credentialSecretLikeKey(key) || credentialScalarContainsInlineMaterial(value) {
 				return helmCommand{}, fmt.Errorf("helm set_strings contains forbidden credential material")
 			}
 			args = append(args, "--set-string", key+"="+escapeHelmSetString(value))
 		}
-		rolloutTimeout := defaultHelmRolloutTimeout
-		if params.Timeout != "" {
-			if parsed, err := time.ParseDuration(params.Timeout); err == nil {
-				rolloutTimeout = parsed
-			}
-		}
 		return helmCommand{
 			args: append(args, common...), cwd: workspace,
-			release: params.Release, namespace: params.Namespace, expectedImage: expectedImage, mutationID: mutationID,
-			rolloutTimeout: rolloutTimeout,
+			release: params.Release, namespace: params.Namespace, mutationID: mutationID,
 		}, nil
 	case "rollback":
 		if params.AssetSource == helmAssetSourceWorkspace {
@@ -204,13 +182,13 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			return helmCommand{}, fmt.Errorf("positive revision is required for helm rollback")
 		}
 		args := []string{"rollback", params.Release, fmt.Sprintf("%d", params.Revision)}
-		return helmCommand{args: append(args, common...), cwd: workspace}, nil
+		return helmCommand{args: append(args, common...), cwd: workspace, release: params.Release, namespace: params.Namespace}, nil
 	case "uninstall":
 		if params.Revision != 0 {
 			return helmCommand{}, fmt.Errorf("revision is not valid for helm uninstall")
 		}
 		args := []string{"uninstall", params.Release}
-		return helmCommand{args: append(args, common...), cwd: workspace}, nil
+		return helmCommand{args: append(args, common...), cwd: workspace, release: params.Release, namespace: params.Namespace}, nil
 	default:
 		return helmCommand{}, fmt.Errorf("unsupported helm operation %q", params.Operation)
 	}
@@ -326,27 +304,6 @@ func fetchHelmValues(ctx context.Context, reference string) ([]byte, error) {
 		return nil, fmt.Errorf("helm_values_invalid")
 	}
 	return values, nil
-}
-
-func validateExpectedHelmImage(value string) (string, error) {
-	if value == "" || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n") {
-		return "", fmt.Errorf("expected_image must be a complete repository:tag or repository@sha256:<digest>")
-	}
-	if at := strings.LastIndexByte(value, '@'); at > 0 {
-		repository := value[:at]
-		digest := value[at+1:]
-		if strings.Contains(digest, "@") || !validHelmImageRepository(repository) || !helmImageDigestPattern.MatchString(digest) {
-			return "", fmt.Errorf("invalid expected_image: expected repository:tag or repository@sha256:<digest>")
-		}
-		return value, nil
-	}
-	lastSlash := strings.LastIndexByte(value, '/')
-	lastColon := strings.LastIndexByte(value, ':')
-	if lastColon <= lastSlash || !helmImageTagPattern.MatchString(value[lastColon+1:]) ||
-		!validHelmImageRepository(value[:lastColon]) {
-		return "", fmt.Errorf("invalid expected_image: expected repository:tag or repository@sha256:<digest>")
-	}
-	return value, nil
 }
 
 func resolveWorkspaceHelmAssets(params api.HelmParams) (string, string, []string, error) {
@@ -498,29 +455,6 @@ func isRemoteHelmReference(value string, schemes ...string) bool {
 		}
 	}
 	return false
-}
-
-func validHelmImageRepository(value string) bool {
-	if value == "" || strings.Contains(value, "://") || strings.Contains(value, "@") ||
-		strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") ||
-		strings.Contains(value, "//") {
-		return false
-	}
-	parts := strings.Split(value, "/")
-	pathStart := 0
-	if len(parts) > 1 &&
-		(strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") || parts[0] == "localhost") {
-		if !helmRegistryHostPattern.MatchString(parts[0]) {
-			return false
-		}
-		pathStart = 1
-	}
-	for _, part := range parts[pathStart:] {
-		if !helmRepositoryComponentPattern.MatchString(part) {
-			return false
-		}
-	}
-	return pathStart < len(parts)
 }
 
 func escapeHelmSetString(value string) string {

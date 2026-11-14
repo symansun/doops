@@ -2,291 +2,275 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/user/doops/agent/api"
 )
 
-const (
-	helmTestDeployment = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n        - image: registry.example/api:1\n"
-	helmTestHookJob    = "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: registry-sync\n  annotations:\n    helm.sh/hook: pre-upgrade\nspec:\n  template:\n    spec:\n      containers:\n        - image: registry.example/sync:1\n"
-)
-
-// writeFakeHelm installs a helm that answers the dry-run with dryRunJSON (or
-// fails with dryRunStderr), and the real run with mutationStderr when set.
-func writeFakeHelm(t *testing.T, dryRunJSON, dryRunStderr, mutationStderr string) (string, string) {
+// writeFakeHelm installs a minimal Helm replacement for command construction
+// tests. Callers that execute it provide the output and status through env.
+func writeFakeHelm(t *testing.T, mutationJSON, _, mutationStderr string) (string, string) {
 	t.Helper()
 	root := t.TempDir()
 	marker := filepath.Join(root, "mutation-ran")
 	script := `#!/bin/sh
-for arg in "$@"; do
-  if [ "$arg" = "--dry-run=server" ]; then
-    if [ -n "$DRY_STDERR" ]; then printf '%s\n' "$DRY_STDERR" >&2; exit 1; fi
-    printf '%s' "$DRY_JSON"
-    exit 0
-  fi
-done
+set -eu
+if [ "$1" = "status" ]; then
+  cat "$STATUS_FILE"
+  exit 0
+fi
 touch "$MUTATION_MARKER"
-if [ -n "$MUTATION_STDERR" ]; then printf 'chart NOTES token=leaked-stdout-canary\n'; printf '%s\n' "$MUTATION_STDERR" >&2; exit 1; fi
-exit 1
+if [ -n "$MUTATION_STDERR" ]; then
+  printf 'chart NOTES token=leaked-stdout-canary\n'
+  printf '%s\n' "$MUTATION_STDERR" >&2
+  exit 1
+fi
+printf '%s' "$MUTATION_JSON"
 `
 	if err := os.WriteFile(filepath.Join(root, "helm"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("DRY_JSON", dryRunJSON)
-	t.Setenv("DRY_STDERR", dryRunStderr)
+	t.Setenv("MUTATION_JSON", mutationJSON)
 	t.Setenv("MUTATION_STDERR", mutationStderr)
 	t.Setenv("MUTATION_MARKER", marker)
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	return root, marker
 }
 
-func helmDryRunJSON(t *testing.T, manifest string, hooks ...string) string {
-	t.Helper()
-	type hook struct {
-		Manifest string `json:"manifest"`
+func TestParseHelmReleaseOutputBindsRevisionAndDescription(t *testing.T) {
+	const description = "doops:session-a:123"
+	revision, err := parseHelmReleaseOutput(
+		[]byte(`{"version":7,"info":{"description":"doops:session-a:123","notes":"chart-output-canary"}}`),
+		description,
+	)
+	if err != nil || revision != 7 {
+		t.Fatalf("parse release output = %d, %v; want revision 7", revision, err)
 	}
-	payload := struct {
-		Manifest string `json:"manifest"`
-		Hooks    []hook `json:"hooks"`
-	}{Manifest: manifest}
-	for _, h := range hooks {
-		payload.Hooks = append(payload.Hooks, hook{Manifest: h})
+	for _, output := range []string{
+		`{"version":0,"info":{"description":"doops:session-a:123"}}`,
+		`{"version":7,"info":{"description":"doops:session-b:123"}}`,
+		`not-json`,
+	} {
+		if _, err := parseHelmReleaseOutput([]byte(output), description); err == nil {
+			t.Fatalf("invalid release output accepted: %s", output)
+		}
 	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(encoded)
 }
 
-// Each failure names its own stable code and the concrete reason. A wrong code
-// sends the operator after the wrong cause, which is how a YAML decode error
-// was once read as an image mismatch.
-func TestHelmUpgradeFailuresNameTheirStepAndReason(t *testing.T) {
-	expected := "registry.example/api:1"
-	cases := []struct {
-		name           string
-		dryRunJSON     string
-		dryRunStderr   string
-		mutationStderr string
-		expectedImage  string
-		wantPrefix     string
-		wantReason     string
-		wantMutation   bool
+func TestVerifyHelmReleaseStateRequiresThisDeployedRevision(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     string
+		wantErr    string
+		wantResult string
+		unknown    bool
 	}{
 		{
-			name:         "dry-run error carries Helm's first stderr line",
-			dryRunStderr: "Error: values don't meet the specifications of the schema(s) in the following chart(s):\nzhiyong:\n- image: Invalid type",
-			wantPrefix:   "helm_preflight_failed: ",
-			wantReason:   "values don't meet the specifications",
+			name:       "deployed current revision",
+			status:     `{"version":7,"info":{"status":"deployed","description":"doops:release:7"}}`,
+			wantResult: "release deployed: revision 7",
 		},
 		{
-			name:         "dry-run stderr secrets are redacted",
-			dryRunStderr: "Error: template: password=hunter2-canary failed",
-			wantPrefix:   "helm_preflight_failed: ",
-			wantReason:   "REDACTED",
+			name:    "failed release",
+			status:  `{"version":7,"info":{"status":"failed","description":"doops:release:7"}}`,
+			wantErr: `release status is "failed", want deployed`,
 		},
 		{
-			name:       "dry-run output that is not JSON",
-			dryRunJSON: "not json",
-			wantPrefix: "helm_manifest_invalid: ",
-			wantReason: "not JSON",
+			name:    "superseded revision",
+			status:  `{"version":8,"info":{"status":"deployed","description":"doops:other:8"}}`,
+			wantErr: "release revision is 8, want 7",
+			unknown: true,
 		},
 		{
-			name:       "undecodable manifest is invalid, not an image mismatch",
-			dryRunJSON: `{"manifest":"kind: Deployment\nmetadata:\n  name: api\nmetadata:\n  name: again\n"}`,
-			wantPrefix: "helm_manifest_invalid: ",
-			wantReason: "YAML document 1",
+			name:    "different mutation",
+			status:  `{"version":7,"info":{"status":"failed","description":"doops:other:7"}}`,
+			wantErr: "description does not match mutation",
+			unknown: true,
 		},
 		{
-			name:       "release with only a ConfigMap has no workload",
-			dryRunJSON: `{"manifest":"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n"}`,
-			wantPrefix: "helm_no_workload: ",
-			wantReason: "no verifiable workload or ingress",
+			name:    "pending is not a failed terminal",
+			status:  `{"version":7,"info":{"status":"pending-upgrade","description":"doops:release:7"}}`,
+			wantErr: `release status is "pending-upgrade", want deployed`,
+			unknown: true,
 		},
 		{
-			name:          "expected image missing lists what was rendered",
-			dryRunJSON:    "", // filled below
-			expectedImage: "registry.example/api:2",
-			wantPrefix:    "helm_image_mismatch: ",
-			wantReason:    "Deployment/api=registry.example/api:1",
-		},
-		{
-			name:           "real helm failure carries stderr, never chart stdout",
-			dryRunJSON:     "", // filled below
-			mutationStderr: "Error: UPGRADE FAILED: pre-upgrade hooks failed: job registry-sync failed: BackoffLimitExceeded",
-			expectedImage:  expected,
-			wantPrefix:     "helm_mutation_failed: ",
-			wantReason:     "pre-upgrade hooks failed",
-			wantMutation:   true,
+			name:    "malformed status",
+			status:  `not-json`,
+			wantErr: "helm status output is not JSON",
+			unknown: true,
 		},
 	}
-	for _, tc := range cases {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dryRun := tc.dryRunJSON
-			if dryRun == "" && tc.dryRunStderr == "" {
-				dryRun = helmDryRunJSON(t, helmTestDeployment, helmTestHookJob)
-			}
-			_, marker := writeFakeHelm(t, dryRun, tc.dryRunStderr, tc.mutationStderr)
-			params := testHelmParams()
-			params.ExpectedImage = tc.expectedImage
-			command, err := buildHelmCommand(params)
-			if err != nil {
+			root := t.TempDir()
+			statusFile := filepath.Join(root, "status.json")
+			if err := os.WriteFile(statusFile, []byte(tc.status), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, err = runHelmCommand(t.Context(), command, nil)
-			if err == nil || !strings.HasPrefix(err.Error(), tc.wantPrefix) || !strings.Contains(err.Error(), tc.wantReason) {
-				t.Fatalf("error = %v, want prefix %q containing %q", err, tc.wantPrefix, tc.wantReason)
-			}
-			for _, leak := range []string{"hunter2-canary", "leaked-stdout-canary"} {
-				if strings.Contains(err.Error(), leak) {
-					t.Fatalf("error leaked %q: %v", leak, err)
-				}
-			}
-			if _, statErr := os.Stat(marker); (statErr == nil) != tc.wantMutation {
-				t.Fatalf("mutation ran = %t, want %t", statErr == nil, tc.wantMutation)
-			}
-		})
-	}
-}
-
-func TestParseRenderedHelmWorkloadsCoversEveryWorkloadKind(t *testing.T) {
-	statefulSet := "apiVersion: apps/v1\nkind: StatefulSet\nmetadata:\n  name: db\nspec:\n  template:\n    spec:\n      initContainers:\n        - image: registry.example/migrate:1\n      containers:\n        - image: registry.example/db:1\n"
-	daemonSet := "apiVersion: apps/v1\nkind: DaemonSet\nmetadata:\n  name: agent\nspec:\n  template:\n    spec:\n      containers:\n        - image: registry.example/agent:1\n"
-	cronJob := "apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: nightly\nspec:\n  jobTemplate:\n    spec:\n      template:\n        spec:\n          containers:\n            - image: registry.example/nightly:1\n"
-	plainJob := "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: once\nspec:\n  template:\n    spec:\n      containers:\n        - image: registry.example/once:1\n"
-	sameNameService := "apiVersion: v1\nkind: Service\nmetadata:\n  name: api\n"
-	sameNameJob := strings.ReplaceAll(helmTestHookJob, "registry-sync", "api")
-	join := func(docs ...string) []byte { return []byte(strings.Join(docs, "\n---\n")) }
-
-	cases := []struct {
-		name          string
-		manifest      []byte
-		expectedImage string
-		want          []string // Kind/Name=images
-		wantErr       string
-	}{
-		{
-			name:     "every workload kind with init containers first",
-			manifest: join(helmTestDeployment, statefulSet, daemonSet, cronJob, helmTestHookJob),
-			want: []string{
-				"Deployment/api=registry.example/api:1",
-				"StatefulSet/db=registry.example/migrate:1,registry.example/db:1",
-				"DaemonSet/agent=registry.example/agent:1",
-				"CronJob/nightly=registry.example/nightly:1",
-				"Job/registry-sync=registry.example/sync:1",
-			},
-		},
-		{
-			name:          "expected image may sit in an init container",
-			manifest:      join(statefulSet),
-			expectedImage: "registry.example/migrate:1",
-			want:          []string{"StatefulSet/db=registry.example/migrate:1,registry.example/db:1"},
-		},
-		{
-			name:     "ordinary Jobs and non-workloads are skipped",
-			manifest: join(helmTestDeployment, plainJob, sameNameService),
-			want:     []string{"Deployment/api=registry.example/api:1"},
-		},
-		{
-			name:     "same name with a different kind is not a duplicate",
-			manifest: join(helmTestDeployment, sameNameJob),
-			want:     []string{"Deployment/api=registry.example/api:1", "Job/api=registry.example/sync:1"},
-		},
-		{name: "same kind and name is a duplicate", manifest: join(helmTestDeployment, helmTestDeployment), wantErr: "helm_manifest_invalid: duplicate Deployment/api"},
-		{name: "workload without containers", manifest: []byte("kind: Deployment\nmetadata:\n  name: empty\n"), wantErr: "helm_manifest_invalid: Deployment/empty has no containers"},
-		{name: "container without image", manifest: []byte("kind: DaemonSet\nmetadata:\n  name: ds\nspec:\n  template:\n    spec:\n      containers:\n        - name: x\n"), wantErr: "helm_manifest_invalid: DaemonSet/ds has a container without an image"},
-		{name: "List wrapper", manifest: []byte("kind: List\nitems: []\n"), wantErr: "helm_manifest_invalid: List wrappers"},
-		{name: "nothing to verify", manifest: join(plainJob, sameNameService), wantErr: "helm_no_workload"},
-		{name: "image mismatch", manifest: join(helmTestDeployment), expectedImage: "registry.example/api:2", wantErr: "helm_image_mismatch"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			workloads, err := validateHelmRenderedImages(tc.manifest, tc.expectedImage)
-			if tc.wantErr != "" {
-				if err == nil || !strings.HasPrefix(err.Error(), tc.wantErr) {
-					t.Fatalf("error = %v, want prefix %q", err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
+			if err := os.WriteFile(filepath.Join(root, "helm"), []byte("#!/bin/sh\ncat \"$STATUS_FILE\"\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			got := make([]string, 0, len(workloads))
-			for _, w := range workloads {
-				got = append(got, w.Kind+"/"+w.Name+"="+strings.Join(w.Containers, ","))
-			}
-			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
-				t.Fatalf("workloads = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestLiveWorkloadRolledOutPerKind(t *testing.T) {
-	live := func(mutate func(*liveHelmWorkload)) liveHelmWorkload {
-		var w liveHelmWorkload
-		w.Metadata.Generation = 3
-		w.Status.ObservedGeneration = 3
-		mutate(&w)
-		return w
-	}
-	two := int32(2)
-	cases := []struct {
-		name    string
-		kind    string
-		live    liveHelmWorkload
-		wantErr string
-	}{
-		{"deployment ready", "Deployment", live(func(w *liveHelmWorkload) {
-			w.Spec.Replicas = &two
-			w.Status.UpdatedReplicas, w.Status.ReadyReplicas, w.Status.AvailableReplicas = 2, 2, 2
-		}), ""},
-		{"deployment still rolling", "Deployment", live(func(w *liveHelmWorkload) {
-			w.Spec.Replicas = &two
-			w.Status.UpdatedReplicas, w.Status.ReadyReplicas, w.Status.AvailableReplicas = 1, 2, 2
-		}), "not fully Ready"},
-		{"stale generation", "Deployment", live(func(w *liveHelmWorkload) { w.Status.ObservedGeneration = 2 }), "observedGeneration=2"},
-		{"statefulset ready", "StatefulSet", live(func(w *liveHelmWorkload) {
-			w.Spec.Replicas = &two
-			w.Status.UpdatedReplicas, w.Status.ReadyReplicas = 2, 2
-		}), ""},
-		{"statefulset OnDelete ignores updated count", "StatefulSet", live(func(w *liveHelmWorkload) {
-			w.Spec.Replicas = &two
-			w.Spec.UpdateStrategy.Type = "OnDelete"
-			w.Status.ReadyReplicas = 2
-		}), ""},
-		{"statefulset not ready", "StatefulSet", live(func(w *liveHelmWorkload) {
-			w.Spec.Replicas = &two
-			w.Status.UpdatedReplicas, w.Status.ReadyReplicas = 2, 1
-		}), "not fully Ready"},
-		{"daemonset ready", "DaemonSet", live(func(w *liveHelmWorkload) {
-			w.Status.DesiredNumberScheduled, w.Status.UpdatedNumberScheduled = 3, 3
-			w.Status.NumberReady, w.Status.NumberAvailable = 3, 3
-		}), ""},
-		{"daemonset unavailable", "DaemonSet", live(func(w *liveHelmWorkload) {
-			w.Status.DesiredNumberScheduled, w.Status.UpdatedNumberScheduled = 3, 3
-			w.Status.NumberReady, w.Status.NumberAvailable, w.Status.NumberUnavailable = 2, 2, 1
-		}), "not fully Ready"},
-		{"hook job complete", "Job", live(func(w *liveHelmWorkload) { w.Status.Succeeded = 1 }), ""},
-		{"hook job failed", "Job", live(func(w *liveHelmWorkload) { w.Status.Failed = 1 }), "is not complete"},
-		{"cronjob has no rollout", "CronJob", live(func(w *liveHelmWorkload) { w.Metadata.Generation = 0 }), ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := liveWorkloadRolledOut(tc.kind, tc.live)
+			t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("STATUS_FILE", statusFile)
+			command := helmCommand{cwd: root, release: "app", namespace: "apps", mutationID: "doops:release:7", revision: 7}
+			result, err := verifyHelmReleaseState(t.Context(), command)
 			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatal(err)
+				if err != nil || result != tc.wantResult {
+					t.Fatalf("result=%q err=%v, want %q", result, err, tc.wantResult)
 				}
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				t.Fatalf("error=%v, want %q", err, tc.wantErr)
+			}
+			if errors.Is(err, errExecutionOutcomeUnknown) != tc.unknown {
+				t.Fatalf("unknown=%t, want %t: %v", errors.Is(err, errExecutionOutcomeUnknown), tc.unknown, err)
 			}
 		})
+	}
+}
+
+func TestRunHelmCommandReportsMutationFailureWithoutChartOutput(t *testing.T) {
+	root, marker := writeFakeHelm(t, "", "", "Error: UPGRADE FAILED: synthetic hook failure")
+	statusFile := filepath.Join(root, "status.json")
+	if err := os.WriteFile(statusFile, []byte(`{"version":1,"info":{"status":"failed","description":"old"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STATUS_FILE", statusFile)
+	command := helmCommand{
+		args:       []string{"upgrade", "app", "chart", "--install"},
+		cwd:        root,
+		release:    "app",
+		namespace:  "apps",
+		mutationID: "doops:release:1",
+	}
+	_, err := runHelmCommand(t.Context(), command, nil)
+	if err == nil || !strings.Contains(err.Error(), "synthetic hook failure") {
+		t.Fatalf("error=%v, want Helm failure reason", err)
+	}
+	if strings.Contains(err.Error(), "leaked-stdout-canary") {
+		t.Fatalf("chart stdout leaked into failure: %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr != nil {
+		t.Fatalf("mutation marker missing: %v", statErr)
+	}
+}
+
+func TestRunHelmCommandClassifiesInitialInstallHistory(t *testing.T) {
+	for _, test := range []struct {
+		name, stderr, stdout string
+		exit, unknown        bool
+	}{
+		{name: "release not found", stderr: "Error: release: not found", exit: true},
+		{name: "connection failure", stderr: "Error: Kubernetes cluster unreachable", exit: true, unknown: true},
+		{name: "authorization failure", stderr: "Error: forbidden", exit: true, unknown: true},
+		{name: "not found inside another error", stderr: "Error: forbidden while checking release: not found", exit: true, unknown: true},
+		{name: "generic not found", stderr: "Error: resource not found", exit: true, unknown: true},
+		{name: "invalid history", stdout: "not-json", unknown: true},
+		{name: "null history", stdout: "null", unknown: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeK8SMCPExecutable(t, root, "helm", `#!/bin/sh
+if [ "$1" = "history" ]; then
+  printf '%s\n' "$HISTORY_STDERR" >&2
+  printf '%s' "$HISTORY_STDOUT"
+  [ "$HISTORY_EXIT" != "true" ]
+  exit $?
+fi
+printf 'Error: template schema rejected the chart\n' >&2
+exit 1
+`)
+			t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("HISTORY_STDERR", test.stderr)
+			t.Setenv("HISTORY_STDOUT", test.stdout)
+			t.Setenv("HISTORY_EXIT", fmt.Sprint(test.exit))
+			command := helmCommand{
+				args: []string{"upgrade", "app", "chart", "--install"}, cwd: root,
+				release: "app", namespace: "apps", mutationID: "doops:first-install:1",
+			}
+			_, err := runHelmCommand(t.Context(), command, nil)
+			if err == nil || !strings.Contains(err.Error(), "template schema rejected the chart") {
+				t.Fatalf("original Helm failure was lost: %v", err)
+			}
+			if errors.Is(err, errExecutionOutcomeUnknown) != test.unknown {
+				t.Fatalf("unknown=%t, want %t: %v", errors.Is(err, errExecutionOutcomeUnknown), test.unknown, err)
+			}
+			response := helmMCPFailureResponse(1, err).Result.(map[string]interface{})
+			facts := response["structuredContent"].(map[string]interface{})
+			if (facts["executionOutcome"] == "unknown") != test.unknown {
+				t.Fatalf("structured outcome differs from execution: %#v", response)
+			}
+		})
+	}
+}
+
+func TestRunHelmCommandAcceptsNetworkPolicyOnlyRelease(t *testing.T) {
+	root := t.TempDir()
+	statusFile := filepath.Join(root, "status.json")
+	marker := filepath.Join(root, "mutation-ran")
+	mutationID := "doops:network-policy-release:1"
+	script := `#!/bin/sh
+set -eu
+for arg in "$@"; do
+  if [ "$arg" = "--dry-run=server" ]; then
+    echo "unexpected DoOps preflight" >&2
+    exit 9
+  fi
+done
+if [ "$1" = "status" ]; then
+  cat "$STATUS_FILE"
+  exit 0
+fi
+touch "$MUTATION_MARKER"
+printf '{"version":1,"info":{"status":"deployed","description":"%s"}}' "$MUTATION_ID"
+`
+	if err := os.WriteFile(filepath.Join(root, "helm"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusFile, []byte(fmt.Sprintf(
+		`{"version":1,"info":{"status":"deployed","description":"%s"}}`, mutationID,
+	)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("STATUS_FILE", statusFile)
+	t.Setenv("MUTATION_ID", mutationID)
+	t.Setenv("MUTATION_MARKER", marker)
+
+	chart := filepath.Join(root, "network-policy-only.tgz")
+	command := helmCommand{
+		args:       []string{"upgrade", "network-policy", chart, "--install", "--description", mutationID},
+		cwd:        root,
+		release:    "network-policy",
+		namespace:  "test",
+		mutationID: mutationID,
+	}
+	result, err := runHelmCommand(t.Context(), command, nil)
+	if err != nil {
+		t.Fatalf("NetworkPolicy-only Helm release was rejected: %v", err)
+	}
+	if result != "release deployed: revision 1" {
+		t.Fatalf("result = %q, want deployed revision receipt", result)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("Helm mutation did not run: %v", err)
+	}
+}
+
+func TestHelmMCPRejectsRemovedPublicationFields(t *testing.T) {
+	for _, field := range []string{"confirm", "expected_image"} {
+		var params api.HelmParams
+		decoder := json.NewDecoder(strings.NewReader(`{"session_id":"release","operation":"upgrade-install","release":"app","chart":"https://charts.example.test/app.tgz","namespace":"apps","` + field + `":true}`))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&params); err == nil || !strings.Contains(err.Error(), "unknown field") {
+			t.Fatalf("removed field %q was accepted: %v", field, err)
+		}
 	}
 }

@@ -110,12 +110,10 @@ type HelmParams struct {
 	Namespace     string            `json:"namespace"`
 	ValueFiles    []string          `json:"value_files,omitempty"`
 	SetStrings    map[string]string `json:"set_strings,omitempty"`
-	ExpectedImage string            `json:"expected_image,omitempty"`
 	Revision      int               `json:"revision,omitempty"`
 	Timeout       string            `json:"timeout,omitempty"`
 	Atomic        bool              `json:"atomic,omitempty"`
 	TakeOwnership bool              `json:"take_ownership,omitempty"`
-	Confirm       bool              `json:"confirm,omitempty"`
 }
 
 // WebParams is the structured request accepted by doops_web.

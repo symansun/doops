@@ -67,7 +67,7 @@ DoOps 不替代 Kubernetes 本身，也不是完整的监控时序数据库、IT
 | 快照与工作区同步 | `push/pull` 默认使用 COS 快照；`--storage gateway` 通过 Git HTTP 同步当前工作区 | 拉取与清理存在覆盖、删除风险；不是永久备份机制 |
 | 小文本文件操作 | 在指定 session 内执行 `read/write` | 使用工作区相对路径；大文件和二进制使用 `push/pull` |
 | AI 运维任务 | `ask` 通过 ACP HTTP 与 SSE 接入 doagent | 需要可用的 doagent 服务、模型配置及相应目标权限 |
-| 自然语言业务发布 | `ask --apply` 读取任务指定的镜像、Chart、凭据和验收条件，并通过结构化 Helm 工具执行 | 业务发布不使用环境注册表、模板化发布或未审阅的 YAML 工作流 |
+| 自然语言业务发布 | `ask --apply` 按任务指定的 target、release、namespace 和 Chart，通过结构化 Helm 工具执行 | 镜像、业务验收和其它说明按任务需要提供；不使用环境注册表、模板化发布或未审阅的 YAML 工作流 |
 | 凭据资源管理 | 提供版本化凭据、授权、Bundle 和运行期材料化能力 | 启用加密存储需稳定配置 Gateway 密钥；不代表所有日志均自动脱敏 |
 | 运维工作台 | 集成 DoSql、DoWeb、Kubernetes 观察和受控变更入口 | 具体能力以目标 Agent、凭据绑定和对应 Skill 的验收结果为准 |
 | Agent 升级入口 | 提供带权限检查的升级通知和生命周期协调 | Kubernetes 与 Docker 路径能力不同，不能假设 Docker 模式会自动替换容器 |
@@ -480,19 +480,19 @@ doops logout --target demo-node
 <a id="delivery"></a>
 ## 业务发布与 Agent 升级
 
-DoOps 把普通业务 workload 发布收敛到 `ask --apply`，把 Agent 自身升级交给独立控制器或外部发布脚本。两条路径都要求明确 target、变更范围、镜像事实、原因和机器可检查的验收条件；模型回答、页面提示或单个健康码都不能单独证明发布完成。
+DoOps 把普通 Helm release 发布收敛到 `ask --apply`，把 Agent 自身升级交给独立控制器或外部发布脚本。两条路径都保留实际执行终态和审计；业务范围、镜像事实、原因和验收条件按任务需要提供，不是 DoOps 的统一发布门禁。模型回答、页面提示或单个健康码都不能单独证明发布完成。
 
-### 普通业务 workload 发布
+### Helm release 发布
 
 ```bash
 doops -session release-check ask \
   --target control-node \
   --apply \
   --credential <resource-name> \
-  --msg '在 target control-node 发布服务 api；使用任务指定的 Chart、namespace 和已核验镜像 digest；原因：修复课堂权限；验收：Deployment、Pod、Service、Endpoint 与 /health 均通过。'
+  --msg '在 target control-node 的 namespace apps 安装或升级 release api，使用任务指定的 Chart 和 values；发布后按需要执行业务验收。'
 ```
 
-发布任务必须给出 target、服务范围、Chart 或仓库资产、镜像版本或其可核验来源、原因和验收条件。`--credential` 只传受管凭据资源名，不在参数、prompt、日志或工作区中传递密文。目标 Agent 通过结构化 `mcp_doops_helm upgrade-install` 执行发布，并返回 dry-run、实际变更和最终资源状态证据。
+发布通道只要求明确 target、release、namespace 和 Chart；镜像、业务范围、原因和验收条件按任务需要提供，不是 DoOps 的全局准入条件。`--credential` 只传受管凭据资源名，不在参数、prompt、日志或工作区中传递密文。目标 Agent 通过结构化 `mcp_doops_helm upgrade-install` 执行发布，并返回原生 Helm 终态。
 
 普通发布不使用环境注册表、模板化发布或 prompt 推导的部署范围，也不要求先执行 `push` 或读取操作机 kubeconfig。详细契约见[自然语言业务发布](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md)和[凭据资源](backend/docs/CREDENTIAL_RESOURCES.md)。
 

@@ -80,6 +80,11 @@ nsenter -t 1 -m -u -i -n -- sh -c '
 - 需要临时文件时用 `mktemp -d /tmp/doops-XXXXXX`；只清理本轮独占目录，不清理前缀通配符。
   依赖它的任务结束后才清理；失败保留必要诊断并报告位置。
 - 使用受管凭据引用；不打印、展开或把秘密内联进命令、prompt、日志、工作区，禁用敏感链路的 xtrace。
-- K8s/Helm 发布仍用 `mcp_doops_helm`；运维变更交上层
+- Helm 发布可用 `mcp_doops_helm`，用户明确授权的原生 Helm 命令也可交上层经
+  `doops -session <s> exec --target <t> --cmd '<helm 命令>'` 执行；沿用已有授权，
+  不新增 CI、镜像、资源种类或重复确认门禁。保留原生命令退出码与 release 终态，
+  不以 exec 结果替代 MCP attestation，不把 Helm 成功说成全业务健康。
+  exec 不解析受管凭据引用，不能读取或内联凭据 payload 来补齐认证。
+- 运维变更交上层
   `doops -session <s> k8s --target <t> ... --confirm`，数据库变更交上层
   `doops -session <s> sql --target <t> --mode apply --sql/--file`，不改用 shell。

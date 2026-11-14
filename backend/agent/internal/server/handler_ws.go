@@ -645,7 +645,7 @@ func assistantDeltaNotification(text string) notificationEvent {
 func toolNotification(toolName, status string) notificationEvent {
 	return notificationEvent{
 		Kind:   "tool",
-		Data:   fmt.Sprintf("[tool:%s]", toolName),
+		Data:   fmt.Sprintf("[tool:%s] %s", toolName, status),
 		Tool:   toolName,
 		Status: status,
 	}
@@ -1570,7 +1570,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			},
 			turnIDReady,
 			true,
-			responseFormat != "json",
+			responseFormat != "json" && !execution.RequireToolEvidence,
 			sseReady,
 			execution.StructuredEvents,
 		)
@@ -1687,11 +1687,18 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	select {
 	case <-ctx.Done():
 		if err := cancelDoagentPrompt(ctx, doagentURL, targetSessionID, sseDone, &terminalSeen, doagentCancellationTimeout); err != nil {
-			writeJSON(buildErrorResponse(reqID, -32603, promptOutcomeUnknown("cancel_unconfirmed")))
-		} else {
-			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+			message := promptOutcomeUnknown("cancel_unconfirmed")
+			if execution.RequireToolEvidence {
+				writeJSON(buildDoagentApplyResponse(reqID, toolTraces, -32603, message))
+			} else {
+				writeJSON(buildErrorResponse(reqID, -32603, message))
+			}
+			return
 		}
-		return
+		if !execution.RequireToolEvidence {
+			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+			return
+		}
 	case <-sseDone:
 	}
 	if !terminalSeen.Load() {
@@ -1700,56 +1707,57 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		if sseErr != nil {
 			reason += " (" + sanitizeSecretText(sseErr.Error()) + ")"
 		}
-		writeJSON(buildErrorResponse(reqID, -32603, promptOutcomeUnknown(reason)))
+		if execution.RequireToolEvidence {
+			writeJSON(buildDoagentApplyResponse(reqID, toolTraces, -32603, promptOutcomeUnknown(reason)))
+		} else {
+			writeJSON(buildErrorResponse(reqID, -32603, promptOutcomeUnknown(reason)))
+		}
 		return
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && !execution.RequireToolEvidence {
 		_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, sseDone, &terminalSeen, doagentCancellationTimeout)
 		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 		return
 	}
 	if execution.RequireToolEvidence {
 		if unresolved := toolTraces.unresolvedMutationSummary(); unresolved != "" {
-			writeJSON(buildErrorResponse(reqID, -32603, promptOutcomeUnknown("unverified_mutation "+unresolved)))
+			writeJSON(buildDoagentApplyResponse(reqID, toolTraces, -32603, promptOutcomeUnknown("unverified_mutation "+unresolved)))
 			return
 		}
+		if err := toolTraces.requireCompletedToolEvidence(); err != nil {
+			if ctx.Err() != nil && strings.HasPrefix(err.Error(), "doagent_apply_tool_evidence_missing") {
+				writeJSON(buildDoagentApplyResponse(reqID, toolTraces, -32007, "operation canceled"))
+			} else {
+				writeJSON(buildDoagentApplyResponse(reqID, toolTraces, 0, err.Error()))
+			}
+			return
+		}
+		if sseErr != nil {
+			warning := "[warning] Tool outcomes were verified; doagent final turn ended with " + sanitizeSecretText(sseErr.Error())
+			if execution.StructuredEvents {
+				pushProgress(publicDoagentUINotification(map[string]interface{}{
+					"sessionUpdate": "doops_notice", "content": map[string]interface{}{"type": "text", "text": warning},
+				}))
+			} else {
+				pushProgress(rawNotification(warning + "\n"))
+			}
+		}
+		writeJSON(buildDoagentApplyResponse(reqID, toolTraces, 0, ""))
+		return
 	}
-	verifiedMutation := execution.RequireToolEvidence && len(toolTraces.completed()) != 0
-	sseFailed := sseErr != nil && !errors.Is(sseErr, context.Canceled)
-	if sseFailed && !verifiedMutation {
+	if sseErr != nil && !errors.Is(sseErr, context.Canceled) {
 		log.Printf("doagent execution failed: session=%s category=doagent_execution_failed detail=%s",
 			targetSessionID, sanitizeSecretText(sseErr.Error()))
 		pushProgress(errorNotification("[error] " + sanitizeSecretText(sseErr.Error())))
 		writeJSON(buildToolErrorResponse(reqID, "doagent_execution_failed"))
 		return
 	}
-	if execution.Skill == "dosql" && !execution.RequireToolEvidence && toolTraces.hasFailedSQLRead() {
+	if execution.Skill == "dosql" && toolTraces.hasFailedSQLRead() {
 		writeJSON(buildToolErrorResponse(reqID, "dosql_query_failed"))
 		return
 	}
-	if execution.RequireToolEvidence {
-		if err := toolTraces.requireCompletedToolEvidence(); err != nil {
-			writeJSON(buildToolErrorResponse(reqID, err.Error()))
-			return
-		}
-		if sseFailed {
-			warning := "[warning] Helm mutation was verified; doagent final turn ended with " + sanitizeSecretText(sseErr.Error())
-			if execution.StructuredEvents {
-				pushProgress(publicDoagentUINotification(map[string]interface{}{
-					"sessionUpdate": "doops_notice", "content": map[string]interface{}{"type": "text", "text": warning},
-				}))
-			} else {
-				pushProgress(rawNotification(warning))
-			}
-		}
-	}
 	if responseFormat == "json" {
 		resultText, structuredContent, err := toolTraces.structuredResult(false)
-		if err != nil {
-			if verifiedMutation {
-				resultText, structuredContent, err = toolTraces.verifiedMutationResult()
-			}
-		}
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read final machine result: %v", err)))
 			return
@@ -1760,14 +1768,36 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 
 	answer, err := toolTraces.finalAnswer()
 	if err != nil {
-		if verifiedMutation {
-			writeJSON(buildSuccessResponse(reqID, "verified mutation completed; the model did not write a summary"))
-			return
-		}
 		writeJSON(buildToolErrorResponse(reqID, err.Error()))
 		return
 	}
 	writeJSON(buildSuccessResponse(reqID, answer))
+}
+
+// Apply facts come only from verified runtime receipts. Keep unknown outcomes
+// as RPC errors for the Gateway's quarantine contract, with the history in data.
+func buildDoagentApplyResponse(reqID interface{}, traces *doagentToolTraceCollector, code int, message string) api.JSONRPCResponse {
+	text, report, err := traces.verifiedMutationResult()
+	if err != nil {
+		return buildErrorResponse(reqID, -32603, promptOutcomeUnknown("mutation_report_invalid"))
+	}
+	if code != 0 {
+		report["outcome"] = "unknown"
+		if code == -32007 {
+			report["outcome"] = "cancelled"
+		}
+		response := buildErrorResponse(reqID, code, message)
+		response.Error.Data = map[string]interface{}{"structuredContent": report}
+		return response
+	}
+	if message != "" {
+		return buildStructuredToolErrorResponse(reqID, message+"\n"+text, map[string]interface{}{
+			"structuredContent": report,
+		})
+	}
+	response := buildStructuredSuccessResponse(reqID, text, report)
+	response.Result.(map[string]interface{})["isError"] = false
+	return response
 }
 
 func validateAgentPromptAttachments(attachments []api.AgentPromptAttachment) error {
@@ -2390,6 +2420,8 @@ func subscribeDoagentSSEWithCollector(ctx context.Context, baseURL string, sessi
 	return subscribeDoagentSSEWithCollectorReady(ctx, baseURL, sessionID, pushProgress, collector, nil, false, true, nil)
 }
 
+var doagentWaitingNoticeInterval = 20 * time.Second
+
 func subscribeDoagentSSEWithCollectorReady(
 	ctx context.Context,
 	baseURL string,
@@ -2445,6 +2477,55 @@ func subscribeDoagentSSEWithCollectorReady(
 	var pendingAgentMessage strings.Builder
 	targetTurnID := ""
 	structuredEvents := len(structuredFormats) == 1 && structuredFormats[0]
+	// Serialize the ticker with SSE delivery, including callers whose output
+	// buffer is not concurrent. Notices describe silence, never tool progress.
+	var progressMu sync.Mutex
+	lastActivity := time.Now()
+	lastProgress := lastActivity
+	lastEvent := "SSE connected"
+	sendProgress := pushProgress
+	pushProgress = func(event notificationEvent) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		sendProgress(event)
+		lastProgress = time.Now()
+	}
+	noticesDone, stopNotices := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(noticesDone)
+		ticker := time.NewTicker(doagentWaitingNoticeInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stopNotices:
+				return
+			case <-ticker.C:
+				progressMu.Lock()
+				silent := time.Since(lastProgress)
+				if silent >= doagentWaitingNoticeInterval {
+					text := fmt.Sprintf("[waiting] Still waiting for the terminal result; last event: %s (%s ago).\n",
+						lastEvent, time.Since(lastActivity).Round(time.Second))
+					if structuredEvents {
+						sendProgress(publicDoagentUINotification(map[string]interface{}{
+							"sessionUpdate": "doops_notice",
+							"content":       map[string]interface{}{"type": "text", "text": text},
+						}))
+					} else {
+						sendProgress(rawNotification(text))
+					}
+					lastProgress = time.Now()
+				}
+				progressMu.Unlock()
+			}
+		}
+	}()
+	defer func() {
+		close(stopNotices)
+		<-noticesDone
+	}()
+	toolNames := make(map[string]string)
 	flushPendingAgentMessage := func() {
 		if pendingAgentMessage.Len() == 0 {
 			return
@@ -2526,6 +2607,19 @@ func subscribeDoagentSSEWithCollectorReady(
 						continue
 					}
 				}
+				if sessionUpdate["replay"] != true {
+					progressMu.Lock()
+					lastActivity, lastEvent = time.Now(), updateType
+					if updateType == "tool_call" || updateType == "tool_call_update" {
+						callID, _ := sessionUpdate["toolCallId"].(string)
+						if name := doagentToolName(sessionUpdate); name != "" {
+							toolNames[callID] = sanitizeSecretText(name)
+						}
+						status, _ := sessionUpdate["status"].(string)
+						lastEvent = fmt.Sprintf("%s %s", toolNames[callID], sanitizeSecretText(status))
+					}
+					progressMu.Unlock()
+				}
 				if updateType == "agent_message_chunk" {
 					text, err := doagentAgentMessageText(sessionUpdate["content"])
 					if err != nil {
@@ -2575,12 +2669,12 @@ func subscribeDoagentSSEWithCollectorReady(
 				}
 				sessionUpdate = sanitizeDoagentSessionUpdate(sessionUpdate)
 				switch updateType {
-				case "tool_call_update":
-					// 工具调用进度
-					toolName, _ := sessionUpdate["toolName"].(string)
+				case "tool_call", "tool_call_update":
+					callID, _ := sessionUpdate["toolCallId"].(string)
+					toolName := toolNames[callID]
 					status, _ := sessionUpdate["status"].(string)
-					if toolName != "" && status == "in_progress" {
-						pushProgress(toolNotification(toolName, status))
+					if toolName != "" && status != "" && sessionUpdate["replay"] != true {
+						pushProgress(toolNotification(toolName, sanitizeSecretText(status)))
 					}
 				case "agent_message":
 					text, err := doagentAgentMessageText(sessionUpdate["content"])

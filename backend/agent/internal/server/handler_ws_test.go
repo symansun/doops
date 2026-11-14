@@ -1047,7 +1047,7 @@ func TestSubscribeDoagentSSERejectsLiveUntaggedContentOnlyToolEvidence(t *testin
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","replay":true,"toolCallId":"stale","toolName":"mcp_doops_helm","status":"completed","input":{"operation":"rollback"},"content":[{"type":"content","content":{"type":"text","text":"stale"}}]}}}`)
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_helm","status":"in_progress","input":{"operation":"upgrade-install","release":"doops-agent","chart":"deploy/helm/doops-agent","namespace":"kz-ops","confirm":true}}}}`)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_helm","status":"in_progress","input":{"operation":"upgrade-install","release":"doops-agent","chart":"deploy/helm/doops-agent","namespace":"kz-ops"}}}}`)
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_helm","status":"completed","content":[{"type":"content","content":{"type":"text","text":"Helm operation complete."}}]}}}`)
 		fmt.Fprintln(w)
@@ -1423,7 +1423,6 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed, invalidArguments
 				"release":   "doops-agent",
 				"chart":     "deploy/helm/doops-agent",
 				"namespace": "kz-ops",
-				"confirm":   true,
 			}
 			trace := attestedMutationTraceForSession(
 				t,
@@ -1435,11 +1434,10 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed, invalidArguments
 			toolStatus, turnStatus := "completed", "failed"
 			stopReason, turnError := "error", "final model response failed after Helm completed"
 			if toolFailed {
-				toolStatus, turnStatus = "failed", "completed"
-				stopReason, turnError = "end_turn", ""
+				toolStatus = "failed"
 				failure := "helm_verification_failed"
 				if invalidArgumentsFirst {
-					failure = "helm_chart_scope_mismatch"
+					failure = "helm_mutation_failed"
 				}
 				failedResult := map[string]interface{}{
 					"isError": true,
@@ -1562,6 +1560,10 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed, invalidArguments
 		}
 		if strings.Contains(fmt.Sprint(result), "execution_outcome_unknown") {
 			t.Fatalf("known Helm failure quarantined the target: %#v", result)
+		}
+		structured, _ := response["structuredContent"].(map[string]interface{})
+		if structured["verified"] != true || structured["outcome"] != "failed" {
+			t.Fatalf("known failure lost the verified receipt: %#v", response)
 		}
 		followup := callToolResult(t, conn, "doops_shell", map[string]interface{}{
 			"session_id": doopsSessionID, "command": "printf followup-ok",

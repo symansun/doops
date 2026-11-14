@@ -21,7 +21,6 @@ Skill 或 Agent 镜像发布。
 | [DoWeb 工作台集成](DOWEB_INTEGRATION.md) | DoWeb 在统一工作台中的接入 | 现行 |
 | [统一运维工作台](UNIFIED_OPERATIONS_WORKBENCH.md) | 工作台整体模型与边界 | 现行 |
 | [物理机访问](PHYSICAL_HOST_ACCESS.md) | 物理机/宿主机访问与硬件检查 | 环境相关 |
-| [Helm 工作区契约](HELM_WORKSPACE_CONTRACT.md) | 受管 Helm 工作区契约与资产源 | 现行契约 |
 | [Harbor 镜像同步规范](HARBOR_REPLICATION_SPEC.md) | Harbor 镜像同步配置 | 草案 |
 | [DoOps Edge 设计](design/DOOPS_EDGE_TUNNEL.md) | Agent 反向代理与 Gateway 动态域名映射 | 设计（未上线） |
 
@@ -29,6 +28,7 @@ Skill 或 Agent 镜像发布。
 
 - 首次接入：安装/集群接入 → API 或 CLI 使用 → Credential 资源
 - 业务接入：Skill 集成 → 自然语言业务发布
+- Helm 远程与工作区资产：[业务发布契约](NATURAL_LANGUAGE_DEPLOYMENT.md#helm-资产与迁移)
 - 部署发布：构建部署 SOP → 集群接入 → 对应环境 README
 - Web/工作台：WebUI → DoWeb 集成 → 统一运维工作台
 

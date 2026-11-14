@@ -6,8 +6,7 @@ import (
 )
 
 // Adopting an object that has no Helm ownership metadata is the caller's
-// explicit choice. The flag reaches both the server dry-run and the real run,
-// because both use the same argument list.
+// explicit choice. Only that choice adds the flag to the Helm command.
 func TestBuildHelmCommandTakeOwnershipIsExplicit(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -41,7 +40,6 @@ func TestBuildHelmRollbackNeverTakesOwnership(t *testing.T) {
 	params := testHelmParams()
 	params.Operation = "rollback"
 	params.Chart = ""
-	params.ExpectedImage = ""
 	params.Revision = 3
 	params.TakeOwnership = true
 	command, err := buildHelmCommand(params)

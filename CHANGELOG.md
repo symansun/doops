@@ -12,6 +12,10 @@
 
 - 密码登录 token 的默认有效期从 24 小时改为 30 天，并在使用过程中自动顺延，但距签发时间最长不超过 90 天。可用 `-login-token-ttl` 和 `-login-token-max-lifetime` 调整。管理员签发的服务 token 不受影响
 - `doops login` 以 `--gateway <name|url>` 指定 Gateway（登录属于 Gateway，不是 target）；`--target` 仍可作为别名解析到对应 Gateway
+- Helm 发布直接执行原生 `upgrade --install --wait`，以实际 release 的 deployed 状态及本次 revision/description 判定成功；取消自设 server dry-run、manifest 类型白名单和工作负载/Ingress 二次验收，无 workload 的 NetworkPolicy 等 Chart 可正常发布
+- Helm 调用移除 `expected_image` 与重复 `confirm` 参数，授权沿用 `--apply`；不再强制 `--reset-values`，values 使用 Helm 原生语义，`atomic` 与 `take_ownership` 仍由用户选择。迁移时删除旧参数并复核 values 合并结果，详见 `backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md`
+- Helm 文档与 skill 不再要求唯一发布入口、CI 或镜像证明；明确授权的原生 Helm 命令也可经 `doops exec` 执行。保留身份与受管凭据隔离、可信结果及失败/未知终态，Helm 发布成功与业务健康验收分别报告
+- 发布规则统一归入业务发布契约，清除重复的 Helm 工作区文档、未使用的固定 target 配置和已退役的安装参数示例；DoOps 自身升级要求不再混入普通业务发布说明
 
 ### Security
 
@@ -28,6 +32,11 @@
 
 - 已绑定私有 Helm 仓库的 target 可以直接下载其他来源的公共 Chart；GitHub Release 的 HTTPS CDN 跳转经过逐跳校验，私有凭据不会发送到公共下载地址
 - Helm 参数拒绝保留结构化失败回执和可信证明，避免一次空参数调用把整轮错误误记为 `raw_output_missing`；真正缺失证明的结果仍保持未知
+- Helm 失败后可在原任务内定位、修复并继续验证；同一意图的后续可信成功关联原失败，完整保留每次工具回执。模型摘要不再替代执行结果，未知变更不自动重放
+- target 绑定多个 Helm 仓库时按 Chart 的实际来源选择唯一凭据，不再因存在无关仓库而阻断公共 Chart 或要求用户重复选择
+- Helm 的 `compat` 等普通 values 键不再因结尾包含 `pat` 被误判为凭据字段；实际 PAT 字段与凭据内容仍保持隔离
+- 控制台连接成功后不再因 45 秒无输出中断任务；执行采用总期限，取消后继续等待原调用终态，进度通知不会取消总期限
+- `k8s` 和 `image-build` 的 apply 会话可以调用 Helm，避免因选择 skill 而丢失已授权的发布工具
 - 密码登录会话在持续使用时不再于 24 小时后被强制退出；控制台会刷新登录 Cookie，过期后直接回到登录页
 - 同一用户未过期的密码登录 token 超过 10 个时，新登录会撤销最早的旧 token
 - Gateway HTTP 服务设置请求头读取超时和空闲连接超时

@@ -122,6 +122,10 @@ func runK8SMCPStdioDomainContext(
 			sessionID, err := resolveSession()
 			if err != nil {
 				response = mcpErrorResponse(request.ID, -32000, err.Error())
+				var call k8sMCPToolCall
+				if json.Unmarshal(request.Params, &call) == nil && domain == mcpDomainDoops && call.Name == helmMCPToolName {
+					response = helmMCPFailureResponse(request.ID, &helmToolFailure{cause: err, phase: "preparation"})
+				}
 				break
 			}
 			response = callK8SMCPToolDomain(ctx, request, sessionID, domain)
@@ -181,7 +185,9 @@ func callK8SMCPToolDomain(
 		}
 	case helmMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, helmMutationOperations) {
-			return buildToolErrorResponse(request.ID, "helm tool requires a supported mutating operation")
+			return helmMCPFailureResponse(request.ID, &helmToolFailure{
+				cause: fmt.Errorf("helm tool requires a supported mutating operation"), phase: "validation",
+			})
 		}
 	case webMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, webMutationOperations) {
@@ -201,7 +207,7 @@ func callK8SMCPToolDomain(
 	boundArguments, err := bindK8SMCPSession(call.Arguments, boundSessionID)
 	if err != nil {
 		if call.Name == helmMCPToolName {
-			return buildToolErrorResponse(request.ID, sanitizeSecretText(err.Error()))
+			return helmMCPFailureResponse(request.ID, &helmToolFailure{cause: err, phase: "validation"})
 		}
 		return mcpErrorResponse(request.ID, -32602, err.Error())
 	}
@@ -223,6 +229,9 @@ func callK8SMCPToolDomain(
 	var result string
 	if call.Name == helmMCPToolName {
 		result, err = handleHelmTool(ctx, boundArguments, push)
+		if err != nil {
+			return helmMCPFailureResponse(request.ID, err)
+		}
 	} else if call.Name == webMCPToolName || call.Name == webReadMCPToolName {
 		result, err = handleWebTool(ctx, boundArguments, push)
 	} else if call.Name == doSQLReadMCPToolName {
@@ -245,7 +254,7 @@ func callK8SMCPToolDomain(
 		progress.WriteByte('\n')
 	}
 	progress.WriteString(result)
-	return api.JSONRPCResponse{
+	response := api.JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      request.ID,
 		Result: map[string]interface{}{
@@ -255,6 +264,37 @@ func callK8SMCPToolDomain(
 			"isError": false,
 		},
 	}
+	if call.Name == helmMCPToolName {
+		fields := response.Result.(map[string]interface{})
+		fields["structuredContent"] = map[string]interface{}{
+			"executionStarted": true, "phase": "execution",
+		}
+	}
+	return response
+}
+
+// Keep known-tool failures in result so doagent can attest and emit rawOutput.
+// Unknown execution outcomes remain explicit even though the MCP call returned.
+func helmMCPFailureResponse(id interface{}, err error) api.JSONRPCResponse {
+	fields := map[string]interface{}{"phase": "execution", "executionStarted": true}
+	var failure *helmToolFailure
+	if errors.As(err, &failure) {
+		fields["phase"] = failure.phase
+		fields["executionStarted"] = failure.executionStarted
+		if failure.outcomeUnknown {
+			fields["executionOutcome"] = "unknown"
+		}
+	}
+	if errors.Is(err, errExecutionOutcomeUnknown) {
+		fields["executionOutcome"] = "unknown"
+	}
+	// DoAgent gives the model MCP text content while preserving structuredContent
+	// for attestation. Expose the same facts so a retry decision can use them too.
+	facts, _ := json.Marshal(fields)
+	text := sanitizeSecretText(err.Error()) + "\n" + string(facts)
+	return buildStructuredToolErrorResponse(id, text, map[string]interface{}{
+		"structuredContent": fields,
+	})
 }
 
 // maxToolOutputBytes bounds one tool result. doagent sends a tool result back
@@ -464,7 +504,7 @@ func helmMCPToolDefinition() map[string]interface{} {
 		"inputSchema": map[string]interface{}{
 			"type":                 "object",
 			"additionalProperties": false,
-			"required":             []string{"operation", "release", "namespace", "confirm"},
+			"required":             []string{"operation", "release", "namespace"},
 			"properties": map[string]interface{}{
 				"operation": map[string]interface{}{
 					"type": "string",
@@ -494,14 +534,10 @@ func helmMCPToolDefinition() map[string]interface{} {
 					"description":          "Optional non-sensitive chart-specific string overrides. No credential payloads. Chart schema determines valid business keys, including image and CORS configuration.",
 					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
-				"expected_image": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional explicit complete repository:tag or repository@sha256:<64 hex digest>, checked against dry-run and final Deployment manifests. Image fields are not inferred from chart values.",
-				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},
 				"timeout": map[string]interface{}{
 					"type":        "string",
-					"description": "Helm --wait timeout, e.g. 300s or 8m; at most 10m. Preflight, the wait and verification must all finish inside one tool call.",
+					"description": "Positive Helm --wait duration, e.g. 1m30s or 300s; at most 10m. Preparation, execution and verification share the enclosing tool deadline.",
 				},
 				"atomic": map[string]interface{}{
 					"type":        "boolean",
@@ -513,7 +549,6 @@ func helmMCPToolDefinition() map[string]interface{} {
 					"default":     false,
 					"description": "upgrade-install only. true adds helm --take-ownership: the release adopts rendered objects that already exist without Helm ownership metadata (for example applied by hand). Set it only when the task says to bring those objects under this release.",
 				},
-				"confirm": map[string]interface{}{"type": "boolean"},
 			},
 		},
 	}

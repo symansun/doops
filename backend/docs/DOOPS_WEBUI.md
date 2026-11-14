@@ -40,11 +40,29 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
 - AI diagnostics run on the Agent and query runtime metadata instead of reading
   settings or API keys. The console sends them, and the database and website pages
   use the same prompt RPC with `operation=ask` (the website page sends
-  `operation=apply` only for an approved change). The deployment form requires an
-  explicit confirmation and sends `operation=apply` with target, release, namespace,
-  remote Chart, controlled image, CI commit/evidence, reason and acceptance.
-- Helm success must include the final live Deployment and task acceptance.
-  Native MCP `isError`, protocol errors and interrupted streams remain failures.
+  `operation=apply` only for an approved change). The deployment form sends
+  `operation=apply` with target, release, namespace, Chart, optional values, task
+  text and managed credential references.
+- After Gateway initialization succeeds, the console clears the 45-second
+  connection timer. A normal prompt/apply has a 30-minute total execution deadline;
+  waiting for its first output or a quiet tool does not cause an earlier timeout,
+  and progress events do not reset the deadline. Metadata requests retain their
+  separate 45-second limit. At the execution deadline, the console requests
+  cancellation and waits up to 15 seconds for the original RPC's terminal result.
+  A cancellation ACK is not completion; if no terminal result arrives, the outcome
+  remains unknown and the mutation is not automatically replayed. See the
+  [execution lifecycle](DOOPS_API_GUIDE.md#执行生命周期).
+- Tool start/end status is progress only. Apply success or failure comes from the
+  trusted structured tool receipt, not the model's final wording or an unrelated
+  successful tool call. An explicitly unexecuted Helm validation/preparation
+  failure can be followed by a corrected call for the same target, release and
+  namespace; a real execution failure or unknown outcome remains unresolved.
+- Helm success is the actual release terminal state: the release must be
+  `deployed` and the revision and description must belong to that mutation.
+  Business health and functional acceptance remain task-level checks. Native MCP
+  `isError`, protocol errors and interrupted streams remain failures. Helm
+  parameters, values behavior, credential origin selection and failure handling
+  are defined in [NATURAL_LANGUAGE_DEPLOYMENT.md](NATURAL_LANGUAGE_DEPLOYMENT.md).
 - While a terminal command is running, target/session and in-console navigation
   remain locked so the original output and Stop control stay available. A failed
   stop request keeps the lock until a remote terminal result arrives. Background

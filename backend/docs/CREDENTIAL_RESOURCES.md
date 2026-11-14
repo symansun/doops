@@ -248,7 +248,8 @@ key 和 value 都不能为空。
 ```
 
 验证以本次请求的 Chart URL 和受管 payload 仓库 URL 为下载边界，带 HTTP Basic 读取真实 `.tgz`，
-校验 gzip/tar、`Chart.yaml`、`values.yaml` 并返回包摘要，不读取 `index.yaml`。
+校验 gzip/tar 与 `Chart.yaml` 并返回包摘要，不读取 `index.yaml`。`values.yaml` 可缺省，
+其业务 schema 和模板正确性由 Helm 校验，不在下载阶段增加限制。
 带凭据的下载 URL 必须属于 payload URL 的 HTTPS origin；仓库路径不参与权限匹配。认证请求的重定向、私网地址、无效包和超限失败关闭，
 不会改为匿名请求。当前 remote 仅支持 HTTPS `.tgz` 下载，不支持 `oci://`；调用方须在任务中指定
 HTTPS Chart，不会猜测、自动替换仓库路径或 fallback。
@@ -260,11 +261,11 @@ Chart 从自己的来源匿名下载，并通过相同的包内容校验。这�
 同时允许同一 target 使用多个 namespace、release 和 Chart。
 
 `ask --apply` 不必再用 `--credential` 点名 helmPull 凭据：授权已经由该 target 上的 active
-grant 决定，Gateway 按 (user, cluster, instance) 发现并按稳定 ID 选择，同名资源不会产生歧义。
-该 target 上有 0 个 helmPull 凭据时保持匿名下载，公开 Chart 照常可用；有 1 个时自动绑定，
-走的是与显式 `--credential` 完全相同的解析、物化与租约路径；有 2 个以上时返回
-`credential_reference_ambiguous`，由任务用 `--credential <name>` 指明 Chart 来自哪个仓库，
-Gateway 不猜。
+grant 决定，Gateway 按 (user, cluster, instance) 发现候选并按稳定 ID 去重，
+走的是与显式 `--credential` 相同的解析、物化与租约路径。Agent 按实际 Chart 的 HTTPS origin
+选择：没有匹配时匿名下载，唯一匹配时使用该凭据；只有同一 origin 匹配多个不同凭据时才返回
+`helm_credential_binding_ambiguous`，由任务用 `--credential <name>` 指明。
+绑定多个不同来源的仓库不会阻断发布，公共 Chart 也不需要先选择无关的私有凭据。
 
 公共 Chart 不需要新增凭据或授权记录。即使 target 已绑定私有仓库凭据，来源不同的公共
 Chart 仍直接匿名请求，不会先携带私有凭据尝试下载。匿名请求支持至多 9 次 HTTPS 重定向，
@@ -290,8 +291,7 @@ CLI 随错误给出 `credential list`、`credential configure --use helmPull` �
 发布时 Gateway 仍只发送物化元数据。Agent 为本次授权 prompt 建立临时、无 payload 的
 租约，结构化 Helm 内部匹配 session 与 credential/grant/version/resourceVersion；
 namespace、release、Chart 不是授权条件。凭据物化不下载历史 Chart。实际发布下载当前
-Chart 并验证后一次 staging，dry-run 与 Helm mutation 使用同一个文件。
-租约在 prompt 结束时移除；模型和公开 MCP 参数不读取、提交或回显 Secret 值。
+Chart，验证后只使用本次固定的 staging 文件；不读取、提交或回显 Secret 值。
 受管发布保留认证、target 权限与固定下载文件，允许任务指定的零或多个有序
 `value_files` 和非敏感 Chart-specific `set_strings`，不强制 bundled-only；覆盖资产不扩大
 凭据授权，未授权的远程 values 不可使用。普通升级不再隐式保留历史 values；完整迁移和
@@ -622,11 +622,12 @@ doops -session release-<commit> ask \
   --target <target> \
   --apply \
   --credential <resource-name> \
-  --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<digest>；原因：<reason>；验收：Secret 类型/key、rollout、实际镜像、健康检查和功能路径通过。'
+  --msg '在 <target> 的 namespace <namespace> 安装或升级 release <release>，使用 Chart <chart>；其它说明按任务需要提供。'
 ```
 
-Gateway 不从 resource name 推断执行事实。完整 workload/image/Helm 事实必须来自任务或任务指定的仓库、Chart、values、现有 release 的只读证据；不得猜测或要求将已明确资产中的
-事实再粘贴到 prompt。凭据授权只绑定 target，事实读取不能扩大 target 权限。
+Gateway 不从 resource name 推断执行事实。release、namespace 和 Chart 必须来自任务或任务指定
+的资产；凭据授权只绑定 target，事实读取不能扩大 target 权限。完整参数与终态契约见
+[`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 ## 状态和可见输出
 

@@ -50,18 +50,14 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 
 ## Canonical Architecture
 
-- Ordinary workload delivery uses an explicit natural-language task:
-  `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'`.
-- The task must state target, workload/service scope, reason, authorized Helm assets, and
-  machine-checkable acceptance criteria. Business image versions must come from the task or
-  read-only evidence from its task-specified repository, Chart, values, or existing release;
-  never guess them or require facts already in those assets to be pasted into the prompt.
-  Do not impose business-specific image keys, tag formats, CORS, repository, or directory gates.
-- Ordinary `upgrade-install` uses `--reset-values` with explicit Chart defaults, ordered optional
-  values overlays, and non-sensitive Chart-specific string overrides, never implicit historical
-  values inheritance. Keep managed Helm authentication, target authority, staged package identity,
-  session path isolation, and dry-run/final Deployment verification intact. Full asset, optional
-  `expected_image`, and migration contracts belong in
+- Helm delivery can use an explicit natural-language task:
+  `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'`,
+  or an authorized native Helm command through `doops -session <s> exec --target <t>`.
+- DoOps supplies the execution channel, target authorization and audit. Business release
+  eligibility belongs to the caller's project policy, not to a global DoOps gate.
+  Resolve execution parameters from the task or its specified assets; preserve native Helm
+  behavior, credential isolation and truthful execution evidence. Detailed asset, result and
+  migration contracts belong only in
   [NATURAL_LANGUAGE_DEPLOYMENT.md](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md).
 - GitHub Actions tests, scans, and publishes the public tag release assets (CLI, Gateway binaries,
   and the Skill bundle) from tags on `main`, gated by the same CI workflow and re-verified after
@@ -70,7 +66,7 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   pipeline. Gateway authenticates users, authorizes targets and credentials, routes traffic, and
   audits. The selected target Agent performs the actual Kubernetes or Helm mutation and returns
   live evidence.
-- For image/version inputs, the publisher must establish
+- For DoOps runtime image/version releases, the publisher must establish
   the exact source-commit and registry-digest provenance before invoking the command. The CLI
   and Agent validate the allowed input form and live result; they do not verify build origin.
 - Do not add or restore `EnvironmentRegistry`, `EnvironmentDefinition`, `DeploymentTemplate`,

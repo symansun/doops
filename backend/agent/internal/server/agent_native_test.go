@@ -63,6 +63,13 @@ func TestDoagentAllowedToolsUsesPermissionEngineForDiagnostics(t *testing.T) {
 		sliceContainsString(apply, "Bash") {
 		t.Fatalf("apply prompt tool boundary is unsafe: %#v", apply)
 	}
+	for _, skill := range []string{"k8s", "image-build"} {
+		tools := doagentAllowedTools(true, skill)
+		if !sliceContainsString(tools, "mcp_doops_helm") || sliceContainsString(tools, "mcp_doops_web") ||
+			sliceContainsString(tools, "Bash") {
+			t.Fatalf("Helm skill %q cannot execute its authorized task: %#v", skill, tools)
+		}
+	}
 	website := doagentAllowedTools(true, "doweb")
 	if !sliceContainsString(website, "mcp_doops_web") || sliceContainsString(website, "mcp_doops_helm") {
 		t.Fatalf("website prompt did not retain its domain boundary: %#v", website)

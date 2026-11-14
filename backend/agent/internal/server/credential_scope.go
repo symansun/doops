@@ -19,6 +19,8 @@ var (
 		regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,255}\b`),
 		regexp.MustCompile(`\b(?:sk|rk)_live_[A-Za-z0-9]{16,255}\b`),
 		regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36,255}\b`),
+		regexp.MustCompile(`(?i)\bauthorization\s*:\s*(?:bearer|basic)\s+\S+`),
+		regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[A-Za-z0-9+/=_-]{8,}\b`),
 	}
 )
 
@@ -187,9 +189,6 @@ func credentialScalarContainsInlineMaterial(value string) bool {
 			return true
 		}
 	}
-	if strings.Contains(lower, "bearer ") || strings.Contains(lower, "basic ") {
-		return true
-	}
 	parsed, err := url.Parse(value)
 	if err != nil {
 		return false
@@ -212,6 +211,8 @@ var credentialSecretLikeKeys = map[string]bool{
 	"registrypassword": true,
 }
 
+var credentialPATKeyPattern = regexp.MustCompile(`(?i:(^|[^a-z0-9])pat$)|[a-z0-9](?:Pat|PAT)$`)
+
 func normalizeCredentialKey(key string) string {
 	return strings.Map(func(char rune) rune {
 		switch char {
@@ -225,12 +226,12 @@ func normalizeCredentialKey(key string) string {
 
 func credentialSecretLikeKey(key string) bool {
 	normalized := normalizeCredentialKey(key)
-	if credentialSecretLikeKeys[normalized] {
+	if credentialSecretLikeKeys[normalized] || credentialPATKeyPattern.MatchString(strings.TrimSpace(key)) {
 		return true
 	}
 	for _, suffix := range []string{
 		"token", "password", "privatekey", "clientsecret", "apikey", "accesskey", "secretkey",
-		"credential", "pat", "passphrase", "dockerconfigjson", "sshidentity", "signature",
+		"credential", "githubpat", "gitlabpat", "passphrase", "dockerconfigjson", "sshidentity", "signature",
 	} {
 		if strings.HasSuffix(normalized, suffix) {
 			return true

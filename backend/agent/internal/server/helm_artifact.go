@@ -40,10 +40,12 @@ func fetchManagedHelmChart(ctx context.Context, repositoryURL, username, passwor
 	if err != nil || !strings.HasSuffix(endpoint.Path, ".tgz") {
 		return nil, "", errors.New("helm_chart_invalid")
 	}
+	// A credential is only sent to its own origin. A Chart from another origin
+	// is fetched anonymously, so public Charts are never blocked by an unrelated
+	// private repository binding and private credentials never reach that host.
 	if !strings.EqualFold(repository.Hostname(), endpoint.Hostname()) ||
 		managedHelmPort(repository) != managedHelmPort(endpoint) {
-		return nil, "", fmt.Errorf("helm_chart_scope_mismatch: credential origin %s:%s does not match chart origin %s:%s",
-			repository.Hostname(), managedHelmPort(repository), endpoint.Hostname(), managedHelmPort(endpoint))
+		username, password = "", ""
 	}
 	if (username == "") != (password == "") {
 		return nil, "", errors.New("managed_helm_auth_incomplete")
@@ -62,7 +64,12 @@ func fetchManagedHelmChart(ctx context.Context, repositoryURL, username, passwor
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, managedHelmCompressedLimit+1))
 	if err != nil {
-		return nil, "", errors.New("helm_chart_invalid")
+		var requestErr *url.Error
+		if errors.As(err, &requestErr) {
+			err = requestErr.Err
+		}
+		return nil, "", fmt.Errorf("helm_repository_unavailable: %s:%s: reading chart response: %s",
+			endpoint.Hostname(), managedHelmPort(endpoint), sanitizeSecretText(err.Error()))
 	}
 	if len(body) > managedHelmCompressedLimit {
 		return nil, "", errors.New("helm_chart_too_large")
@@ -132,8 +139,17 @@ func requestManagedHelmArtifact(ctx context.Context, endpoint *url.URL, username
 			// The wrapper includes the full URL, including a CDN's signed query.
 			err = requestErr.Err
 		}
+		detail := err.Error()
+		// Protocol errors may quote response bytes that echo the request's auth.
+		for _, secret := range []string{username, password, strings.TrimPrefix(request.Header.Get("Authorization"), "Basic ")} {
+			if secret != "" {
+				quoted := strconv.Quote(secret)
+				detail = strings.ReplaceAll(detail, quoted[1:len(quoted)-1], "...REDACTED")
+				detail = strings.ReplaceAll(detail, secret, "...REDACTED")
+			}
+		}
 		return nil, nil, fmt.Errorf("helm_repository_unavailable: %s:%s: %s",
-			endpoint.Hostname(), managedHelmPort(endpoint), sanitizeSecretText(err.Error()))
+			endpoint.Hostname(), managedHelmPort(endpoint), sanitizeSecretText(detail))
 	}
 	return response, client, nil
 }
@@ -188,7 +204,7 @@ func validateManagedHelmChart(ctx context.Context, body []byte) error {
 	archive := tar.NewReader(expanded)
 	seen := make(map[string]bool)
 	var root string
-	var chartYAML, valuesYAML []byte
+	var chartYAML []byte
 	for {
 		if err := ctx.Err(); err != nil {
 			return errors.New("helm_repository_unavailable")
@@ -234,18 +250,13 @@ func validateManagedHelmChart(ctx context.Context, body []byte) error {
 		if header.Size > managedHelmExpandedLimit || header.Size >= expanded.N {
 			return errors.New("helm_chart_too_large")
 		}
-		if name == root+"/Chart.yaml" || name == root+"/values.yaml" {
+		if name == root+"/Chart.yaml" {
 			if header.Typeflag != tar.TypeReg || header.Size > managedHelmYAMLLimit {
 				return invalid
 			}
-			content, err := io.ReadAll(archive)
+			chartYAML, err = io.ReadAll(archive)
 			if err != nil {
 				return invalid
-			}
-			if name == root+"/Chart.yaml" {
-				chartYAML = content
-			} else {
-				valuesYAML = content
 			}
 		}
 	}
@@ -268,7 +279,7 @@ func validateManagedHelmChart(ctx context.Context, body []byte) error {
 			return invalid
 		}
 	}
-	if compressed.Len() != 0 || chartYAML == nil || valuesYAML == nil {
+	if compressed.Len() != 0 || chartYAML == nil {
 		return invalid
 	}
 	var metadata struct {
@@ -279,10 +290,6 @@ func validateManagedHelmChart(ctx context.Context, body []byte) error {
 	if decodeManagedHelmYAML(chartYAML, &metadata) != nil ||
 		(metadata.APIVersion != "v1" && metadata.APIVersion != "v2") ||
 		metadata.Name != root || strings.TrimSpace(metadata.Version) == "" {
-		return invalid
-	}
-	var values map[string]any
-	if decodeManagedHelmYAML(valuesYAML, &values) != nil {
 		return invalid
 	}
 	return nil

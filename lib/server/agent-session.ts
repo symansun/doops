@@ -2,13 +2,13 @@ import { createHash, randomUUID } from "node:crypto"
 import { create } from "@bufbuild/protobuf"
 import { AgentWorkbenchSessionSource, type AgentWorkbenchEventInput } from "@agent-cloud/agent-ui/server"
 import {
-  CommandReceiptSchema, CommandReceiptState, MessageRole, SessionSnapshotSchema,
-  SessionStatus, TimelineItemStatus, AgentEventSchema, type CommandEnvelope, type CommandReceipt,
+  CommandReceiptSchema, CommandReceiptState, ContentBlockSchema, MessageRole, SessionSnapshotSchema,
+  SessionStatus, TimelineItemStatus, TimelineItemContentSchema, AgentEventSchema, type CommandEnvelope, type CommandReceipt,
 } from "@agent-cloud/agent-ui/protocol"
 import { classifyAgentAdmission } from "../agent-error"
 import { deploymentRequest, type DeploymentInput } from "../deployment"
 import { consumeAgentAttachment } from "./agent-attachments"
-import { AgentGatewayError, agentGatewayCall, type AgentGatewayContext } from "./agent-gateway-rpc"
+import { AgentGatewayError, agentGatewayCall, type AgentGatewayContext, type AgentGatewayPublicReceipt } from "./agent-gateway-rpc"
 import { DoopsAgentEventProjection } from "./agent-event-projection"
 
 type ActiveOperation = { command: CommandEnvelope; controller: AbortController; done: Promise<void>; uncertain: boolean }
@@ -34,7 +34,7 @@ function gatewayBusyAnswer(message: string): boolean {
 export async function authorizedAgentSession(context: AgentGatewayContext, signal: AbortSignal): Promise<HostedSession> {
   const key = createHash("sha256").update(JSON.stringify([context.gateway, context.token, context.cluster, context.instance, context.sessionId])).digest("hex")
   let raw: string
-  try { raw = await agentGatewayCall(context, { mode: "metadata" }, signal) } catch (error) {
+  try { raw = (await agentGatewayCall(context, { mode: "metadata" }, signal)).text } catch (error) {
     // The metadata read is an ask on this session, so the Gateway answers "busy" while this session's release runs.
     // That answer already proves the token and grant; reattach the caller to the release it hosts here. Only a
     // running command counts: once it ends, a busy answer comes from other work on the session (a write, a push)
@@ -180,9 +180,10 @@ async function runOperation(hosted: HostedSession, context: AgentGatewayContext,
   let failure: string | undefined
   let uncertain = false
   let canceled = false
+  let gatewayReceipt: AgentGatewayPublicReceipt | undefined
   let terminalEvents: AgentWorkbenchEventInput[] = []
   try {
-    await agentGatewayCall(context, { ...args, event_format: "acp" }, signal, (update) => {
+    const result = await agentGatewayCall(context, { ...args, event_format: "acp" }, signal, (update) => {
       updates = updates.then(async () => {
         if (update.kind === "error") throw new AgentGatewayError(update.data)
         if (update.kind !== "acp_update") throw new AgentGatewayError("Agent 返回了非结构化事件，协议不匹配")
@@ -194,10 +195,12 @@ async function runOperation(hosted: HostedSession, context: AgentGatewayContext,
       // Abort on a broken projection; never let a rejected update become a successful task.
       void updates.catch(() => hosted.active?.controller.abort())
     })
+    gatewayReceipt = result.structuredContent
     await updates
     if (!projection.finished) throw new AgentGatewayError("缺少 DoAgent turn_finished 终态，执行结果未确认")
     terminalEvents = projection.finishMessage(TimelineItemStatus.COMPLETED)
   } catch (error) {
+    if (error instanceof AgentGatewayError) gatewayReceipt = error.structuredContent || gatewayReceipt
     failure = error instanceof Error ? error.message : "智能体执行失败"
     // A queued admission provably created no turn, so it is not an active/uncertain operation and
     // may be retried in a new session. An unknown outcome or an unconfirmed queue cleanup may still
@@ -215,12 +218,30 @@ async function runOperation(hosted: HostedSession, context: AgentGatewayContext,
   if (uncertain) hosted.uncertainCommandIds.add(command.commandId)
   await hosted.source.emit([
     ...terminalEvents,
+    ...(command.command.case === "extension" && gatewayReceipt ? [gatewayReceiptEvent(command, gatewayReceipt)] : []),
     receiptEvent(receipt),
     { itemId: `status:${command.commandId}`, turnId: command.commandId, causationCommandId: command.commandId,
       event: create(AgentEventSchema, { event: { case: "sessionStatusChanged", value: { status, ...(receipt.error ? { error: receipt.error } : {}) } } }).event },
     ...(receipt.error ? [{ itemId: `error:${command.commandId}`, turnId: command.commandId,
       event: create(AgentEventSchema, { event: { case: "timelineItemAppended", value: { content: { content: { case: "error", value: { error: receipt.error } } } } } }).event }] : []),
   ], command.streamEpoch)
+}
+
+function gatewayReceiptEvent(command: CommandEnvelope, report: AgentGatewayPublicReceipt): AgentWorkbenchEventInput {
+  const itemId = `gateway-receipt:${command.commandId}`
+  const { summary: _summary, ...displayReport } = report
+  const text = `Gateway verified mutation receipt\n${JSON.stringify(displayReport, null, 2)}`
+  const content = create(TimelineItemContentSchema, {
+    content: { case: "system", value: { content: [create(ContentBlockSchema, {
+      contentId: `${itemId}:text`,
+      identity: { namespace: "doops.gateway", semanticKey: "verified-mutation-receipt", schemaVersion: "1" },
+      content: { case: "text", value: { text } },
+    })] } },
+  })
+  return {
+    itemId, turnId: command.commandId, causationCommandId: command.commandId,
+    event: create(AgentEventSchema, { event: { case: "timelineItemAppended", value: { content } } }).event,
+  }
 }
 
 async function promptArguments(context: AgentGatewayContext, command: CommandEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
@@ -269,13 +290,13 @@ async function promptArguments(context: AgentGatewayContext, command: CommandEnv
   }
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new AgentGatewayError("部署表单无效", 400)
   const envelope = input as Record<string, unknown>
-  if (envelope.confirmed !== true || Object.keys(envelope).some((key) => !["input", "confirmed"].includes(key)) ||
+  if (Object.keys(envelope).some((key) => key !== "input") ||
       !envelope.input || typeof envelope.input !== "object" || Array.isArray(envelope.input)) {
-    throw new AgentGatewayError("部署必须提交已确认的发布表单", 400)
+    throw new AgentGatewayError("部署表单必须只包含 input", 400)
   }
   const record = envelope.input as Record<string, unknown>
-  const fields = ["services", "release", "namespace", "chart", "values", "repository", "selector", "version", "commit", "ci", "reason", "acceptance", "credentials"]
-  if (Object.keys(record).some((key) => !fields.includes(key)) || fields.some((key) => typeof record[key] !== "string") || !["digest", "tag"].includes(record.selector as string)) {
+  const fields = ["release", "namespace", "chart", "values", "message", "credentials"]
+  if (Object.keys(record).some((key) => !fields.includes(key)) || fields.some((key) => typeof record[key] !== "string")) {
     throw new AgentGatewayError("部署表单字段无效", 400)
   }
   try {

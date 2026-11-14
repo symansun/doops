@@ -6,12 +6,14 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -194,8 +196,6 @@ func TestFetchManagedHelmChartRejectsInvalidURLsAndUnauthorizedScopeBeforeHTTP(t
 		{"repository query", repository + "?", chart, "helm_repository_invalid"},
 		{"repository fragment", repository + "#", chart, "helm_repository_invalid"},
 		{"whitespace", repository, " " + chart, "helm_chart_invalid"},
-		{"host", repository, "https://example.test/charts/team/app/v/1.0.0.tgz", "helm_chart_scope_mismatch"},
-		{"port", repository, "https://127.0.0.1:1/charts/team/app/v/1.0.0.tgz", "helm_chart_scope_mismatch"},
 		{"traversal", repository, repository + "/../elsewhere/app.tgz", "helm_chart_invalid"},
 		{"encoded traversal", repository, repository + "/%2e%2e/elsewhere/app.tgz", "helm_chart_invalid"},
 		{"encoded slash", repository, repository + "/app%2fv/1.0.0.tgz", "helm_chart_invalid"},
@@ -212,11 +212,6 @@ func TestFetchManagedHelmChartRejectsInvalidURLsAndUnauthorizedScopeBeforeHTTP(t
 			body, digest, err := fetchManagedHelmChart(context.Background(), test.repository, "helm", "url-canary-secret", test.chart)
 			if err == nil || strings.SplitN(err.Error(), ": ", 2)[0] != test.want || body != nil || digest != "" {
 				t.Fatalf("body nil=%t digest=%q error=%v, want %s", body == nil, digest, err, test.want)
-			}
-			if test.want == "helm_chart_scope_mismatch" &&
-				(!strings.Contains(err.Error(), "credential origin 127.0.0.1:") ||
-					!strings.Contains(err.Error(), "chart origin ")) {
-				t.Fatalf("origin mismatch must name the compared fields: %v", err)
 			}
 			assertCredentialCanaryNotInText(t, "error", err.Error(), "url-canary-secret")
 		})
@@ -302,6 +297,51 @@ func TestPublicHelmChartNetworkErrorDoesNotExposeSignedQuery(t *testing.T) {
 	}
 }
 
+func TestManagedHelmChartProtocolErrorDoesNotExposeCredentials(t *testing.T) {
+	const username, password = `synthetic-"http\user`, `synthetic-"http\password`
+	encodedAuth := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	var requests atomic.Int64
+	server := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if user, pass, ok := r.BasicAuth(); !ok || user != username || pass != password {
+			t.Error("request did not use the expected synthetic credential")
+		}
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		// HTTP parser errors can include server-controlled response bytes.
+		fmt.Fprintf(conn, "%s|%s|%s\r\n\r\n", username, password, encodedAuth)
+	}))
+	body, digest, err := fetchManagedHelmChart(t.Context(), server.URL, username, password, server.URL+"/app.tgz")
+	if err == nil || body != nil || digest != "" || requests.Load() != 1 {
+		t.Fatal("malformed authenticated response must fail without retrying or staging")
+	}
+	for _, canary := range []string{username, password, encodedAuth} {
+		assertCredentialCanaryNotInText(t, "protocol error", err.Error(), canary)
+		quoted := strconv.Quote(canary)
+		assertCredentialCanaryNotInText(t, "quoted protocol error", err.Error(), quoted[1:len(quoted)-1])
+	}
+	if !strings.HasPrefix(err.Error(), "helm_repository_unavailable: ") ||
+		!strings.Contains(err.Error(), "malformed HTTP response") {
+		t.Fatalf("protocol error lost its failure reason: %v", err)
+	}
+}
+
+func TestManagedHelmTruncatedDownloadIsNotAnInvalidChart(t *testing.T) {
+	server := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "1024")
+		_, _ = w.Write([]byte("incomplete chart stream"))
+	}))
+	_, _, err := fetchManagedHelmChart(t.Context(), server.URL, "", "", server.URL+"/app.tgz")
+	if err == nil || !strings.Contains(err.Error(), "helm_repository_unavailable:") ||
+		!strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "helm_chart_invalid") {
+		t.Fatalf("incomplete transfer was misclassified: %v", err)
+	}
+}
+
 func TestValidateManagedHelmChartAcceptsEmptyValues(t *testing.T) {
 	for _, values := range []string{"", " \n", "# No configurable values.\n"} {
 		t.Run(fmt.Sprintf("%q", values), func(t *testing.T) {
@@ -311,6 +351,40 @@ func TestValidateManagedHelmChartAcceptsEmptyValues(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestFetchManagedHelmChartLeavesValuesSemanticsToHelm(t *testing.T) {
+	for name, values := range map[string]string{
+		"invalid YAML":       "[broken",
+		"sequence":           "- value\n",
+		"duplicate keys":     "key: one\nkey: two\n",
+		"multiple documents": "key: value\n---\nother: value\n",
+		"large values":       "content: " + strings.Repeat("x", managedHelmYAMLLimit),
+	} {
+		t.Run(name, func(t *testing.T) {
+			entries := managedHelmTestEntries()
+			entries[1].body = []byte(values)
+			chart := managedHelmTestArchive(t, entries)
+			server := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(chart)
+			}))
+			body, digest, err := fetchManagedHelmChart(t.Context(), server.URL, "", "", server.URL+"/app.tgz")
+			if err != nil || !bytes.Equal(body, chart) || digest != fmt.Sprintf("sha256:%x", sha256.Sum256(chart)) {
+				t.Fatalf("values must reach Helm unchanged: body matches=%t err=%v", bytes.Equal(body, chart), err)
+			}
+		})
+	}
+}
+
+func TestValidateManagedHelmChartAcceptsMissingValuesAndNetworkPolicyOnlyTemplates(t *testing.T) {
+	entries := []managedHelmTestEntry{
+		{header: tar.Header{Name: "network-policy/Chart.yaml"}, body: []byte("apiVersion: v2\nname: network-policy\nversion: 1.0.0\n")},
+		{header: tar.Header{Name: "network-policy/templates/policy.yaml"}, body: []byte(
+			"apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: allow-dns\nspec:\n  podSelector: {}\n  policyTypes: [Ingress]\n")},
+	}
+	if err := validateManagedHelmChart(context.Background(), managedHelmTestArchive(t, entries)); err != nil {
+		t.Fatalf("valid NetworkPolicy-only Chart without values.yaml was rejected: %v", err)
 	}
 }
 
@@ -419,7 +493,6 @@ func TestFetchManagedHelmChartRejectsNonChartsAndUnsafeArchives(t *testing.T) {
 		{name: "trailing data", body: append(bytes.Clone(valid), []byte("extra")...)},
 		{name: "multiple gzip streams", body: append(bytes.Clone(valid), valid...)},
 		{name: "missing Chart.yaml", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry { return e[1:] }},
-		{name: "missing values.yaml", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry { return append(e[:1], e[2:]...) }},
 		{name: "invalid metadata", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry {
 			e[0].body = []byte("apiVersion: v2\nname: zhiyong\n")
 			return e
@@ -433,18 +506,16 @@ func TestFetchManagedHelmChartRejectsNonChartsAndUnsafeArchives(t *testing.T) {
 			return e
 		}},
 		{name: "bad YAML", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry { e[0].body = []byte("[broken"); return e }},
-		{name: "bad values", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry { e[1].body = []byte("[broken"); return e }},
-		{name: "values sequence", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry { e[1].body = []byte("- value\n"); return e }},
-		{name: "duplicate YAML key", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry {
-			e[1].body = []byte("key: one\nkey: two\n")
+		{name: "duplicate Chart metadata key", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry {
+			e[0].body = append(e[0].body, []byte("name: another\n")...)
 			return e
 		}},
-		{name: "multiple YAML documents", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry {
-			e[1].body = []byte("key: value\n---\nother: value\n")
+		{name: "multiple Chart metadata documents", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry {
+			e[0].body = append(e[0].body, []byte("---\nname: another\n")...)
 			return e
 		}},
-		{name: "YAML too large", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry {
-			e[1].body = bytes.Repeat([]byte("x"), managedHelmYAMLLimit+1)
+		{name: "Chart metadata too large", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry {
+			e[0].body = bytes.Repeat([]byte("x"), managedHelmYAMLLimit+1)
 			return e
 		}},
 		{name: "traversal", edit: func(e []managedHelmTestEntry) []managedHelmTestEntry {
