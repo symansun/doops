@@ -18,6 +18,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/internal/dispatcher"
+	_ "github.com/user/doops/agent/internal/dosql/sqldrivers"
 	"github.com/user/doops/agent/internal/server"
 	"github.com/user/doops/agent/pkg/release"
 )

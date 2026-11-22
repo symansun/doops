@@ -35,7 +35,7 @@ it: `backend/gateway` (via `pkg/gatewaycmd`) and `backend/agent/cmd/agent`.
 | `tool_dispatch.go`, `tool_handlers_*.go` | Agent | All executable Agent handlers, grouped by domain; dispatch does not grant client access |
 | `doagent_*` | Agent | doagent ACP bridge, tool binding, final answer, UI events |
 | `mutation_authority.go`, `json_digest.go`, `retired_ws.go` | Agent | Signed mutation authorization, attestation digests, retired inbound `/ws` |
-| `dosql_*` | Agent | DoSql direct execution and database runner |
+| `dosql_*` | Agent | DoSQL execution and database runner. `cmd/agent` registers `database/sql` drivers via `internal/dosql/sqldrivers`; shared server code must not blank-import drivers for registration. |
 | `helm_*`, `native_helm_context.go`, `k8s_*` | Agent | Helm tool, managed Helm auth, Kubernetes MCP |
 | `self_upgrade_request.go` | Both | Upgrade arguments and image validation |
 | `self_upgrade.go`, `self_upgrade_cluster.go`, `self_upgrade_job.go`, `self_upgrade_scripts.go` | Agent | Upgrade orchestration, cluster discovery, Job lifecycle and embedded scripts |

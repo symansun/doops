@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	_ "github.com/user/doops/agent/internal/dosql/sqldrivers" // same registrations as cmd/agent
 	_ "modernc.org/sqlite"
 )
 
