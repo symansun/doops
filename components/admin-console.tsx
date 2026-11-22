@@ -3,6 +3,7 @@
 import { Badge, Button, Checkbox, Input, PageTabs, Select, StatusBanner } from "./ui"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
+import { formatDateTime } from "@/lib/format"
 import {
   GRANT_ALL,
   grantInstanceChoices,
@@ -55,12 +56,7 @@ import { useAppDialog } from "./app-dialog"
 import { RefreshIcon, PlusIcon, TrashIcon, BanIcon, CheckIcon, CopyIcon } from "./icons"
 
 
-function fmtTime(v?: string): string {
-  if (!v) return "—"
-  const d = new Date(v)
-  if (Number.isNaN(d.getTime())) return v
-  return d.toLocaleString()
-}
+const fmtTime = (v?: string) => formatDateTime(v)
 
 export function AdminConsole({
   session,

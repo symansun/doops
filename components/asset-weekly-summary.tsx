@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { assetRequest } from "@/lib/assets"
+import { formatDateTime } from "@/lib/format"
 import { Button, Select } from "./ui"
 
 const labels = {
@@ -29,8 +30,7 @@ type Duty = {
 }
 type Weekly = Record<keyof typeof labels, number> & { rows: Duty[]; as_of: string }
 type Props = { clusterId?: string; onOpen: (runId: number) => void }
-const at = (unix: number, zone: string) =>
-  new Date(unix * 1000).toLocaleString("zh-CN", { timeZone: zone, hour12: false })
+const at = (unix: number, zone: string) => formatDateTime(unix, { unit: "s", timeZone: zone })
 
 export function AssetWeeklySummary(props: Props) {
   return <WeeklyScope key={props.clusterId || ""} {...props} />

@@ -8,14 +8,21 @@ export const AGENT_MODEL_MISSING = "Gateway 还没有可下发到该节点的模
 export const AGENT_MODEL_MISSING_HINT = "该目标还没有绑定 DoAgent 模型。平台管理员可在「凭据」里为该目标绑定并激活 modelProvider 凭据"
 
 // ConnectError prefixes its message with the RPC code, e.g. "[unavailable] ...".
-const CONNECT_CODE_PREFIX = /^\[[a-z_]+\]\s*/
+// ConnectError 可能连着带多层前缀（"[doops_operation_failed] [aborted] …"），要全部去掉。
+const CONNECT_CODE_PREFIX = /^(?:\[[a-z_]+\]\s*)+/
+
+// stripConnectCode 是这条规则唯一的实现：deployment.ts 的 agentErrorText 也用它，
+// 避免两处正则各自漂移。
+export function stripConnectCode(raw: string | null | undefined): string {
+  return (raw ?? "").replace(CONNECT_CODE_PREFIX, "").trim()
+}
 
 // agentErrorMessage turns a DoAgent session error into the text shown to users:
 // no transport code prefix, and the missing-model case says what to do next.
 export function agentErrorMessage(raw: string | null | undefined): string | null {
   const trimmed = (raw ?? "").trim()
   if (!trimmed) return null
-  const message = trimmed.replace(CONNECT_CODE_PREFIX, "").trim()
+  const message = stripConnectCode(trimmed)
   if (!message) return "智能体连接失败"
   if (message === AGENT_MODEL_MISSING) return AGENT_MODEL_MISSING_HINT
   // Gateway 敏感词过滤命中提示词时不回显命中词，只返回稳定类别。

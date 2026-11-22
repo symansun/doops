@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { assetRequest } from "@/lib/assets"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
+import { formatDateTime } from "@/lib/format"
 import { Button, Input, Select } from "./ui"
 import type { ClusterListState, ClusterSourcePage, RenderAssetTargetAction } from "./asset-inventory"
 import { AssetNodeLinks } from "./asset-node-links"
@@ -21,10 +22,7 @@ const emptyProfile:Profile={id:"",name:"",environment:"",contact:"",revision:0}
 type ImportInput = { asset_id: string; name: string; cluster: string; instance: string; namespace?: string }
 const emptyForm = { id: "", name: "", target: "", namespace: "" }
 
-function observedTime(value?: string) {
-  if (!value) return "—"
-  return new Date(value).toLocaleString("zh-CN", { hour12: false })
-}
+const observedTime = (value?: string) => formatDateTime(value)
 
 export function ClusterAssetsPanel({ session, targets, selectedTarget, initialPage, onOpenTargetK8s, renderTargetAction }: {
   session: Session
