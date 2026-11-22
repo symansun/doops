@@ -40,9 +40,11 @@ function isTerminal(status: string): boolean {
 export function BackgroundTasksPanel({
   session,
   target,
+  embedded = false,
 }: {
   session: Session
   target: Target
+  embedded?: boolean
 }) {
   const [tasks, setTasks] = useState<BackgroundTaskView[] | null>(null)
   const [error, setError] = useState("")
@@ -125,10 +127,12 @@ export function BackgroundTasksPanel({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4">
+    <div className={embedded ? "flex flex-col gap-3" : "flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4"}>
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="font-semibold">后台任务</h2>
+          <h2 className="font-semibold">
+            {embedded ? `后台运行任务（${target.cluster}/${target.instance}）` : "后台任务"}
+          </h2>
           <p className="text-xs text-muted-foreground">
             Gateway 托管的 exec --bg / 后台运行任务；离开页面不会中断，仅本人可见、可停止
           </p>

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
+import { assetRequest, isDemoAssetsActive } from "@/lib/assets"
 import { consoleFetch } from "@/lib/network-error"
 import { Button, Checkbox, Input, Select, Textarea } from "./ui"
 
@@ -68,7 +69,10 @@ function ScopedCoverageSummary({ onOpen, clusterId }: SummaryProps) {
     setData(null); setError("")
     const query = new URLSearchParams({ summary: "1" })
     if (clusterId !== undefined) query.set("cluster_id", clusterId)
-    consoleFetch(`${endpoint}?${query}`, { cache: "no-store", signal: controller.signal }).then(checked).then(r => r.json()).then((summary: Summary) => {
+    const loader = isDemoAssetsActive()
+      ? assetRequest<Summary>("coverage", undefined, query, controller.signal)
+      : consoleFetch(`${endpoint}?${query}`, { cache: "no-store", signal: controller.signal }).then(checked).then(r => r.json() as Promise<Summary>)
+    loader.then((summary: Summary) => {
       if (!controller.signal.aborted) setData(summary)
     }).catch(err => { if (!controller.signal.aborted) setError(err.message) })
     const reload = () => retry(n => n + 1)
@@ -159,7 +163,10 @@ function CoverageWorkspace({ clusterId }: { clusterId?: string }) {
   useEffect(() => {
     const controller = new AbortController()
     setError(""); setLoaded(null)
-    consoleFetch(address, { cache: "no-store", signal: controller.signal }).then(checked).then(r => r.json()).then((data: Report) => {
+    const loader = isDemoAssetsActive()
+      ? assetRequest<Report>("coverage", undefined, query, controller.signal)
+      : consoleFetch(address, { cache: "no-store", signal: controller.signal }).then(checked).then(r => r.json() as Promise<Report>)
+    loader.then((data: Report) => {
       if (!controller.signal.aborted) setLoaded({ key, data })
     }).catch(err => { if (!controller.signal.aborted) setError(err.message) })
     return () => controller.abort()
@@ -173,20 +180,35 @@ function CoverageWorkspace({ clusterId }: { clusterId?: string }) {
     setBusy(true); setError("")
     try {
       if (request.action !== "export") {
-        await checked(await consoleFetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-          body: JSON.stringify({ ...request, cluster_id: clusterId }) }))
+        if (isDemoAssetsActive()) {
+          await assetRequest("coverage", { ...request, cluster_id: clusterId }, undefined, controller.signal)
+        } else {
+          await checked(await consoleFetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+            body: JSON.stringify({ ...request, cluster_id: clusterId }) }))
+        }
         if (request.action === "freeze") changeBaseline(request.baseline_id)
       } else {
-        // Pin "latest" to the exact version displayed even if another admin freezes concurrently.
-        if (report.baseline) query.set("baseline_id", report.baseline.id)
-        query.set("format", "csv")
-        const response = await checked(await consoleFetch(`${endpoint}?${query}`, { cache: "no-store", signal: controller.signal }))
-        const blob = await response.blob()
-        if (controller.signal.aborted) return
-        const url = URL.createObjectURL(blob); const link = document.createElement("a")
-        link.href = url; link.download = `coverage-${clusterId || "platform"}-${report.baseline?.id || "live"}-${kind}-${status}.csv`; link.click()
-        window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-        if (report.baseline) setBaseline(report.baseline.id)
+        if (isDemoAssetsActive()) {
+          const lines = [
+            "kind,asset_id,name,covered",
+            ...report.rows.map((r) => `${r.kind},${r.asset_id},"${r.name.replace(/"/g, '""')}",${r.covered ? "covered" : "gap"}`),
+          ]
+          const blob = new Blob([`\uFEFF${lines.join("\n")}\n`], { type: "text/csv;charset=utf-8" })
+          const url = URL.createObjectURL(blob); const link = document.createElement("a")
+          link.href = url; link.download = `coverage-${clusterId || "platform"}-${report.baseline?.id || "live"}-${kind}-${status}.csv`; link.click()
+          window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+        } else {
+          // Pin "latest" to the exact version displayed even if another admin freezes concurrently.
+          if (report.baseline) query.set("baseline_id", report.baseline.id)
+          query.set("format", "csv")
+          const response = await checked(await consoleFetch(`${endpoint}?${query}`, { cache: "no-store", signal: controller.signal }))
+          const blob = await response.blob()
+          if (controller.signal.aborted) return
+          const url = URL.createObjectURL(blob); const link = document.createElement("a")
+          link.href = url; link.download = `coverage-${clusterId || "platform"}-${report.baseline?.id || "live"}-${kind}-${status}.csv`; link.click()
+          window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+          if (report.baseline) setBaseline(report.baseline.id)
+        }
       }
       refresh(value => value + 1)
     } catch (err) {
@@ -219,6 +241,5 @@ function CoverageWorkspace({ clusterId }: { clusterId?: string }) {
 }
 
 export function AssetCoveragePanel({ session, clusterId }: { session: Session; clusterId?: string }) {
-  if (session.demo) return <p className="card-surface p-4">请连接 Gateway 查看盘点基线。</p>
-  return <CoverageWorkspace clusterId={clusterId} key={JSON.stringify([clusterId, session.gateway, session.username, session.tokenId, session.token, session.isAdmin])} />
+  return <CoverageWorkspace clusterId={clusterId} key={JSON.stringify([clusterId, session.gateway, session.username, session.tokenId, session.token, session.isAdmin, Boolean(session.demo)])} />
 }

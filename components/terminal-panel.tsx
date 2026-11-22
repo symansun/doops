@@ -172,7 +172,7 @@ export function TerminalPanel({
         (ev) => {
           if (ev.type === "background_task") {
             submitted = true
-            push({ kind: "info", text: `已提交后台任务 #${ev.audit_id}，离开页面不会中断；在「后台任务」查看或停止` })
+            push({ kind: "info", text: `已提交后台任务 #${ev.audit_id}，离开页面不会中断；在「自动化 → 后台运行任务」查看或停止` })
             return
           }
           if (ev.type === "output") {
@@ -192,7 +192,7 @@ export function TerminalPanel({
     } catch (err) {
       // 本地流被释放不代表任务停止；已提交的任务仍由 Gateway 托管。
       if (submitted) {
-        push({ kind: "info", text: "本地流已结束；任务仍在后台运行，在「后台任务」查看终态" })
+        push({ kind: "info", text: "本地流已结束；任务仍在后台运行，在「自动化 → 后台运行任务」查看终态" })
       } else {
         fail((err as Error).message)
       }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
-import { consoleFetch } from "@/lib/network-error"
+import { assetRequest } from "@/lib/assets"
 import { Button, Checkbox, Input, Select } from "./ui"
 
 type Asset = { asset_id: string; cluster: string; instance: string; cluster_id: string }
@@ -88,15 +88,7 @@ const reasons: Record<string, string> = {
 const date = (v: number) => new Date(v * 1000).toLocaleString("zh-CN", { hour12: false })
 const assetKey = (a: Asset) => JSON.stringify([a.cluster, a.instance, a.asset_id])
 async function request<T>(query: URLSearchParams, body?: object, signal?: AbortSignal): Promise<T> {
-  const response = await consoleFetch(`/api/assets/inspections?${query}`, {
-    method: body ? "POST" : "GET",
-    cache: "no-store",
-    signal,
-    ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
-  })
-  const value = await response.json()
-  if (!response.ok) throw new Error(value.message || value.error || `HTTP ${response.status}`)
-  return value
+  return assetRequest<T>("inspections", body, query, signal)
 }
 export { AssetWeeklySummary } from "./asset-weekly-summary"
 
@@ -128,7 +120,7 @@ function InspectionWorkspace({
   clusterId?: string
   initialRunId?: number
 }) {
-  const admin = sessionIsAdmin(session) && !session.demo
+  const admin = sessionIsAdmin(session)
   const [data, setData] = useState<Overview | null>(null),
     [report, setReport] = useState<Report | null>(null),
     [run, setRun] = useState(initialRunId),
@@ -159,7 +151,6 @@ function InspectionWorkspace({
     setData(null)
     setReport(null)
     setError("")
-    if (session.demo) return
     const params = new URLSearchParams(clusterId ? { cluster_id: clusterId } : {})
     Promise.all([
       request<Overview>(params, undefined, ctrl.signal),
@@ -239,13 +230,6 @@ function InspectionWorkspace({
   }
   const flip = (list: string[], key: string) =>
     list.includes(key) ? list.filter((v) => v !== key) : [...list, key]
-  if (session.demo)
-    return (
-      <section className="card-surface p-4">
-        <h2>每周巡检</h2>
-        <p>登录 Gateway 后可读取真实计划和采样证据。</p>
-      </section>
-    )
   return (
     <section aria-label="每周巡检" className="card-surface min-w-0 space-y-4 p-4">
       <header className="flex flex-wrap items-center justify-between gap-2">

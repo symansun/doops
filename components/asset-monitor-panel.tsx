@@ -2,24 +2,30 @@
 
 import { useEffect, useState, type FormEvent } from "react"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
+import { triggerMonitorRun } from "@/lib/monitor-engine"
 import { consoleFetch } from "@/lib/network-error"
 import { AgentPicker } from "./agent-picker"
-import { Button, Input, Select } from "./ui"
+import { Badge, Button, Input, Select } from "./ui"
 
 const kinds: Record<string, string> = {
-  machine: "机器",
+  machine: "机器 / 虚机",
+  container: "容器",
   os: "操作系统",
   kernel: "内核",
   process: "进程",
-  app: "应用",
+  app: "应用 / Pod",
   database: "数据库",
 }
 const metrics: Record<string, string> = {
   cpu: "CPU",
   memory: "内存",
+  memory_limit: "内存上限",
   gpu: "GPU",
   network: "网络吞吐",
   requests: "请求速率",
+  response_time_ms: "应用响应时间",
+  active_connections: "并发连接数",
+  error_rate: "应用错误率",
   storage_total: "存储总量",
   storage: "存储已用",
   storage_available: "存储可用",
@@ -33,9 +39,13 @@ const metrics: Record<string, string> = {
 const units: Record<string, string> = {
   cpu: "cores",
   memory: "bytes",
+  memory_limit: "bytes",
   gpu: "%",
   network: "bytes/s",
   requests: "req/s",
+  response_time_ms: "ms",
+  active_connections: "connections",
+  error_rate: "%",
   storage_total: "bytes",
   storage: "bytes",
   storage_available: "bytes",
@@ -94,8 +104,58 @@ type Props = {
   initialSelection?: AssetMonitorSelection
 }
 const stamp = (at: number) => new Date(at).toLocaleString("zh-CN", { hour12: false })
-const sourceName = (origin: string) => (origin === "k8s_top" ? "Agent · kubectl top" : "可信 exporter")
+function sourceName(origin: string): string {
+  switch (origin) {
+    case "k8s_top": return "Agent · K8s Pod"
+    case "agent_host": return "Agent · 虚拟机/主机"
+    case "container_stats": return "Agent · 容器运行时"
+    case "app_probe": return "Agent · 应用探测"
+    default: return "可信 exporter"
+  }
+}
 const assetKey = (a: Asset) => JSON.stringify([a.type, a.asset_id, a.namespace, a.origin])
+
+function humanBytesHint(unit: string, value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value < 1024) return ""
+  const isRate = unit === "bytes/s"
+  if (unit !== "bytes" && !isRate) return ""
+  const suffixes = ["B", "KiB", "MiB", "GiB", "TiB"]
+  let v = value
+  let idx = 0
+  while (v >= 1024 && idx < suffixes.length - 1) {
+    v /= 1024
+    idx++
+  }
+  return `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${suffixes[idx]}${isRate ? "/s" : ""}`
+}
+
+function visibleMetricsForAsset(asset: Asset, seriesList: Series[]): string[] {
+  const present = new Set(seriesList.map((s) => s.metric))
+  if (asset.type === "container") {
+    const base = ["cpu", "memory", "memory_limit"]
+    for (const m of Object.keys(metrics)) if (present.has(m) && !base.includes(m)) base.push(m)
+    return base
+  }
+  if (asset.type === "kernel") {
+    const base = ["cpu", "memory"]
+    for (const m of Object.keys(metrics)) if (present.has(m) && !base.includes(m)) base.push(m)
+    return base
+  }
+  if (asset.type === "app" && asset.origin === "app_probe") {
+    const base = ["response_time_ms", "error_rate", "active_connections", "requests"]
+    for (const m of Object.keys(metrics)) if (present.has(m) && !base.includes(m)) base.push(m)
+    return base
+  }
+  if (asset.type === "app" && asset.origin === "k8s_top") {
+    const base = ["cpu", "memory"]
+    for (const m of Object.keys(metrics)) if (present.has(m) && !base.includes(m)) base.push(m)
+    return base
+  }
+  return Object.keys(metrics).filter((m) => {
+    if ((m.startsWith("disk_") || m === "memory_limit" || m === "response_time_ms" || m === "active_connections" || m === "error_rate") && !present.has(m)) return false
+    return true
+  })
+}
 
 function deviceLabel(metric: string, id?: string) {
   if (metric.startsWith("disk_")) return id ? `块设备 ${id}` : ""
@@ -105,7 +165,11 @@ function deviceLabel(metric: string, id?: string) {
   return id ? `GPU UUID ${id}` : ""
 }
 
-async function request<T>(url: string, signal?: AbortSignal, body?: object): Promise<T> {
+async function request<T>(url: string, signal?: AbortSignal, body?: object, demo = false): Promise<T> {
+  if (demo) {
+    const { demoAssetMonitorRead, demoAssetMonitorWrite } = await import("@/lib/demo")
+    return (body ? demoAssetMonitorWrite(body as Record<string, unknown>) : demoAssetMonitorRead(url)) as Promise<T>
+  }
   const res = await consoleFetch(url, {
     cache: "no-store",
     signal,
@@ -119,13 +183,13 @@ async function request<T>(url: string, signal?: AbortSignal, body?: object): Pro
   }
   return res.json()
 }
-function useMonitorRead<T>(url: string, revision = 0) {
-  const key = `${revision}:${url}`
+function useMonitorRead<T>(url: string, revision = 0, demo = false) {
+  const key = `${demo ? "demo" : "live"}:${revision}:${url}`
   const [result, setResult] = useState<{ key: string; data?: T; error?: string }>()
   useEffect(() => {
     if (!url) return
     const ctrl = new AbortController()
-    request<T>(url, ctrl.signal)
+    request<T>(url, ctrl.signal, undefined, demo)
       .then((data) => {
         if (!ctrl.signal.aborted) setResult({ key, data })
       })
@@ -133,7 +197,7 @@ function useMonitorRead<T>(url: string, revision = 0) {
         if (!ctrl.signal.aborted) setResult({ key, error: String(err.message) })
       })
     return () => ctrl.abort()
-  }, [key, url])
+  }, [key, url, demo])
   return result?.key === key ? result : { key }
 }
 function History({ s, d }: { s: Series; d: Detail }) {
@@ -191,12 +255,14 @@ function MetricCard({
   metric,
   series: s,
   detail,
+  extraBadge,
   admin,
   save,
 }: {
   metric: string
   series?: Series
   detail: Detail
+  extraBadge?: string
   admin: boolean
   save: (metric: string, device: string | undefined, rule: Rule) => Promise<void>
 }) {
@@ -221,9 +287,12 @@ function MetricCard({
   }
   return (
     <article className="min-w-0 rounded-lg border bg-card p-3">
-      <h4 className="text-sm font-semibold">
-        {metrics[metric]} <small className="text-muted-foreground">{s?.unit ?? units[metric]}</small>
-      </h4>
+      <div className="flex flex-wrap items-center justify-between gap-1.5">
+        <h4 className="text-sm font-semibold">
+          {metrics[metric]} <small className="text-muted-foreground">{s?.unit ?? units[metric]}</small>
+        </h4>
+        {extraBadge && <Badge variant="outline">{extraBadge}</Badge>}
+      </div>
       {s && deviceLabel(metric, s.device_id) && (
         <p className="break-all font-mono text-xs">
           {deviceLabel(metric, s.device_id)}
@@ -233,10 +302,15 @@ function MetricCard({
         <p className="mt-2 text-sm text-muted-foreground">尚无采集样本</p>
       ) : (
         <>
-          <p className="mt-1 text-sm">
+          <p className="mt-1 font-mono text-sm">
             {s.latest.status === "ok"
               ? `${s.latest.value?.toLocaleString(undefined, { maximumSignificantDigits: 7 })} ${s.unit}`
               : states[s.latest.status]}
+            {s.latest.status === "ok" && humanBytesHint(s.unit, s.latest.value) && (
+              <span className="ml-1.5 text-xs text-muted-foreground">
+                ({humanBytesHint(s.unit, s.latest.value)})
+              </span>
+            )}
             {s.stale && " · 采样已过期"}
           </p>
           <small className="text-muted-foreground">最近观测 {stamp(s.latest.at_ms)}</small>
@@ -267,7 +341,7 @@ function MetricCard({
                     name="threshold"
                     type="number"
                     min="0"
-                    max={metric === "gpu" ? 100 : undefined}
+                    max={metric === "gpu" || metric === "error_rate" ? 100 : undefined}
                     step="any"
                     required
                     defaultValue={s.rule?.threshold}
@@ -311,8 +385,10 @@ export function AgentMonitor({
     [range, setRange] = useState("1h"),
     [revision, refresh] = useState(0)
   const [ns, setNs] = useState(""),
-    [busy, setBusy] = useState(false),
+    [busyMode, setBusyMode] = useState<"" | "host" | "containers" | "apps" | "k8s_pods" | "inspect">(""),
     [notice, setNotice] = useState("")
+  const demo = Boolean(session.demo)
+  const busy = busyMode !== ""
   const route = {
     cluster: target.cluster,
     instance: target.instance,
@@ -320,54 +396,131 @@ export function AgentMonitor({
   }
   const endpoint = "/api/assets/monitor",
     listQuery = new URLSearchParams({ ...route, ...(kind ? { type: kind } : {}) })
-  const catalog = useMonitorRead<{ assets: Asset[] }>(`${endpoint}?${listQuery}`, revision)
+  const catalog = useMonitorRead<{ assets: Asset[] }>(`${endpoint}?${listQuery}`, revision, demo)
   const assets = catalog.data?.assets,
     asset = assets?.find((a) => assetKey(a) === selected) ?? assets?.[0]
   const detailUrl = asset ? `${endpoint}?${new URLSearchParams({ ...route, ...asset, range })}` : ""
-  const detail = useMonitorRead<Detail>(detailUrl, revision)
-  async function collect(e: FormEvent) {
-    e.preventDefault()
-    setBusy(true)
+  const detail = useMonitorRead<Detail>(detailUrl, revision, demo)
+  async function collectByMode(mode: "host" | "containers" | "apps" | "k8s_pods") {
+    setBusyMode(mode)
     setNotice("")
     try {
-      const res = await request<{ accepted: number }>(endpoint, undefined, {
-        ...route,
-        action: "collect",
-        namespace: ns,
-      })
-      setNotice(`已完成观测，接收 ${res.accepted} 个指标样本`)
+      const res = await request<{ accepted: number; runtime?: string }>(
+        endpoint,
+        undefined,
+        {
+          ...route,
+          action: "collect",
+          mode,
+          ...(mode === "k8s_pods" ? { namespace: ns } : {}),
+        },
+        demo,
+      )
+      const label =
+        mode === "host"
+          ? "虚拟机/主机指标"
+          : mode === "containers"
+            ? `${res.runtime || "容器运行时"} 容器指标`
+            : mode === "apps"
+              ? "应用响应/连接/错误率指标"
+              : `命名空间 ${ns} Pod 指标`
+      setNotice(`已完成 ${label} 观测，写入 ${res.accepted} 个样本`)
+      if (mode === "containers" && kind && kind !== "container") setKind("container")
+      if (mode === "apps" && kind && kind !== "app") setKind("app")
+      if (mode === "host" && kind && kind !== "machine" && kind !== "kernel") setKind("machine")
       refresh((x) => x + 1)
     } catch (e) {
       setNotice((e as Error).message)
     } finally {
-      setBusy(false)
+      setBusyMode("")
     }
   }
+  async function runTargetStrategyInspect() {
+    setBusyMode("inspect")
+    setNotice("")
+    try {
+      const res = await triggerMonitorRun(session, {
+        scope_mode: "targets",
+        targets: [{ cluster: target.cluster, instance: target.instance }],
+      })
+      setNotice(`策略巡检完成（#${res.run.id}）：${res.run.summary || `写入 ${res.run.metrics_written} 条指标`}`)
+      refresh((x) => x + 1)
+    } catch (e) {
+      setNotice((e as Error).message)
+    } finally {
+      setBusyMode("")
+    }
+  }
+  async function collect(e: FormEvent) {
+    e.preventDefault()
+    await collectByMode("k8s_pods")
+  }
   async function save(metric: string, device_id: string | undefined, rule: Rule) {
-    await request(endpoint, undefined, { ...route, ...asset, action: "rule", metric, device_id, ...rule })
+    await request(endpoint, undefined, { ...route, ...asset, action: "rule", metric, device_id, ...rule }, demo)
     refresh((x) => x + 1)
     setNotice("规则已保存，从后续样本开始判定。")
   }
   return (
     <div className="space-y-4">
-      <form onSubmit={collect} className="flex flex-wrap items-end gap-2">
-        <label className="text-sm">
-          K8s 命名空间
-          <Input
-            required
-            value={ns}
-            maxLength={63}
-            pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?"
-            onChange={(e) => setNs(e.target.value)}
-          />
-        </label>
-        <Button type="submit" disabled={busy || target.status === "offline"}>
-          {busy ? "正在采集" : "采集 Pod CPU / 内存"}
-        </Button>
-        <Button type="button" onClick={() => refresh((x) => x + 1)}>
-          刷新观测
-        </Button>
-      </form>
+      <div className="card-surface flex flex-wrap items-end justify-between gap-3 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            disabled={busy || target.status === "offline"}
+            onClick={() => void runTargetStrategyInspect()}
+          >
+            {busyMode === "inspect" ? "策略巡检中…" : "全策略巡检采集"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy || target.status === "offline"}
+            onClick={() => void collectByMode("host")}
+          >
+            {busyMode === "host" ? "采集中…" : "采集虚拟机 / 主机"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy || target.status === "offline"}
+            onClick={() => void collectByMode("containers")}
+          >
+            {busyMode === "containers" ? "采集中…" : "采集运行中容器"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy || target.status === "offline"}
+            onClick={() => void collectByMode("apps")}
+          >
+            {busyMode === "apps" ? "采集中…" : "采集应用指标"}
+          </Button>
+          <Button type="button" size="sm" onClick={() => refresh((x) => x + 1)}>
+            刷新观测
+          </Button>
+        </div>
+
+        <form onSubmit={collect} className="flex flex-wrap items-end gap-2">
+          <label className="text-xs text-muted-foreground">
+            K8s 命名空间
+            <Input
+              scale="sm"
+              required
+              value={ns}
+              maxLength={63}
+              placeholder="例如 apps"
+              pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?"
+              onChange={(e) => setNs(e.target.value)}
+              className="mt-1 w-40 font-mono"
+            />
+          </label>
+          <Button type="submit" size="sm" disabled={busy || target.status === "offline"}>
+            {busyMode === "k8s_pods" ? "采集中…" : "采集 K8s Pod"}
+          </Button>
+        </form>
+      </div>
       {notice && (
         <p role="status" className="text-sm">
           {notice}
@@ -418,32 +571,42 @@ export function AgentMonitor({
       ) : !assets ? (
         <p role="status">正在读取授权来源…</p>
       ) : !asset ? (
-        <p className="text-sm">当前来源和类型尚无监控样本。要查看主机指标，请核对采集器上报状态。要查看 Pod 指标，请选择在线目标并填写命名空间，然后点击「采集 Pod CPU / 内存」。</p>
+        <p className="text-sm text-muted-foreground">
+          当前来源和类型尚无监控样本。若目标 Agent 在线，可直接点击上方「采集虚拟机 / 主机」「采集运行中容器」或填写命名空间采集 K8s Pod；也可由主机采集器定时上报。
+        </p>
       ) : !detail.data ? (
         <p role="status">正在读取时间序列…</p>
       ) : (
         <>
           <p className="text-xs text-muted-foreground">
-            {sourceName(asset.origin)} · {target.cluster}/{target.instance} ·{" "}
-            {asset.origin === "k8s_top" ? "Gateway 观测时间" : "采集器观测时间"} · 缺样或间隔超过 5
+            {sourceName(asset.origin)} · <span className="font-mono">{target.cluster}/{target.instance}</span> ·{" "}
+            {asset.origin === "exporter" ? "采集器观测时间" : "Agent 隧道采样时间"} · 缺样或间隔超过 5
             分钟时曲线断开
           </p>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {Object.keys(metrics).flatMap((metric) => {
-              const matches = detail.data!.series.filter((series) => series.metric === metric)
-              if (metric.startsWith("disk_") && !matches.length) return []
-              const cards: Array<Series | undefined> = matches.length ? matches : [undefined]
-              return cards.map((series) => (
-                <MetricCard
-                  key={JSON.stringify([assetKey(asset), metric, series?.device_id])}
-                  metric={metric}
-                  series={series}
-                  detail={detail.data!}
-                  admin={sessionIsAdmin(session)}
-                  save={save}
-                />
-              ))
-            })}
+            {(() => {
+              const memVal = detail.data!.series.find((s) => s.metric === "memory" && s.latest.status === "ok")?.latest.value
+              const limVal = detail.data!.series.find((s) => s.metric === "memory_limit" && s.latest.status === "ok")?.latest.value
+              const memRatio =
+                asset.type === "container" && memVal != null && limVal != null && limVal > 0
+                  ? `占上限 ${((memVal / limVal) * 100).toFixed(1)}%`
+                  : undefined
+              return visibleMetricsForAsset(asset, detail.data!.series).flatMap((metric) => {
+                const matches = detail.data!.series.filter((series) => series.metric === metric)
+                const cards: Array<Series | undefined> = matches.length ? matches : [undefined]
+                return cards.map((series) => (
+                  <MetricCard
+                    key={JSON.stringify([assetKey(asset), metric, series?.device_id])}
+                    metric={metric}
+                    series={series}
+                    detail={detail.data!}
+                    extraBadge={metric === "memory" ? memRatio : undefined}
+                    admin={sessionIsAdmin(session)}
+                    save={save}
+                  />
+                ))
+              })
+            })()}
           </div>
         </>
       )}

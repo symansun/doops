@@ -26,11 +26,10 @@ function observedTime(value?: string) {
   return new Date(value).toLocaleString("zh-CN", { hour12: false })
 }
 
-export function ClusterAssetsPanel({ session, targets, selectedTarget, initialPage, onOpenCluster, onOpenTargetK8s, renderTargetAction }: {
+export function ClusterAssetsPanel({ session, targets, selectedTarget, initialPage, onOpenTargetK8s, renderTargetAction }: {
   session: Session
   targets: Target[]
   selectedTarget?: Target | null
-  onOpenCluster: (id: string, list: ClusterListState) => void
   onOpenTargetK8s?: (target: Target) => void
   initialPage?: ClusterListState
   renderTargetAction: RenderAssetTargetAction
@@ -190,7 +189,6 @@ export function ClusterAssetsPanel({ session, targets, selectedTarget, initialPa
           <h3 className="font-semibold">{sources[0].name} <span className="text-xs font-normal text-muted-foreground">{id}</span></h3>
           <span className="text-sm">{byId.get(id)?.environment||"未填环境"} · {byId.get(id)?.contact||"未填负责人"}</span>
           <Button size="sm" onClick={()=>{setOpen(false);setConfirm(null);setEditor(byId.get(id)??{...emptyProfile,id,name:sources[0].name})}}>编辑资料</Button>
-          <Button size="sm" onClick={() => onOpenCluster(id, { query, expanded: [...expanded] })}>打开集群看板</Button>
         </div>
         {sources.map((row) => {
         const target = online.find((t) => t.cluster === row.cluster && t.instance === row.instance)

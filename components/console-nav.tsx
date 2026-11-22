@@ -1,6 +1,6 @@
 "use client"
 
-import { ArrowUpCircle, Boxes, Database, Globe2, Layers, PackagePlus, Server, Shield } from "lucide-react"
+import { ArrowUpCircle, Boxes, Database, Globe2, Layers, PackagePlus, Server, Shield, Workflow } from "lucide-react"
 import { useEffect, useRef } from "react"
 import type { ComponentType } from "react"
 import {
@@ -23,7 +23,7 @@ const ICONS: Record<string, NavIcon> = {
   overview: ActivityIcon,
   ask: SparkIcon,
   terminal: TerminalIcon,
-  tasks: HistoryIcon,
+  tasks: Workflow,
   database: Database,
   website: Globe2,
   k8s: Boxes,

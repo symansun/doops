@@ -541,6 +541,23 @@ export async function demoCallTool(
   }
 
   if (tool === "doops_node_info") {
+    if (args.section === "admission") {
+      onEvent({ type: "open" })
+      await sleep(120)
+      const busy = opts.instance === "web-02"
+      const current = {
+        limit: 4,
+        inUse: busy ? 4 : 1,
+        available: busy ? 0 : 3,
+        holders: busy
+          ? [{ sessionId: "console-aa11bb22", turnId: "turn-01" }, { sessionId: "deploy-zz99", turnId: "turn-02" }]
+          : [{ sessionId: "console-a1b2c3d4", turnId: "turn-09" }],
+        queues: busy ? [{ sessionId: "release-wait-03", queued: 1 }] : [],
+      }
+      onEvent({ type: "result", result: { content: [{ type: "text", text: JSON.stringify(current, null, 2) }] } })
+      onEvent({ type: "done" })
+      return
+    }
     await emitChunks(
       [
         "Linux demo-node 6.8.0-41-generic #41-Ubuntu SMP x86_64 GNU/Linux\n",
@@ -975,4 +992,627 @@ export async function demoStopBackgroundTask(id: number) {
   task.status = "canceled"
   task.finished_at = nowISO()
   task.output += "Task canceled.\n"
+}
+
+export async function demoPlatformMonitor(
+  isAdmin: boolean,
+  range: "1h" | "24h" | "7d" | "30d",
+  cluster?: string,
+): Promise<import("./platform-monitor").PlatformMonitorData> {
+  await sleep(100)
+  const now = Date.now()
+  const windowMap = {
+    "1h": { ms: 3600_000, buckets: 12, scale: 1 },
+    "24h": { ms: 86_400_000, buckets: 24, scale: 8 },
+    "7d": { ms: 7 * 86_400_000, buckets: 14, scale: 34 },
+    "30d": { ms: 30 * 86_400_000, buckets: 30, scale: 110 },
+  } as const
+  const spec = windowMap[range]
+  const from_ms = now - spec.ms
+  const commitNew = "a6f7f3e2910bc4d8812ef01928374655aa112233"
+  const commitOld = "531feb0788ab12cd34ef5678901234567890abcd"
+
+  const allAgents: import("./platform-monitor").PlatformMonitorAgent[] = [
+    {
+      cluster: "prod-cn", instance: "web-02", key: "prod-cn/web-02",
+      activity: "online", status: "busy", busy: true, busy_reason: "exclusive_operation",
+      enrolled: true, release_commit: commitNew, remote: "10.0.1.12:51820",
+      connected_at: ago(6), last_seen: nowISO(), heartbeat_age_ms: 2400,
+      active_ops: 2, queued_ops: 1, sessions: ["console-aa11bb22", "deploy-zz99"],
+      resources: ["target:prod-cn/web-02", "helm:apps/doops-app"],
+      window_connects: 2, window_disconnects: 1,
+      window_calls: 18 * spec.scale, window_failed: 1 * Math.max(1, Math.floor(spec.scale / 4)),
+      window_bytes_in: 48_200 * spec.scale, window_bytes_out: 612_400 * spec.scale,
+      window_tokens: 46_800 * spec.scale,
+    },
+    {
+      cluster: "prod-cn", instance: "web-01", key: "prod-cn/web-01",
+      activity: "online", status: "active", busy: false,
+      enrolled: true, release_commit: commitNew, remote: "10.0.1.11:51820",
+      connected_at: ago(18), last_seen: nowISO(), heartbeat_age_ms: 4100,
+      active_ops: 1, queued_ops: 0, sessions: ["console-a1b2c3d4"],
+      resources: ["workspace:console-a1b2c3d4"],
+      window_connects: 0, window_disconnects: 0,
+      window_calls: 24 * spec.scale, window_failed: 0,
+      window_bytes_in: 31_000 * spec.scale, window_bytes_out: 498_000 * spec.scale,
+      window_tokens: 62_400 * spec.scale,
+    },
+    {
+      cluster: "staging", instance: "db-01", key: "staging/db-01",
+      activity: "online", status: "idle", busy: false,
+      enrolled: false, release_commit: commitOld, remote: "10.0.2.21:51820",
+      connected_at: ago(24), last_seen: new Date(now - 14_000).toISOString(), heartbeat_age_ms: 14_000,
+      active_ops: 0, queued_ops: 0, sessions: [], resources: [],
+      window_connects: 1, window_disconnects: 0,
+      window_calls: 9 * spec.scale, window_failed: 1,
+      window_bytes_in: 19_400 * spec.scale, window_bytes_out: 184_000 * spec.scale,
+      window_tokens: 18_200 * spec.scale,
+    },
+    ...(isAdmin ? [{
+      cluster: "staging", instance: "worker-legacy", key: "staging/worker-legacy",
+      activity: "recent_offline" as const, status: "offline", busy: false,
+      enrolled: true, release_commit: commitOld, remote: "10.0.2.45:49100",
+      connected_at: ago(72), last_seen: ago(5), heartbeat_age_ms: 5 * 3600_000,
+      active_ops: 0, queued_ops: 0, sessions: [], resources: [],
+      window_connects: 0, window_disconnects: 1,
+      window_calls: 2, window_failed: 1, window_bytes_in: 1200, window_bytes_out: 480,
+      window_tokens: 3400,
+    }] : []),
+  ]
+
+  const clusters = [
+    { name: "prod-cn", online: 2, total: 2 },
+    { name: "staging", online: 1, total: isAdmin ? 2 : 1 },
+  ]
+  const agents = cluster ? allAgents.filter((a) => a.cluster === cluster) : allAgents
+  const onlineAgents = agents.filter((a) => a.activity === "online")
+  const versionMap = new Map<string, number>()
+  for (const a of onlineAgents) {
+    const k = a.release_commit || ""
+    versionMap.set(k, (versionMap.get(k) || 0) + 1)
+  }
+
+  const totalCalls = agents.reduce((s, a) => s + a.window_calls, 0)
+  const totalFailed = agents.reduce((s, a) => s + a.window_failed, 0)
+  const runningCount = onlineAgents.reduce((s, a) => s + a.active_ops, 0)
+  const successCount = Math.max(0, totalCalls - totalFailed - runningCount)
+  const bytesIn = agents.reduce((s, a) => s + a.window_bytes_in, 0)
+  const bytesOut = agents.reduce((s, a) => s + a.window_bytes_out, 0)
+  const totalTokens = agents.reduce((s, a) => s + a.window_tokens, 0)
+  const inputTokens = Math.round(totalTokens * 0.68)
+  const outputTokens = Math.max(0, totalTokens - inputTokens)
+
+  const trend = Array.from({ length: spec.buckets }, (_, idx) => {
+    const start_ms = Math.round(from_ms + (spec.ms * idx) / spec.buckets)
+    const end_ms = Math.round(from_ms + (spec.ms * (idx + 1)) / spec.buckets)
+    const wave = 0.55 + 0.45 * Math.sin(idx * 0.65 + 0.8)
+    const total = Math.max(1, Math.round((totalCalls / spec.buckets) * wave))
+    const failed = idx === spec.buckets - 3 && totalFailed > 0 ? Math.min(total, Math.ceil(totalFailed / 2)) : 0
+    return {
+      start_ms, end_ms, total, failed, success: Math.max(0, total - failed),
+      bytes_in: Math.round(bytesIn / spec.buckets), bytes_out: Math.round(bytesOut / spec.buckets),
+      total_tokens: Math.round((totalTokens / spec.buckets) * wave),
+    }
+  })
+
+  const load_trend = isAdmin && !cluster
+    ? Array.from({ length: spec.buckets }, (_, idx) => {
+        const start_ms = Math.round(from_ms + (spec.ms * idx) / spec.buckets)
+        const end_ms = Math.round(from_ms + (spec.ms * (idx + 1)) / spec.buckets)
+        const peak = idx >= spec.buckets - 5
+        return {
+          start_ms, end_ms, samples: 5,
+          max_online_agents: idx < 3 ? 4 : 3,
+          max_busy_agents: peak ? 1 : 0,
+          max_active_ops: peak ? 4 : 2,
+          max_queued_ops: idx === spec.buckets - 2 ? 2 : peak ? 1 : 0,
+          max_active_sessions: peak ? 3 : 2,
+        }
+      })
+    : []
+
+  const connection_events: import("./platform-monitor").PlatformConnectionEvent[] = [
+    ...(!cluster || cluster === "prod-cn"
+      ? [
+          { id: 41, cluster: "prod-cn", instance: "web-02", key: "prod-cn/web-02", generation: 4, event: "online", release_commit: commitNew, remote: "10.0.1.12:51820", enrolled: true, occurred_at: ago(6) },
+          { id: 40, cluster: "prod-cn", instance: "web-02", key: "prod-cn/web-02", generation: 3, event: "offline", release_commit: commitNew, remote: "10.0.1.12:51814", enrolled: true, occurred_at: ago(6.05) },
+        ]
+      : []),
+    ...(isAdmin && (!cluster || cluster === "staging")
+      ? [
+          { id: 38, cluster: "staging", instance: "worker-legacy", key: "staging/worker-legacy", generation: 2, event: "offline", release_commit: commitOld, remote: "10.0.2.45:49100", enrolled: true, occurred_at: ago(5) },
+        ]
+      : []),
+  ]
+
+  return {
+    scope: isAdmin ? "global" : "self",
+    range,
+    ...(cluster ? { cluster } : {}),
+    from_ms,
+    to_ms: now,
+    clusters,
+    agent_summary: {
+      online: onlineAgents.length,
+      active: onlineAgents.filter((a) => a.active_ops > 0 || a.queued_ops > 0).length,
+      busy: onlineAgents.filter((a) => a.busy).length,
+      recent_offline: agents.filter((a) => a.activity === "recent_offline").length,
+      history: 0,
+      archived: 0,
+      enrolled_online: onlineAgents.filter((a) => a.enrolled).length,
+      unenrolled_online: onlineAgents.filter((a) => !a.enrolled).length,
+      flapping_agents: agents.filter((a) => a.window_connects >= 2 || (a.window_connects >= 1 && a.window_disconnects >= 1)).length,
+      active_ops: runningCount,
+      queued_ops: onlineAgents.reduce((s, a) => s + a.queued_ops, 0),
+      active_sessions: onlineAgents.reduce((s, a) => s + a.sessions.length, 0),
+      resource_locks: onlineAgents.reduce((s, a) => s + a.resources.length, 0),
+      versions: [...versionMap.entries()].map(([release_commit, count]) => ({ release_commit, count })),
+    },
+    agents,
+    connection_events,
+    load_trend,
+    usage_summary: {
+      total: totalCalls,
+      running: runningCount,
+      success: successCount,
+      failed: totalFailed,
+      outcome_unknown: (!cluster || cluster === "staging") ? 1 : 0,
+      avg_duration_ms: 1840,
+      bytes_in: bytesIn,
+      bytes_out: bytesOut,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: totalTokens,
+      active_users: isAdmin ? (cluster === "staging" ? 2 : 3) : 1,
+      active_targets: agents.filter((a) => a.window_calls > 0).length,
+      active_models: 2,
+    },
+    trend,
+    by_action: [
+      { action: "ask", total: Math.round(totalCalls * 0.42), success: Math.round(totalCalls * 0.4), failed: Math.min(1, totalFailed), running: 1, avg_duration_ms: 3420, bytes_in: Math.round(bytesIn * 0.45), bytes_out: Math.round(bytesOut * 0.52), total_tokens: totalTokens },
+      { action: "exec", total: Math.round(totalCalls * 0.31), success: Math.round(totalCalls * 0.3), failed: Math.max(0, totalFailed - 1), running: Math.max(0, runningCount - 1), avg_duration_ms: 920, bytes_in: Math.round(bytesIn * 0.25), bytes_out: Math.round(bytesOut * 0.28), total_tokens: 0 },
+      { action: "check", total: Math.round(totalCalls * 0.15), success: Math.round(totalCalls * 0.15), failed: 0, running: 0, avg_duration_ms: 480, bytes_in: Math.round(bytesIn * 0.12), bytes_out: Math.round(bytesOut * 0.1), total_tokens: 0 },
+      { action: "write", total: Math.max(1, totalCalls - Math.round(totalCalls * 0.88)), success: Math.max(1, totalCalls - Math.round(totalCalls * 0.88)), failed: 0, running: 0, avg_duration_ms: 610, bytes_in: Math.round(bytesIn * 0.18), bytes_out: Math.round(bytesOut * 0.1), total_tokens: 0 },
+    ],
+    by_model: [
+      { model: "openai/gpt-5.2", total: Math.max(1, Math.round(totalCalls * 0.28)), input_tokens: Math.round(inputTokens * 0.72), output_tokens: Math.round(outputTokens * 0.74), total_tokens: Math.round(totalTokens * 0.73) },
+      { model: "deepseek/deepseek-v3", total: Math.max(1, Math.round(totalCalls * 0.14)), input_tokens: Math.round(inputTokens * 0.28), output_tokens: Math.round(outputTokens * 0.26), total_tokens: Math.max(0, totalTokens - Math.round(totalTokens * 0.73)) },
+    ],
+    by_target: agents.map((a) => ({
+      cluster: a.cluster, instance: a.instance, key: a.key,
+      online: a.activity === "online", status: a.status,
+      total: a.window_calls,
+      success: Math.max(0, a.window_calls - a.window_failed - a.active_ops),
+      failed: a.window_failed,
+      outcome_unknown: a.key === "staging/db-01" ? 1 : 0,
+      running: a.active_ops,
+      avg_duration_ms: a.busy ? 2850 : 1120,
+      bytes_in: a.window_bytes_in,
+      bytes_out: a.window_bytes_out,
+      total_tokens: a.window_tokens,
+      last_used_at: a.last_seen,
+    })),
+    by_user: isAdmin
+      ? [
+          { user_id: "usr_ops01", user_name: "ops-zhang", is_admin: false, total: Math.round(totalCalls * 0.54), success: Math.round(totalCalls * 0.52), failed: Math.min(1, totalFailed), active_targets: 2, token_count: 2, bytes_in: Math.round(bytesIn * 0.55), bytes_out: Math.round(bytesOut * 0.56), input_tokens: Math.round(inputTokens * 0.58), output_tokens: Math.round(outputTokens * 0.58), total_tokens: Math.round(totalTokens * 0.58), last_active_at: nowISO() },
+          { user_id: "usr_admin01", user_name: "admin", is_admin: true, total: Math.round(totalCalls * 0.3), success: Math.round(totalCalls * 0.3), failed: 0, active_targets: agents.length, token_count: 1, bytes_in: Math.round(bytesIn * 0.3), bytes_out: Math.round(bytesOut * 0.29), input_tokens: Math.round(inputTokens * 0.27), output_tokens: Math.round(outputTokens * 0.27), total_tokens: Math.round(totalTokens * 0.27), last_active_at: ago(1) },
+          { user_id: "usr_dev01", user_name: "dev-li", is_admin: false, total: Math.max(1, totalCalls - Math.round(totalCalls * 0.84)), success: Math.max(0, totalCalls - Math.round(totalCalls * 0.84) - 1), failed: 1, active_targets: 1, token_count: 1, bytes_in: Math.round(bytesIn * 0.15), bytes_out: Math.round(bytesOut * 0.15), input_tokens: Math.round(inputTokens * 0.15), output_tokens: Math.round(outputTokens * 0.15), total_tokens: Math.max(0, totalTokens - Math.round(totalTokens * 0.85)), last_active_at: ago(2) },
+        ]
+      : [
+          { user_id: "usr_demo_self", user_name: "演示用户", is_admin: false, total: totalCalls, success: successCount, failed: totalFailed, active_targets: agents.length, token_count: 1, bytes_in: bytesIn, bytes_out: bytesOut, input_tokens: inputTokens, output_tokens: outputTokens, total_tokens: totalTokens, last_active_at: nowISO() },
+        ],
+    running_ops: (!cluster || cluster === "prod-cn")
+      ? [
+          { id: 1098, user_id: "usr_ops01", user_name: "ops-zhang", cluster: "prod-cn", instance: "web-02", action: "ask", session: "deploy-zz99", command_summary: "Helm upgrade doops-app release 1.8.3 in apps", status: "executing", correlation_id: "op-helm-prod-1098", model: "openai/gpt-5.2", total_tokens: 8420, bytes_in: 512, bytes_out: 4096, started_at: new Date(now - 42_000).toISOString(), duration_ms: 42_000 },
+          { id: 1097, user_id: "usr_admin01", user_name: "admin", cluster: "prod-cn", instance: "web-01", action: "exec", session: "console-a1b2c3d4", command_summary: "kubectl top pods -n apps", status: "running", bytes_in: 48, bytes_out: 312, started_at: new Date(now - 9_000).toISOString(), duration_ms: 9_000 },
+        ]
+      : [],
+    detached_tasks: demoBgTasks
+      .filter((t) => !cluster || t.cluster === cluster)
+      .map(({ output: _out, cancel_requested, ...rest }) => ({
+        ...rest,
+        user_id: "usr_ops01",
+        user_name: isAdmin ? "ops-zhang" : "演示用户",
+        is_own: !isAdmin,
+        cancel_requested: Boolean(cancel_requested),
+      })),
+    recent_issues: [
+      ...(!cluster || cluster === "staging"
+        ? [{
+            id: 1086, user_id: "usr_dev01", user_name: isAdmin ? "dev-li" : "演示用户",
+            cluster: "staging", instance: "db-01", action: "write", session: "console-db-check",
+            command_summary: "更新 /etc/pgbouncer/pgbouncer.ini 连接池上限",
+            status: "outcome_unknown", error: "agent tunnel reconnected before terminal receipt; verify target state before retry",
+            correlation_id: "op-cfg-db01-1086", bytes_in: 640, bytes_out: 0,
+            started_at: ago(1), ended_at: ago(1), duration_ms: 15_200,
+          }]
+        : []),
+      ...(!cluster || cluster === "prod-cn"
+        ? [{
+            id: 1079, user_id: "usr_ops01", user_name: isAdmin ? "ops-zhang" : "演示用户",
+            cluster: "prod-cn", instance: "web-02", action: "exec", session: "console-aa11bb22",
+            command_summary: "helm upgrade api https://charts.example/api-1.8.3.tgz",
+            status: "busy", error: "target_queue_timeout: exclusive operation held by deploy-zz99",
+            bytes_in: 128, bytes_out: 0, started_at: ago(3), ended_at: ago(3), duration_ms: 2000,
+          }]
+        : []),
+    ],
+  }
+}
+
+const demoMonitorRules = new Map<string, { threshold: number; duration_seconds: number }>()
+const demoCollectedNamespaces = new Set<string>(["apps"])
+
+export async function demoAssetMonitorRead(url: string): Promise<unknown> {
+  await sleep(80)
+  const parsed = new URL(url, "http://console.local")
+  const q = parsed.searchParams
+  const instance = q.get("instance") || "web-01"
+  const typeFilter = q.get("type") || ""
+  const assetId = q.get("asset_id") || ""
+  const origin = q.get("origin") || ""
+  const range = (q.get("range") || "1h") as "1h" | "6h" | "24h" | "7d"
+
+  const allAssets = [
+    { type: "machine", asset_id: `vm-${instance}`, namespace: "", origin: "agent_host" },
+    { type: "kernel", asset_id: `vm-${instance}`, namespace: "", origin: "agent_host" },
+    { type: "container", asset_id: "doops-app", namespace: "", origin: "container_stats" },
+    { type: "container", asset_id: "nginx-gateway", namespace: "", origin: "container_stats" },
+    { type: "container", asset_id: "redis-cache", namespace: "", origin: "container_stats" },
+    { type: "app", asset_id: "portal.example.test", namespace: "", origin: "app_probe" },
+    { type: "app", asset_id: "nginx", namespace: "", origin: "app_probe" },
+    ...[...demoCollectedNamespaces].map((ns) => ({ type: "app", asset_id: `${ns}-api-7c9d8f`, namespace: ns, origin: "k8s_top" })),
+  ]
+
+  if (!assetId) {
+    return {
+      assets: allAssets.filter((a) => !typeFilter || a.type === typeFilter),
+    }
+  }
+
+  const now = Date.now()
+  const spanMap = { "1h": 3600_000, "6h": 21_600_000, "24h": 86_400_000, "7d": 604_800_000 }
+  const span = spanMap[range] || 3600_000
+  const from_ms = now - span
+  const mkSeries = (metric: string, unit: string, base: number, device_id?: string, constant = false) => {
+    const key = `${instance}/${assetId}/${origin}/${metric}/${device_id || ""}`
+    const points = Array.from({ length: 24 }, (_, idx) => {
+      const at_ms = Math.round(from_ms + (span * (idx + 1)) / 24)
+      const factor = constant ? 1 : 0.78 + 0.28 * Math.sin(idx * 0.55 + metric.length)
+      return { at_ms, status: "ok", value: Number((base * factor).toPrecision(5)) }
+    })
+    return {
+      ...(device_id ? { device_id } : {}),
+      metric,
+      unit,
+      latest: points[points.length - 1],
+      stale: false,
+      points,
+      rule: demoMonitorRules.get(key) || null,
+      alerts: [],
+    }
+  }
+
+  let series: unknown[] = []
+  if (q.get("type") === "container") {
+    const scale = assetId === "doops-app" ? 1 : assetId === "nginx-gateway" ? 0.35 : 0.2
+    const limit = assetId === "doops-app" ? 1073741824 : 536870912
+    series = [
+      mkSeries("cpu", "cores", 0.68 * scale),
+      mkSeries("memory", "bytes", 380 * 1048576 * scale),
+      mkSeries("memory_limit", "bytes", limit, undefined, true),
+    ]
+  } else if (q.get("type") === "kernel") {
+    series = [
+      mkSeries("cpu", "cores", 0.24),
+      mkSeries("memory", "bytes", 412 * 1048576),
+    ]
+  } else if (origin === "app_probe") {
+    series = assetId === "nginx"
+      ? [
+          mkSeries("active_connections", "connections", 42),
+          mkSeries("requests", "req/s", 118),
+        ]
+      : [
+          mkSeries("response_time_ms", "ms", 28.4),
+          mkSeries("error_rate", "%", 0, undefined, true),
+        ]
+  } else if (origin === "k8s_top") {
+    series = [
+      mkSeries("cpu", "cores", 0.42),
+      mkSeries("memory", "bytes", 256 * 1048576),
+    ]
+  } else {
+    series = [
+      mkSeries("cpu", "cores", 1.85),
+      mkSeries("memory", "bytes", 5.4 * 1073741824),
+      mkSeries("network", "bytes/s", 1_850_000, "eth0"),
+      mkSeries("storage_total", "bytes", 80 * 1073741824, "/", true),
+      mkSeries("storage", "bytes", 31 * 1073741824, "/"),
+      mkSeries("storage_available", "bytes", 49 * 1073741824, "/"),
+      mkSeries("disk_read_iops", "ops/s", 145, "vda"),
+      mkSeries("disk_write_iops", "ops/s", 92, "vda"),
+      mkSeries("disk_read_bytes_per_second", "bytes/s", 3_200_000, "vda"),
+      mkSeries("disk_write_bytes_per_second", "bytes/s", 1_900_000, "vda"),
+      mkSeries("disk_read_latency_ms", "ms", 2.1, "vda"),
+      mkSeries("disk_write_latency_ms", "ms", 3.4, "vda"),
+    ]
+  }
+  return { from_ms, to_ms: now, max_gap_ms: 300_000, series }
+}
+
+export async function demoAssetMonitorWrite(body: Record<string, unknown>): Promise<unknown> {
+  await sleep(100)
+  if (body.action === "rule") {
+    const key = `${body.instance || "web-01"}/${body.asset_id}/${body.origin}/${body.metric}/${body.device_id || ""}`
+    demoMonitorRules.set(key, {
+      threshold: Number(body.threshold),
+      duration_seconds: Number(body.duration_seconds),
+    })
+    return { action: "rule", accepted: 0 }
+  }
+  const mode = String(body.mode || "k8s_pods")
+  if (mode === "containers") {
+    return { action: "collect", runtime: "docker", accepted: 9 }
+  }
+  if (mode === "apps") {
+    return { action: "collect", accepted: 4 }
+  }
+  if (mode === "host") {
+    return { action: "collect", accepted: 14 }
+  }
+  if (typeof body.namespace === "string" && body.namespace.trim()) {
+    demoCollectedNamespaces.add(body.namespace.trim())
+  }
+  return { action: "collect", accepted: 2 }
+}
+
+const demoMonitorSchedulesStore: Array<Record<string, unknown>> = []
+const demoMonitorRunsStore: Array<Record<string, unknown>> = []
+
+export async function demoMonitorEngineRequest(path: string, body?: Record<string, unknown>): Promise<unknown> {
+  await sleep(80)
+  const now = Date.now()
+  const parsed = new URL(`http://console.local/${path.replace(/^\/+/, "")}`)
+  const route = parsed.pathname.replace(/^\/+/, "")
+  const clusterFilter = parsed.searchParams.get("cluster") || ""
+
+  const strategies = [
+    { id: "vm_host", name: "虚机 / 物理机本机策略", description: "直采 CPU、内存、磁盘 I/O、网络、GPU 及 M1–M5 巡检。", asset_kinds: ["vm", "physical"], collector_method: "agent_local", checks: ["M1", "M2", "M3", "M4", "M5"] },
+    { id: "ssh_host", name: "SSH 远程主机策略", description: "经结构化只读 SSH 采集无 Agent 主机指标与巡检项。", asset_kinds: ["vm", "physical"], collector_method: "ssh", checks: ["SSH连通性", "M1", "M2", "磁盘容量"] },
+    { id: "k8s_cluster", name: "Kubernetes 集群策略", description: "采集节点健康、Pod 异常、副本、PVC 与 Warning 事件。", asset_kinds: ["k8s"], collector_method: "k8s_api", checks: ["节点健康", "Pod状态", "控制器副本"] },
+    { id: "container_runtime", name: "容器运行时策略", description: "采集 Docker/nerdctl/Podman 容器 CPU 与内存限额。", asset_kinds: ["container"], collector_method: "agent_local", checks: ["运行时可用性", "内存限额"] },
+    { id: "app_service", name: "应用 / Web / API 策略", description: "采集 Nginx 并发、请求速率、响应时间及 HTTPS 安全头。", asset_kinds: ["app"], collector_method: "http_probe", checks: ["A1可用性", "响应时间", "A4安全头"] },
+    { id: "database_service", name: "数据库策略", description: "探测已登记数据库连通性与延迟。", asset_kinds: ["database"], collector_method: "tcp_probe", checks: ["A2连通性", "建连延迟"] },
+  ]
+  const allResources = [
+    {
+      id: 1, cluster: "prod-cn", instance: "web-01", asset_id: "vm-web-01", asset_name: "教务门户节点 01", asset_kind: "vm",
+      strategy: "vm_host", collector_method: "agent_local", collected_at_ms: now - 30_000, run_id: "run_demo01", status: "ok",
+      online: true, stale: false, cpu_cores: 1.85, cpu_total_cores: 8, cpu_percent: 23.1,
+      memory_used_bytes: 5.4 * 1073741824, memory_total_bytes: 16 * 1073741824, memory_percent: 33.8,
+      disk_used_bytes: 31 * 1073741824, disk_total_bytes: 80 * 1073741824, disk_percent: 38.8,
+      net_bytes_per_sec: 1_850_000, disk_iops: 237, disk_latency_ms: 2.8, uptime_seconds: 864000, load_1m: 0.82,
+      os_info: "Ubuntu 24.04 LTS", kernel_info: "Linux 6.8.0", tags: ["env=prod", "role=web"],
+      details: {
+        mounts: [{ mount: "/", total_bytes: 80 * 1073741824, used_bytes: 31 * 1073741824, avail_bytes: 49 * 1073741824, used_pct: 38.8 }],
+        disks: [{ device_id: "vda", read_iops: 145, write_iops: 92, read_bytes_per_sec: 3_200_000, write_bytes_per_sec: 1_900_000, read_latency_ms: 2.1, write_latency_ms: 3.4 }],
+        networks: [{ device_id: "eth0", bytes_per_sec: 1_850_000 }],
+      },
+    },
+    {
+      id: 2, cluster: "prod-cn", instance: "web-02", asset_id: "k8s-prod-cn", asset_name: "核心业务 K8s 集群", asset_kind: "k8s",
+      strategy: "k8s_cluster", collector_method: "k8s_api", collected_at_ms: now - 30_000, run_id: "run_demo01", status: "warning",
+      online: true, stale: false, cpu_cores: 14.4, cpu_total_cores: 32, cpu_percent: 45.0,
+      memory_used_bytes: 52.8 * 1073741824, memory_total_bytes: 64 * 1073741824, memory_percent: 82.5,
+      os_info: "K8s v1.30.2", tags: ["env=prod", "tier=core"],
+      details: {
+        nodes: [{ name: "node-1", ready: true, pressures: [] }, { name: "node-2", ready: true, pressures: ["MemoryPressure"] }],
+        abnormal_pods: [{ namespace: "apps", name: "report-worker-7b8d", phase: "Running", reason: "HighRestarts", restarts: 6 }],
+      },
+    },
+    {
+      id: 3, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-legacy-01", asset_name: "教务老旧宿主机 (SSH)", asset_kind: "vm",
+      strategy: "ssh_host", collector_method: "ssh", collected_at_ms: now - 45_000, run_id: "run_demo01", status: "ok",
+      online: true, stale: false, cpu_cores: 1.1, cpu_total_cores: 4, cpu_percent: 27.5,
+      memory_used_bytes: 4.9 * 1073741824, memory_total_bytes: 8 * 1073741824, memory_percent: 61.3,
+      disk_used_bytes: 68 * 1073741824, disk_total_bytes: 100 * 1073741824, disk_percent: 68.0,
+      uptime_seconds: 1_920_000, load_1m: 1.05, os_info: "Rocky Linux 9.4", tags: ["via=ssh", "dept=edu"],
+      details: { mounts: [{ mount: "/", total_bytes: 100 * 1073741824, used_bytes: 68 * 1073741824, avail_bytes: 32 * 1073741824, used_pct: 68.0 }] },
+    },
+    {
+      id: 4, cluster: "staging", instance: "db-01", asset_id: "pg-main-01", asset_name: "PostgreSQL 主库 (TCP)", asset_kind: "database",
+      strategy: "database_service", collector_method: "tcp_probe", collected_at_ms: now - 30_000, run_id: "run_demo01", status: "ok",
+      online: true, stale: false, response_time_ms: 4.2, error_rate: 0, tags: ["env=staging", "db=postgres"],
+      details: {},
+    },
+  ]
+  const sampleResources = clusterFilter
+    ? allResources.filter((r) => r.cluster === clusterFilter)
+    : allResources
+
+  const allAlerts = [
+    {
+      cluster: "prod-cn", instance: "web-02", type: "machine", asset_id: "vm-web-02",
+      origin: "agent_host", metric: "memory",
+      threshold: 12 * 1073741824, duration_seconds: 300, opened_ms: now - 420_000,
+    },
+  ]
+  const thresholdAlerts = clusterFilter
+    ? allAlerts.filter((a) => a.cluster === clusterFilter)
+    : allAlerts
+
+  const baseSchedule = {
+    id: "sched_demo01", name: "全校 5 分钟自动巡检", description: "覆盖本机虚机、SSH 远程主机、K8s、容器与数据库连通性探测",
+    enabled: true, scope_mode: "all_online", targets: [], tags: [],
+    strategies: ["vm_host", "ssh_host", "k8s_cluster", "container_runtime", "app_service", "database_service"],
+    thresholds: { cpu_warn_percent: 80, cpu_crit_percent: 90, mem_warn_percent: 80, mem_crit_percent: 90, disk_warn_percent: 85, disk_crit_percent: 95 },
+    interval_seconds: 300, next_run_at_ms: now + 270_000, last_run_at_ms: now - 30_000, last_run_id: "run_demo01", last_status: "warning",
+    created_by: "admin", created_at: new Date(now - 86400_000).toISOString(), updated_at: new Date(now - 30_000).toISOString(),
+  }
+  if (demoMonitorSchedulesStore.length === 0) {
+    demoMonitorSchedulesStore.push(baseSchedule)
+  }
+
+  const baseRun = {
+    id: "run_demo01", schedule_id: "sched_demo01", schedule_name: "全校 5 分钟自动巡检", trigger_kind: "scheduled",
+    triggered_by: "system", status: "warning", total_targets: 3, total_assets: 4, passed_checks: 11, warning_checks: 1,
+    failed_checks: 0, skipped_checks: 0, offline_targets: 0, metrics_written: 42,
+    started_at_ms: now - 35_000, finished_at_ms: now - 30_000, duration_ms: 5000, summary: "4 项资产巡检完成：通过 11 项，告警 1 项（K8s node-2 内存压力）",
+  }
+  if (demoMonitorRunsStore.length === 0) {
+    demoMonitorRunsStore.push(baseRun)
+  }
+
+  if (route === "overview") {
+    const byKind: Record<string, number> = {}
+    for (const r of sampleResources) {
+      byKind[r.asset_kind] = (byKind[r.asset_kind] || 0) + 1
+    }
+    const cpuItems = sampleResources.filter((r) => typeof r.cpu_percent === "number")
+    const memItems = sampleResources.filter((r) => typeof r.memory_percent === "number")
+    const diskItems = sampleResources.filter((r) => typeof r.disk_percent === "number")
+    return {
+      scope: "global", range: parsed.searchParams.get("range") || "1h", from_ms: now - 3600_000, to_ms: now,
+      summary: {
+        total_assets: sampleResources.length,
+        online_agents: clusterFilter === "staging" ? 1 : clusterFilter === "prod-cn" ? 2 : 3,
+        offline_agents: 0,
+        covered_assets: sampleResources.length,
+        probe_coverage_pct: sampleResources.length ? 100 : 0,
+        healthy_assets: sampleResources.filter((r) => r.status === "ok").length,
+        warning_assets: sampleResources.filter((r) => r.status === "warning").length,
+        critical_assets: 0,
+        offline_assets: 0,
+        open_threshold_alerts: thresholdAlerts.length,
+        avg_cpu_percent: cpuItems.length ? Number((cpuItems.reduce((s, r) => s + (r.cpu_percent || 0), 0) / cpuItems.length).toFixed(1)) : 0,
+        avg_memory_percent: memItems.length ? Number((memItems.reduce((s, r) => s + (r.memory_percent || 0), 0) / memItems.length).toFixed(1)) : 0,
+        avg_disk_percent: diskItems.length ? Number((diskItems.reduce((s, r) => s + (r.disk_percent || 0), 0) / diskItems.length).toFixed(1)) : 0,
+        total_cpu_cores: 12, used_cpu_cores: 2.95,
+        total_memory_bytes: 24 * 1073741824, used_memory_bytes: 10.3 * 1073741824,
+        total_disk_bytes: 180 * 1073741824, used_disk_bytes: 99 * 1073741824,
+        active_schedules: demoMonitorSchedulesStore.filter((s) => s.enabled).length,
+        total_runs: demoMonitorRunsStore.length,
+        last_collected_at_ms: now - 30_000,
+      },
+      by_kind: byKind,
+      resources: sampleResources,
+      top_cpu: [...cpuItems].sort((a, b) => (b.cpu_percent || 0) - (a.cpu_percent || 0)),
+      top_memory: [...memItems].sort((a, b) => (b.memory_percent || 0) - (a.memory_percent || 0)),
+      top_disk: [...diskItems].sort((a, b) => (b.disk_percent || 0) - (a.disk_percent || 0)),
+      trends: Array.from({ length: 12 }, (_, i) => ({
+        start_ms: now - (12 - i) * 300_000, end_ms: now - (11 - i) * 300_000, samples: sampleResources.length,
+        avg_cpu_percent: 29 + (i % 5) * 1.4, avg_memory_percent: 56 + (i % 4) * 1.6, avg_disk_percent: 53.4,
+      })),
+      recent_runs: demoMonitorRunsStore.slice(0, 6),
+      threshold_alerts: thresholdAlerts,
+      strategies,
+    }
+  }
+  if (route === "resources/history") {
+    const assetId = parsed.searchParams.get("asset_id") || "vm-web-01"
+    const match = allResources.find((r) => r.asset_id === assetId) || allResources[0]
+    const points = Array.from({ length: 12 }, (_, idx) => ({
+      ...match,
+      collected_at_ms: now - (12 - idx) * 300_000,
+      cpu_percent: typeof match.cpu_percent === "number" ? Number((match.cpu_percent * (0.85 + 0.04 * (idx % 5))).toFixed(1)) : undefined,
+      memory_percent: typeof match.memory_percent === "number" ? Number((match.memory_percent * (0.94 + 0.015 * (idx % 4))).toFixed(1)) : undefined,
+    }))
+    return {
+      cluster: match.cluster, instance: match.instance, asset_kind: match.asset_kind, asset_id: match.asset_id,
+      range: parsed.searchParams.get("range") || "1h", from_ms: now - 3600_000, to_ms: now,
+      latest: match, points,
+    }
+  }
+  if (route === "schedules") {
+    if (body) {
+      const action = String(body.action || "upsert")
+      if (action === "delete") {
+        const idx = demoMonitorSchedulesStore.findIndex((s) => s.id === body.id)
+        if (idx >= 0) demoMonitorSchedulesStore.splice(idx, 1)
+        return { deleted: true }
+      }
+      if (action === "toggle") {
+        const found = demoMonitorSchedulesStore.find((s) => s.id === body.id)
+        if (found) found.enabled = Boolean(body.enabled)
+        return { schedule: found || baseSchedule }
+      }
+      const next = {
+        ...baseSchedule,
+        id: String(body.id || `sched_demo_${Math.floor(now / 1000)}`),
+        name: String(body.name || "新建巡检计划"),
+        description: String(body.description || ""),
+        enabled: body.enabled !== false,
+        interval_seconds: Number(body.interval_seconds || 300),
+        strategies: Array.isArray(body.strategies) && body.strategies.length ? body.strategies : baseSchedule.strategies,
+        updated_at: new Date(now).toISOString(),
+      }
+      const idx = demoMonitorSchedulesStore.findIndex((s) => s.id === next.id)
+      if (idx >= 0) demoMonitorSchedulesStore[idx] = next
+      else demoMonitorSchedulesStore.unshift(next)
+      return { schedule: next }
+    }
+    return {
+      schedules: [...demoMonitorSchedulesStore],
+      strategies,
+      defaults: { cpu_warn_percent: 80, cpu_crit_percent: 90, mem_warn_percent: 80, mem_crit_percent: 90, disk_warn_percent: 85, disk_crit_percent: 95 },
+    }
+  }
+  if (route.startsWith("runs/")) {
+    const runId = route.slice("runs/".length)
+    const run = demoMonitorRunsStore.find((r) => r.id === runId) || baseRun
+    return {
+      run, strategies,
+      items: [
+        {
+          id: 1, run_id: run.id, cluster: "prod-cn", instance: "web-01", asset_id: "vm-web-01", asset_name: "教务门户节点 01", asset_kind: "vm",
+          strategy: "vm_host", collector_method: "agent_local", status: "pass", started_at_ms: now - 35_000, finished_at_ms: now - 30_000, duration_ms: 420,
+          metrics: { cpu_percent: 23.1, memory_percent: 33.8, disk_percent: 38.8, memory_used_bytes: 5.4 * 1073741824, os_info: "Ubuntu 24.04 LTS" },
+          checks: [
+            { id: "host.uptime", name: "运行与重启 (M1)", category: "availability", status: "pass", value: "864000s", threshold: ">=300s", detail: "运行稳定" },
+            { id: "host.cpu_memory", name: "CPU 与内存水位 (M2)", category: "resource", status: "pass", value: "CPU 23.1% / 内存 33.8%", threshold: "<80%", detail: "水位正常" },
+            { id: "host.disk", name: "挂载点容量 (M2)", category: "storage", status: "pass", value: "/ 38.8%", threshold: "<85%", detail: "空间充足" },
+          ],
+          evidence: { mounts: [{ mount: "/", used_pct: 38.8 }], load_1m: 0.82 },
+        },
+        {
+          id: 2, run_id: run.id, cluster: "prod-cn", instance: "web-02", asset_id: "k8s-prod-cn", asset_name: "核心业务 K8s 集群", asset_kind: "k8s",
+          strategy: "k8s_cluster", collector_method: "k8s_api", status: "warning", started_at_ms: now - 35_000, finished_at_ms: now - 30_500, duration_ms: 780,
+          metrics: { cpu_percent: 45.0, memory_percent: 82.5, os_info: "K8s v1.30.2" },
+          checks: [
+            { id: "k8s.nodes", name: "节点健康状态", category: "availability", status: "warning", value: "1 节点 MemoryPressure", threshold: "0 压力节点", detail: "node-2 报告 MemoryPressure" },
+            { id: "k8s.pods", name: "工作负载 Pod 状态", category: "workload", status: "warning", value: "1 异常重启", threshold: "0 异常 Pod", detail: "apps/report-worker-7b8d 重启 6 次" },
+          ],
+          evidence: { nodes: 2, abnormal_pods: 1 },
+        },
+        {
+          id: 3, run_id: run.id, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-legacy-01", asset_name: "教务老旧宿主机 (SSH)", asset_kind: "vm",
+          strategy: "ssh_host", collector_method: "ssh", status: "pass", started_at_ms: now - 34_000, finished_at_ms: now - 31_000, duration_ms: 910,
+          metrics: { cpu_percent: 27.5, memory_percent: 61.3, disk_percent: 68.0, os_info: "Rocky Linux 9.4" },
+          checks: [
+            { id: "ssh.reachability", name: "只读 SSH 连通性", category: "availability", status: "pass", value: "reachable", threshold: "BatchMode=yes", detail: "只读结构化采集成功" },
+            { id: "ssh.resource", name: "远程主机 CPU/内存/磁盘", category: "resource", status: "pass", value: "CPU 27.5% / 内存 61.3% / 盘 68.0%", threshold: "<80%", detail: "正常" },
+          ],
+          evidence: { collector: "ssh_batch_readonly" },
+        },
+      ],
+    }
+  }
+  if (body) {
+    const newRun = {
+      ...baseRun,
+      id: `run_demo_${Math.floor(now / 1000)}`,
+      schedule_id: String(body.schedule_id || ""),
+      schedule_name: body.schedule_id ? baseSchedule.name : "手动立即巡检",
+      trigger_kind: body.retest_run_id ? "retest" : "manual",
+      triggered_by: "admin",
+      started_at_ms: now - 1800,
+      finished_at_ms: now,
+      duration_ms: 1800,
+      summary: "本次采集完成 4 项资产，指标已同步到系统资源监控与 Agent 曲线。",
+    }
+    demoMonitorRunsStore.unshift(newRun)
+    return { run: newRun, items: [] }
+  }
+  return { runs: [...demoMonitorRunsStore], strategies }
 }

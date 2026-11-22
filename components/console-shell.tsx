@@ -11,7 +11,7 @@ import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { errorAfterRefresh, reconcileSelected, reconcileTargets, workspaceTargets, type TargetRef, type RefreshTrigger } from "@/lib/console-refresh"
-import { assetRequest } from "@/lib/assets"
+import { assetRequest, setDemoAssetsActive } from "@/lib/assets"
 import { displayUserName } from "@/lib/session-display"
 import { NETWORK_FAILURE_MESSAGE, subscribeNetworkStatus } from "@/lib/network-error"
 import { CONSOLE_HOME, assetKinds, credentialsDestination, targetTabLabel, type CatalogKind, type AssetArea, type ConsoleNavEntry, type ConsoleView, type DeploySection, type TargetTab as Tab } from "@/lib/console-views"
@@ -41,7 +41,7 @@ import {
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
-import { BackgroundTasksPanel } from "./background-tasks-panel"
+import { AutomationPanel, type AutomationTab } from "./automation-panel"
 import { navigationBlocker, nextTerminalPrefill, prefillToApply, targetSwitchBlocker, TERMINAL_RUNNING_MESSAGE, type TerminalPrefill } from "@/lib/shell-blocks"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
@@ -117,6 +117,8 @@ type WhatsNewOpen = {
 export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[] }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
+  setDemoAssetsActive(Boolean(session?.demo))
+  useEffect(() => () => setDemoAssetsActive(false), [])
   const [defaultGateway, setDefaultGateway] = useState("")
   const [targets, setTargets] = useState<Target[]>([])
   const [registered, setRegistered] = useState<TargetRef[]>([])
@@ -128,6 +130,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   const onlineSelected = selected?.status === "offline" ? null : selected
   const [sessionId, setSessionId] = useState(randomSession())
   const [tab, setTab] = useState<Tab>("overview")
+  const [automationTab, setAutomationTab] = useState<AutomationTab>("inspections")
   const [terminalPrefill, setTerminalPrefill] = useState<TerminalPrefill | null>(null)
   // 终端标签按需挂载；记录已消费的 nonce，避免重新进入终端时再次预填旧命令。
   const [consumedPrefillNonce, setConsumedPrefillNonce] = useState(0)
@@ -143,6 +146,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   const [catalogKind, setCatalogKind] = useState<CatalogKind>("database")
   const [catalogContext, setCatalogContext] = useState<{row: CatalogRow; targetKey: string; sessionId: string; scope:string} | null>(null)
   const [assetNamespace, setAssetNamespace] = useState("")
+  const [auditOperationId, setAuditOperationId] = useState("")
   const [assetOrigin, setAssetOrigin] = useState<{ page: AssetPage; targetKey: string; scope: string } | null>(null)
   const [assetPage, setAssetPage] = useState<AssetPage>({ section: "board" })
   // 平台资产台账 reopens the section the user last read; the header owns the area.
@@ -529,6 +533,9 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       setCatalogKind(destination.kind)
       return openView("catalog")
     }
+    if (destination.tab === "tasks") {
+      setAutomationTab("inspections")
+    }
     openView("console")
     if (selected) {
       selectTab(destination.tab)
@@ -573,6 +580,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   function selectTab(next: Tab) {
     if (next !== tab && blockTerminalSwitch()) return
     if (next !== "k8s") setAssetNamespace("")
+    if (next !== "audit") setAuditOperationId("")
     setTab(next)
   }
 
@@ -596,6 +604,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     setInterruptedNotices([])
     setSelected(t)
     setAssetNamespace("")
+    setAuditOperationId("")
     setSessionId(randomSession())
     // A terminal is scoped to one target and session. Review the new target before opening its terminal.
     setTab((cur) => cur === "terminal" ? "overview" : cur)
@@ -792,28 +801,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           onRefresh={() => refresh("user")} onDeployAgent={openAgentSetup} />
       ) : view === "catalog" ? (
         catalogKind === "credentials" ? <CredentialPanel key={`credentials-${consoleScopeKey(session)}-${selected?.key ?? "none"}`} session={session} target={selected ?? undefined} initialView="managed" />
-          : session.demo ? (
-            <div className="p-4">
-              <div className="card-surface space-y-3 p-4 text-sm">
-                <p>请连接 Gateway 查看和维护持久化{assetKinds[catalogKind]}台账。</p>
-                {catalogKind !== "k8s" && targets.some((t) => t.status !== "offline") && (
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <span className="text-xs text-muted-foreground">演示模式下可直接进入在线目标的{assetKinds[catalogKind]}实时面板：</span>
-                    {(onlineSelected ? [onlineSelected] : targets.filter((t) => t.status !== "offline")).map((t) => (
-                      <Button key={t.key} size="sm" variant="primary" onClick={() => {
-                        if (t.key !== selected?.key && !selectTarget(t)) return
-                        setCatalogContext(null)
-                        openView("console")
-                        selectTab(catalogKind)
-                      }}>
-                        打开 {t.cluster}/{t.instance} {assetKinds[catalogKind]}面板
-                      </Button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : catalogKind === "k8s" ? null : <>
+          : catalogKind === "k8s" ? null : <>
               <ResourceCatalogPanel
                 key={JSON.stringify([consoleScopeKey(session), catalogKind])}
                 kind={catalogKind}
@@ -830,7 +818,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                   const id=randomSession();setSessionId(id);setAssetOrigin(null);setCatalogContext({row,targetKey:target.key,sessionId:id,scope:consoleScopeKey(session)})
                   openView("console");selectTab(row.kind)
                 }}
-              /><LegacyAssetNotes key={catalogKind} kind={catalogKind}/></>
+              />{!session.demo && <LegacyAssetNotes key={catalogKind} kind={catalogKind}/>}</>
       ) : view === "assets" ? (
         <><AssetInventory
           catalog={{ targets: registered, error: directoryError, loading }}
@@ -850,10 +838,22 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           onOpenTarget={(target, tab, namespace, origin) => {
             if (target.key !== selected?.key && !selectTarget(target)) return
             setAssetNamespace(namespace ?? "")
+            setAuditOperationId("")
             openView("console")
             setAssetOrigin({ page: origin, targetKey: target.key, scope: consoleScopeKey(session) })
             selectTab(tab)
           }}
+          onOpenMonitorTarget={(target, nextTab, origin, operationId) => {
+            if (target.key !== selected?.key && !selectTarget(target)) return
+            setAssetNamespace("")
+            if (nextTab === "tasks") setAutomationTab("background")
+            openView("console")
+            setAssetOrigin({ page: origin, targetKey: target.key, scope: consoleScopeKey(session) })
+            selectTab(nextTab)
+            if (nextTab === "audit") setAuditOperationId(operationId ?? "")
+          }}
+          onDeployAgent={openAgentSetup}
+          onRunningChange={setSkillRunning}
         />{!session.demo && (assetPage.section==="clusters" || assetPage.section==="machines") && <LegacyAssetNotes key={assetPage.section} kind={assetPage.section==="clusters"?"k8s":"vm"}/>}</>
       ) : view === "deploy" ? (
         <DeployView section={deploySection} onSection={setDeploySection} session={session} target={onlineSelected} sessionId={sessionId} onEnterConsole={() => { openView("console"); refresh("user") }}
@@ -862,7 +862,17 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       <div className={tab === "ask" && onlineSelected ? "flex shrink-0" : "flex min-h-0 flex-1"}>
         <main className="flex min-w-0 flex-1 flex-col">
 
-          {!selected ? (
+          {tab === "tasks" ? (
+            <section className="min-h-0 flex-1 overflow-auto p-4">
+              <AutomationPanel
+                session={session}
+                targets={directory}
+                selectedTarget={selected}
+                initialTab={automationTab}
+                onSelectTarget={(t) => { selectTarget(t) }}
+              />
+            </section>
+          ) : !selected ? (
             <AgentDirectory targets={directory} isAdmin={isAdmin} error={directoryError} loading={loading} onRefresh={() => refresh("user")} onDeploy={openAgentSetup} onEnter={chooseWorkspaceTarget} />
           ) : tab === "overview" ? (
             <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
@@ -878,7 +888,11 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
             </div>
           ) : tab === "assets" || tab === "monitor" ? (
             <section className="min-h-0 flex-1 overflow-auto p-4" key={selected.key + tab}>
-              {session.demo ? <p>连接 Gateway 后可读取此 Agent 的资产与指标。</p> : tab === "assets" ? <AgentAssets target={selected}/> : <AgentMonitor session={session} target={selected}/>}
+              {tab === "assets" ? (
+                <AgentAssets target={selected}/>
+              ) : (
+                <AgentMonitor session={session} target={selected}/>
+              )}
             </section>
           ) : !onlineSelected && tab !== "audit" && tab !== "credentials" && tab !== "tasks" ? (
             <section className="min-h-0 flex-1 overflow-auto p-4">
@@ -949,13 +963,6 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                     onRunningChange={onTerminalRunningChange}
                   />
                 )}
-                {tab === "tasks" && (
-                  <BackgroundTasksPanel
-                    key={`tasks-${selected.key}`}
-                    session={session}
-                    target={selected}
-                  />
-                )}
                 {tab === "files" && (
                   <FilesPanel
                     key={`files-${selected.key}-${sessionId}`}
@@ -977,10 +984,11 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 )}
                 {tab === "audit" && (
                   <AuditPanel
-                    key={`audit-${selected.key}-${sessionId}`}
+                    key={`audit-${selected.key}-${sessionId}-${auditOperationId}`}
                     session={session}
                     target={selected}
                     sessionId={sessionId}
+                    operationId={auditOperationId}
                   />
                 )}
                 {tab === "credentials" && (

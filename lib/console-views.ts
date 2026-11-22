@@ -77,7 +77,7 @@ const NAV: ConsoleNavEntry[] = [
   { id: "overview", label: "Agent 概览", destination: { view: "console", tab: "overview" } },
   { id: "ask", label: "AI 助手", destination: { view: "console", tab: "ask" } },
   { id: "terminal", label: "终端", destination: { view: "console", tab: "terminal" } },
-  { id: "tasks", label: "后台任务", destination: { view: "console", tab: "tasks" } },
+  { id: "tasks", label: "自动化", destination: { view: "console", tab: "tasks" } },
   { id: "files", label: "文件", destination: { view: "console", tab: "files" } },
   { id: "assets", label: "Agent 资产", destination: { view: "console", tab: "assets" } },
   { id: "monitor", label: "Agent 监控", destination: { view: "console", tab: "monitor" } },

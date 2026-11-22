@@ -2,7 +2,7 @@
 
 import { useRef, useState, type ReactNode } from "react"
 import { assetRequest } from "@/lib/assets"
-import { ASSET_LEDGER_SECTIONS } from "@/lib/console-views"
+import { ASSET_LEDGER_SECTIONS, type TargetTab as WorkspaceTab } from "@/lib/console-views"
 import { fetchTargets, sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { Button } from "./ui"
 import { MachineAssetsPanel } from "./machine-assets-panel"
@@ -15,7 +15,7 @@ import { PlatformAssetScope } from "./agent-asset-scope"
 
 // Section labels come from lib/console-views.ts, which also renders them in the
 // header navigation, so the ledger never keeps a second copy of the list.
-type TargetTab = "overview" | "credentials" | "k8s"
+type TargetTab = "overview" | "credentials" | "k8s" | "monitor"
 export type MachinePage = {
   section: "machines"; machineId: string; query?: string; tags?: string[]; kind?: "all" | "physical" | "vm"; nodesOpen?: boolean
 }
@@ -35,7 +35,7 @@ export function assetReturnLabel(page: AssetPage) {
     const { assetId, cluster, instance, namespace } = page.source
     return `返回集群 ${assetId} · ${cluster}/${instance}${namespace ? ` · ${namespace}` : ""}`
   }
-  if (page.section === "board") return "返回资产看板"
+  if (page.section === "board") return "返回平台监控"
   if (page.section === "scope") return "返回 Agent管理"
   return `返回${ASSET_LEDGER_SECTIONS.find(item => item.id === page.section)!.label}`
 }
@@ -81,7 +81,7 @@ function TargetActionButton({ target, label, restoreFocus, enter }: {
   </span>
 }
 
-export function AssetInventory({ session, targets, selectedTarget, catalog, page, onPage, onOpenTarget, onOpenDirectK8s }: {
+export function AssetInventory({ session, targets, selectedTarget, catalog, page, onPage, onOpenTarget, onOpenMonitorTarget, onOpenDirectK8s, onDeployAgent, onRunningChange }: {
   session: Session
   targets: Target[]
   selectedTarget?: Target | null
@@ -90,11 +90,11 @@ export function AssetInventory({ session, targets, selectedTarget, catalog, page
   page: AssetPage
   onPage: (page: AssetPage) => void
   onOpenTarget: OpenTarget
+  onOpenMonitorTarget?: (target: Target, tab: WorkspaceTab, origin: AssetPage, operationId?: string) => void
   onOpenDirectK8s?: (target: Target) => void
+  onDeployAgent?: () => void
+  onRunningChange?: (running: boolean) => void
 }) {
-  function openLedger(next: LedgerPage) {
-    onPage(next)
-  }
   const [initialAction] = useState(() => "returnTab" in page && page.returnTab
     ? actionKey(page, page.returnTab) : undefined)
   const returnFocus = useRef(initialAction)
@@ -124,28 +124,23 @@ export function AssetInventory({ session, targets, selectedTarget, catalog, page
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div key={JSON.stringify([scope, page])} className="min-h-0 flex-1 overflow-auto p-4">
-        {session.demo ? (
-          <div className="card-surface space-y-3 p-4 text-sm">
-            <p>请连接 Gateway 查看和维护持久化资产台账。</p>
-            {page.section === "clusters" && onOpenDirectK8s && onlineTargets.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <span className="text-xs text-muted-foreground">演示模式下可直接浏览在线目标的 Kubernetes 实时资源：</span>
-                {(selectedTarget && selectedTarget.status !== "offline" ? [selectedTarget] : onlineTargets).map((t) => (
-                  <Button key={t.key} size="sm" variant="primary" onClick={() => onOpenDirectK8s(t)}>
-                    进入 {t.cluster}/{t.instance} 实时资源
-                  </Button>
-                ))}
-              </div>
-            )}
-          </div>
+        {page.section === "board" ? (
+          <AssetPlatformPanel
+            session={session}
+            targets={targets}
+            initialClusterId={page.clusterId}
+            onClusterChange={(clusterId) => onPage(clusterId ? { section: "board", clusterId } : { section: "board" })}
+            onOpenTarget={onOpenMonitorTarget
+              ? (target, tab, operationId) => onOpenMonitorTarget(target, tab, page, operationId)
+              : undefined}
+            onDeployAgent={onDeployAgent}
+            onRunningChange={onRunningChange}
+          />
         ) : page.section === "scope" && sessionIsAdmin(session) ? <PlatformAssetScope {...catalog} /> : <>
-            {page.section === "board" && <AssetPlatformPanel session={session} targets={targets}
-              initialClusterId={page.clusterId} onMachine={machineId => openLedger(machineId ? { section: "machines", machineId } : { section: "machines" })} />}
             {page.section === "machines" && <MachineAssetsPanel initialPage={"machineId" in page ? page : undefined} session={session} targets={targets} renderTargetAction={renderTargetAction} />}
             {page.section === "clusters" && <ClusterAssetsPanel session={session} targets={targets}
               selectedTarget={selectedTarget} onOpenTargetK8s={onOpenDirectK8s}
-              initialPage={"query" in page ? page : undefined} renderTargetAction={renderTargetAction}
-              onOpenCluster={(clusterId) => onPage({ section: "board", clusterId })} />}
+              initialPage={"query" in page ? page : undefined} renderTargetAction={renderTargetAction} />}
             {page.section === "systems" && <BusinessAssetsPanel session={session} targets={targets}/>}
           </>}
       </div>
