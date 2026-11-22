@@ -4,7 +4,9 @@
 
 本文件是控制台「更新内容」的数据源：Web 镜像构建时从仓库根打包 `CHANGELOG.md`，控制台读取其中最新带版本号的条目作为当前版本。`[Unreleased]` 收敛尚未发布的变更，发布时整段改成 `## [版本号] — YYYY-MM-DD`，已发布条目不再改写；0.1.0–0.2.2 为回填的历史记录。
 
-分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
+分类标题只使用 `### Added` / `### Changed`
+- 凭据列表用中文展示状态、版本和目标；编号与内容摘要收进详情。
+ / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
 ## [Unreleased]
 
@@ -88,7 +90,7 @@
 - RPC、Git 和内部调用在目标重连时最多等待 10 秒（`-target-reconnect-grace`），探测类
   调用保持立即返回；Agent 隧道读超时从 20 秒调整为可配置的 90 秒，并在断线时记录被结束
   的执行数量。
-- CI 与构建镜像固定 pnpm 11.7.0（`packageManager` + corepack），Go 测试与发布统一使用
+- CI 与构建镜像固定 pnpm 10.18.0（`packageManager` + corepack），Go 测试与发布统一使用
   1.25.14（`toolchain`）。
 
 ## [0.3.21] — 2026-11-21

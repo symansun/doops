@@ -142,7 +142,7 @@ Gateway 和 Agent 若运行在同一宿主机网络中，必须避免默认端�
 | 部分 | 当前仓库采用的技术或建议版本 |
 | --- | --- |
 | Web | Next.js 16、React 19、TypeScript 6、Tailwind CSS 4 |
-| 前端工具链 | 建议使用与 CI 一致的 **Node.js 24、pnpm 11.7.0** |
+| 前端工具链 | 建议使用与 CI 一致的 **Node.js 24、pnpm 10.18.0** |
 | 后端与 CLI | Go；三个模块的 `go.mod` 均声明 **Go 1.24.0** |
 | 控制面存储 | SQLite |
 | 通信与同步 | HTTP、WebSocket、JSON-RPC、Git HTTP |
@@ -169,7 +169,7 @@ git clone https://github.com/symansun/doops.git
 cd doops
 
 corepack enable
-corepack prepare pnpm@11.7.0 --activate
+corepack prepare pnpm@10.18.0 --activate
 pnpm install --frozen-lockfile
 ```
 
