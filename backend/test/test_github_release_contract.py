@@ -86,6 +86,34 @@ def test_release_is_gated_by_the_reusable_ci_workflow():
     assert "contract-tests" in ci["jobs"]
 
 
+def test_ci_checks_go_and_web_independently_without_weakening_release_gate():
+    jobs = load_workflow(CI)["jobs"]
+    go, web = jobs["test"], jobs["web"]
+    assert "needs" not in go and "needs" not in web
+    for job in (go, web):
+        assert "if" not in job and "continue-on-error" not in job
+    assert {step.get("working-directory") for step in steps_of(go)
+            if step.get("run", "").startswith("go test ")} == {
+        "backend/agent", "backend/gateway", "backend/cli",
+    }
+    assert "pnpm" not in run_text(go)
+    commands = [step["run"] for step in steps_of(web) if "run" in step]
+    assert [command for command in commands if command.startswith("pnpm ")] == [
+        "pnpm install --frozen-lockfile",
+        "pnpm test:gateway-policy",
+        "pnpm test:console",
+        "pnpm test:dosql",
+        "pnpm exec tsc --noEmit",
+        "pnpm build",
+    ]
+    for step in steps_of(web):
+        assert "continue-on-error" not in step and "if" not in step
+    dockerfile = (ROOT / "Dockerfile.web").read_text(encoding="utf-8")
+    enable = next(command for command in commands if "corepack prepare pnpm@" in command)
+    assert f"RUN {enable}\n" in dockerfile
+    assert "RUN pnpm install --frozen-lockfile\n" in dockerfile
+
+
 def test_publish_requires_a_green_ci_and_stays_least_privileged():
     release = load_workflow(RELEASE)
     jobs = release["jobs"]
