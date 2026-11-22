@@ -40,12 +40,28 @@ import { SecretImportDialog } from "./credential-secret-import"
 import { CredentialBundleButton } from "./credential-bundle-dialog"
 
 const TYPE_LABELS: Record<CredentialType, string> = {
-  registry: "OCI Registry",
-  tls: "TLS",
-  opaque: "Opaque Secret",
-  helmRepository: "Helm Repository",
-  gitToken: "Git Token",
-  modelProvider: "Model Provider",
+  registry: "镜像仓库",
+  tls: "TLS 证书",
+  opaque: "通用密钥",
+  helmRepository: "Helm 仓库",
+  gitToken: "Git 令牌",
+  modelProvider: "模型服务",
+}
+
+const USE_LABELS: Record<CredentialUse, string> = {
+  imagePull: "拉取镜像", gitCheckout: "读取代码", helmPull: "拉取 Helm 包", tls: "TLS 证书",
+  opaqueSecret: "通用密钥", database: "数据库连接", modelProvider: "调用模型",
+}
+const VERSION_LABELS: Record<CredentialVersion["state"], string> = {
+  staged: "待激活", active: "使用中", superseded: "已替换", revoked: "已吊销",
+}
+function stateLabel(state: string, binding = false) {
+  switch (state) {
+    case "active": return binding ? "已绑定" : "已启用"
+    case "revoking": return binding ? "解除中" : "吊销中"
+    case "revoked": return binding ? "已解除" : "已吊销"
+    default: return "状态未知"
+  }
 }
 
 const TYPE_USES: Record<CredentialType, CredentialUse> = {
@@ -64,7 +80,7 @@ type Action =
   | { kind: "payload"; credential: CredentialResource }
   | { kind: "binding"; credential: CredentialResource }
   | { kind: "import"; credential: CredentialResource }
-  | { kind: "version"; credential: CredentialResource; version: CredentialVersion }
+  | { kind: "version"; credential: CredentialResource; version?: CredentialVersion }
   | {
       kind: "verify"
       credential: CredentialResource
@@ -225,7 +241,7 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
       await promoteCredentialVersion(session, resource.id, version.id)
       setAction(null)
       await load()
-      completed(`已激活 ${resource.name} 的版本 ${version.id}`)
+      completed(`已激活「${resource.name}」的所选版本`)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -364,7 +380,6 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
               <tr key={resource.id} className="border-b border-border/60 align-top">
                 <td className="px-4 py-3">
                   <div className="break-words font-medium text-foreground">{resource.name}</div>
-                  <div className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">{resource.id}</div>
                 </td>
                 <td className="px-3 py-3 text-xs text-foreground">{TYPE_LABELS[resource.type]}</td>
                 <td className="px-3 py-3 text-xs text-muted-foreground">
@@ -378,7 +393,7 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
                         : "bg-muted text-muted-foreground"
                     }`}
                   >
-                    {resource.state}
+                    {stateLabel(resource.state)}
                   </span>
                 </td>
                 <td className="min-w-0 break-words px-3 py-3 text-xs text-muted-foreground">
@@ -396,7 +411,6 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
                       />
                       {versions.length > 0 && (
                         <VersionSummary
-                          updatedAt={resource.updated_at}
                           versions={versions}
                           selectedVersion={version}
                           verification={verification}
@@ -407,7 +421,6 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
                   ) : (
                     <div className="flex flex-col gap-2">
                       <VersionSummary
-                        updatedAt={resource.updated_at}
                         versions={versions}
                         selectedVersion={version}
                         verification={verification}
@@ -429,6 +442,7 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
                 </td>
                 <td className="sticky right-0 z-10 border-l border-border/60 bg-background px-3 py-3">
                   <div className="flex flex-wrap justify-end gap-1.5 [&>button]:whitespace-nowrap">
+                    <Button size="sm" onClick={() => setAction({ kind: "version", credential: resource, version })}>详情</Button>
                     {target && view === "managed" && resource.state === "active" && canImportFromSecret(resource.type) && (
                       <Button
                         onClick={() => setAction({ kind: "import", credential: resource })}
@@ -447,25 +461,10 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
                         >
                           写入版本
                         </Button>
-                        {version && (
-                          <>
-                            <Button
-                              onClick={() => setAction({ kind: "version", credential: resource, version })}
-                              size="sm"
-                            >
-                              查看版本
-                            </Button>
-                            {version.state === "staged" && (
-                              <Button
-                                onClick={() => promote(resource, version)}
-                                disabled={mutating}
-                                variant="primary"
-                                size="sm"
-                              >
-                                激活
-                              </Button>
-                            )}
-                          </>
+                        {version?.state === "staged" && (
+                          <Button onClick={() => promote(resource, version)} disabled={mutating} variant="primary" size="sm">
+                            激活
+                          </Button>
                         )}
                         <Button
                           onClick={() => setAction({ kind: "binding", credential: resource })}
@@ -515,7 +514,7 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
           onDone={(version) => {
             rememberVersion(action.credential.id, version)
             setAction(null)
-            completed(`已写入暂存版本 ${version.id}`)
+            completed(`已为「${action.credential.name}」写入待激活版本`)
           }}
           onError={setError}
         />
@@ -529,7 +528,7 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
           onDone={(version) => {
             rememberVersion(action.credential.id, version)
             setAction(null)
-            completed(`已从 Secret 导入暂存版本 ${version.id}`)
+            completed(`已为「${action.credential.name}」导入待激活版本`)
           }}
           onError={setError}
         />
@@ -553,9 +552,10 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
           credential={action.credential}
           version={action.version}
           busy={mutating}
-          verification={verificationStatuses[`${action.credential.id}:${action.version.id}`]}
+          verification={action.version && verificationStatuses[`${action.credential.id}:${action.version.id}`]}
           onClose={() => setAction(null)}
-          onPromote={() => promote(action.credential, action.version)}
+          onPromote={view === "managed" && !session.demo && action.credential.state === "active"
+            ? (version) => promote(action.credential, version) : undefined}
         />
       )}
       {action?.kind === "verify" && (
@@ -569,7 +569,7 @@ export function CredentialPanel({ session, target, initialView = "target" }: { s
             rememberVerification(action.credential, action.version, result)
             setAction(null)
             completed(
-              `版本 ${action.version.id} 已验证，返回 ${result.evidence.length} 条 metadata evidence`,
+              `「${action.credential.name}」的所选版本已完成验证`,
             )
           }}
           onError={setError}
@@ -588,29 +588,34 @@ function VersionDialog({
   onPromote,
 }: {
   credential: CredentialResource
-  version: CredentialVersion
+  version?: CredentialVersion
   busy: boolean
   verification?: VerificationStatus
   onClose: () => void
-  onPromote: () => void
+  onPromote?: (version: CredentialVersion) => void
 }) {
   return (
-    <DialogFrame title={`凭据版本 · ${credential.name}`} onClose={onClose}>
+    <DialogFrame title={`凭据详情 · ${credential.name}`} onClose={onClose}>
       <div className="space-y-3 p-4 text-xs">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <ReadOnlyField label="Version ID" value={version.id} />
-          <ReadOnlyField label="状态" value={version.state} />
-          <ReadOnlyField label="Payload digest" value={version.payload_digest} />
-          <ReadOnlyField label="创建时间" value={fmtTime(version.created_at)} />
-          <ReadOnlyField label="激活时间" value={fmtTime(version.promoted_at)} />
+          <ReadOnlyField label="凭据编号" value={credential.id} />
+          <ReadOnlyField label="更新时间" value={fmtTime(credential.updated_at)} />
+          {version && <>
+            <ReadOnlyField label="所选版本" value={VERSION_LABELS[version.state]} />
+            <ReadOnlyField label="版本编号" value={version.id} />
+            <ReadOnlyField label="内容摘要（校验值）" value={version.payload_digest} />
+            <ReadOnlyField label="创建时间" value={fmtTime(version.created_at)} />
+            {version.promoted_at && <ReadOnlyField label="激活时间" value={fmtTime(version.promoted_at)} />}
+          </>}
+          {credential.bindings?.map(binding => <ReadOnlyField key={binding.id} label={`绑定编号 · ${binding.scope.cluster}/${binding.scope.instance}`} value={binding.id} />)}
         </div>
         {verification && (
           <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-success">
-            已验证：{verification.status} · {verification.evidence} 条 metadata evidence
+            验证记录：{verification.evidence} 条
           </div>
         )}
         <p className="text-muted-foreground">
-          页面只保存 Gateway 返回的版本元数据；payload 不会进入页面状态、任务上下文或公开请求结果。
+          这里只显示凭据信息，不显示密钥内容。
         </p>
         <div className="flex justify-end gap-2">
           <Button
@@ -619,9 +624,9 @@ function VersionDialog({
           >
             关闭
           </Button>
-          {version.state === "staged" && (
+          {version?.state === "staged" && onPromote && (
             <Button
-              onClick={onPromote}
+              onClick={() => onPromote(version)}
               disabled={busy}
               variant="primary" size="sm"
             >
@@ -676,13 +681,12 @@ function VerifyDialog({
     <DialogFrame title={`验证暂存版本 · ${credential.name}`} onClose={onClose}>
       <div className="space-y-3 p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <ReadOnlyField label="Version ID" value={version.id} />
-          <ReadOnlyField label="Binding ID" value={binding.id} />
-          <ReadOnlyField label="Cluster / instance" value={`${scope.cluster}/${scope.instance}`} />
-          <ReadOnlyField label="用途" value={scope.use || "按凭据类型推断"} />
+          <ReadOnlyField label="待验证版本" value={fmtTime(version.created_at)} />
+          <ReadOnlyField label="目标 Agent" value={`${scope.cluster}/${scope.instance}`} />
+          <ReadOnlyField label="用途" value={USE_LABELS[scope.use] || "按凭据类型推断"} />
         </div>
         <p className="text-xs text-muted-foreground">
-          将按该 target 验证 staged version；namespace 等运行参数只用于物化，不参与授权。
+          将在此目标验证所选版本，不会激活或替换当前版本。
         </p>
         <div className="flex justify-end gap-2">
           <Button
@@ -696,7 +700,7 @@ function VerifyDialog({
             disabled={busy || version.state !== "staged" || binding.state !== "active"}
             variant="primary" size="sm"
           >
-            {busy ? "验证中" : "验证 target"}
+            {busy ? "验证中" : "验证版本"}
           </Button>
         </div>
       </div>
@@ -719,16 +723,17 @@ function BindingSummary({
   onVerify: (binding: CredentialBinding) => void
   onRevoke: (binding: CredentialBinding) => void
 }) {
-  if (!resource.bindings?.length) return <span>-</span>
+  if (!resource.bindings?.length) return <span>暂无目标绑定</span>
   return (
     <div className="flex flex-col gap-1">
       {resource.bindings.map((binding) => (
         <div key={binding.id} className="flex flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="font-mono text-[11px] text-muted-foreground">{binding.id}</span>
+            <span className="text-foreground">{binding.scope.cluster}/{binding.scope.instance}</span>
             <Badge variant={binding.state === "active" ? "success" : "default"}>
-              {binding.state}
+              {stateLabel(binding.state, true)}
             </Badge>
+            {binding.scope.use && <span>{USE_LABELS[binding.scope.use]}</span>}
             {binding.state === "active" && !disabled && version?.state === "staged" && (
               <Button
                 onClick={() => onVerify(binding)}
@@ -752,73 +757,32 @@ function BindingSummary({
               </Button>
             )}
           </div>
-          <div>
-            {binding.scope.cluster}/{binding.scope.instance} · 用途 {binding.scope.use || "自动推断"}
-          </div>
         </div>
       ))}
     </div>
   )
 }
 
-function VersionSummary({
-  updatedAt,
-  versions,
-  selectedVersion,
-  verification,
-  onSelect,
-}: {
-  updatedAt?: string
+function VersionSummary({ versions, selectedVersion, verification, onSelect }: {
   versions: CredentialVersion[]
   selectedVersion?: CredentialVersion
   verification?: VerificationStatus
   onSelect: (versionID: string) => void
 }) {
+  if (!versions.length) return <span>暂无可见版本</span>
   return (
-    <div className="flex flex-col gap-1">
-      <span>更新时间：{fmtTime(updatedAt)}</span>
-      {versions.length > 0 ? (
-        <>
-          <label className="flex flex-wrap items-center gap-1.5">
-            <span>版本</span>
-            <Select
-              className="min-w-48 py-1 text-[11px]"
-              value={selectedVersion?.id ?? ""}
-              onChange={(event) => onSelect(event.target.value)}
-            >
-              {versions.map((version) => (
-                <option key={version.id} value={version.id}>
-                  {version.state} · {version.id}
-                </option>
-              ))}
-            </Select>
-          </label>
-          {selectedVersion ? (
-            <>
-              <span className="flex flex-wrap items-center gap-1.5">
-                <span className="rounded bg-muted px-1.5 py-0.5 text-foreground">
-                  {selectedVersion.state}
-                </span>
-                {verification && (
-                  <span className="rounded bg-success/15 px-1.5 py-0.5 text-success">
-                    {verification.status} · {verification.evidence} 条证据
-                  </span>
-                )}
-              </span>
-              <span className="font-mono text-[11px] text-muted-foreground">
-                {selectedVersion.id}
-              </span>
-              <span className="font-mono text-[11px] text-muted-foreground">
-                digest {selectedVersion.payload_digest}
-              </span>
-            </>
-          ) : (
-            <span className="text-muted-foreground">请选择一个版本</span>
-          )}
-        </>
-      ) : (
-        <span className="text-muted-foreground">当前资源没有可见版本</span>
-      )}
+    <div className="flex flex-wrap items-center gap-2">
+      <label className="inline-flex max-w-full items-center gap-2">
+        版本
+        <Select aria-label="选择版本" className="min-w-0 py-1 text-sm" value={selectedVersion?.id ?? ""} onChange={e => onSelect(e.target.value)}>
+          {versions.map((version, i) => (
+            <option key={version.id} value={version.id}>
+              第 {versions.length - i} 版 · {VERSION_LABELS[version.state]}
+            </option>
+          ))}
+        </Select>
+      </label>
+      {verification && <span>验证记录：{verification.evidence} 条</span>}
     </div>
   )
 }
@@ -1045,7 +1009,7 @@ function BindingDialog({
               <option value="database">数据库连接</option>
             </Select>
           </label>
-        ) : <ReadOnlyField label="用途" value={use} />}
+        ) : <ReadOnlyField label="用途" value={USE_LABELS[use]} />}
         <TextField
           label="Secret namespace"
           value={namespace}
@@ -1109,7 +1073,7 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
       {label}
-      <div className="input font-mono text-xs text-foreground">{value}</div>
+      <div className="input break-all text-sm text-foreground">{value}</div>
     </div>
   )
 }

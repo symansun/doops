@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import "./console.css"
+import { ConsoleFormAssist } from "@/components/form-assist"
 
 export const metadata: Metadata = {
   title: "DoOps Console · 智能运维工作台",
@@ -7,5 +8,5 @@ export const metadata: Metadata = {
 }
 
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
-  return children
+  return <>{children}<ConsoleFormAssist /></>
 }
