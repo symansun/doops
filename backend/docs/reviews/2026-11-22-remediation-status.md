@@ -18,30 +18,30 @@
 
 | 编号 | 优先级 | 状态 | 落点 / 证据 | 备注 |
 |---|---|---|---|---|
-| B-01 | P0 | 已修复 | [tool_deadline.go](../agent/internal/server/tool_deadline.go)、[tool_handlers_command.go](../agent/internal/server/tool_handlers_command.go) | 超时返回 `agent_tool_timeout`，审计记 `timeout` |
-| B-02 | P0 | 已修复 | [handler_ws.go](../agent/internal/server/handler_ws.go) 的 `waitCommandOutput` / `streamCommandOutput` | 取消 1 MiB 行上限；已知退出不再改写 `outcome_unknown` |
+| B-01 | P0 | 已修复 | [tool_deadline.go](../../agent/internal/server/tool_deadline.go)、[tool_handlers_command.go](../../agent/internal/server/tool_handlers_command.go) | 超时返回 `agent_tool_timeout`，审计记 `timeout` |
+| B-02 | P0 | 已修复 | [handler_ws.go](../../agent/internal/server/handler_ws.go) 的 `waitCommandOutput` / `streamCommandOutput` | 取消 1 MiB 行上限；已知退出不再改写 `outcome_unknown` |
 | B-03 | P1 | 第一阶段 | 隧道读超时可配置 90 秒，断线记录在途执行数 | 断线续接协议未做 |
 | B-04 | P1 | 未开始 | `agent_registry.go`、`execution_lifecycle.go` | 全局锁内访问单连接 SQLite |
-| B-05 | P1 | 已修复 | [tunnel_hub.go](../agent/internal/server/tunnel_hub.go) 的 `targetReconnectGrace` | 探测和凭据工具立即返回 |
-| B-06 | P1 | 已修复 | [login_limit.go](../agent/internal/server/login_limit.go)、[console-forward.ts](../../lib/server/console-forward.ts) | 签名浏览器地址 + 成功登录清零 |
+| B-05 | P1 | 已修复 | [tunnel_hub.go](../../agent/internal/server/tunnel_hub.go) 的 `targetReconnectGrace` | 探测和凭据工具立即返回 |
+| B-06 | P1 | 已修复 | [login_limit.go](../../agent/internal/server/login_limit.go)、[console-forward.ts](../../../lib/server/console-forward.ts) | 签名浏览器地址 + 成功登录清零 |
 | B-07 | P1 | 未开始 | `gatewaycmd.go`、`client_service.go` | 无优雅停机/排空 |
-| B-08 | P1 | 第一阶段 | [secret_box.go](../agent/internal/server/secret_box.go) 的 `VerifySecretKey` | 启动校验已上线；密钥轮换未做 |
+| B-08 | P1 | 第一阶段 | [secret_box.go](../../agent/internal/server/secret_box.go) 的 `VerifySecretKey` | 启动校验已上线；密钥轮换未做 |
 | B-09 | P2 | 未开始 | `acquireExclusive` / `acquireResource` | 升级等待没有写者优先 |
 | B-10 | P2 | 未开始 | `model_provider_delivery.go` | 模型凭据投递内联在 ask 前 |
-| B-11 | P2 | 未开始 | [proxy_tunnel.go](../agent/internal/server/proxy_tunnel.go) | Proxy 写请求串行、逐请求同步审计 |
-| B-12 | P2 | 未开始 | [audit_purge.go](../agent/internal/server/audit_purge.go) | 无自动保留；过期 token 未清理 |
+| B-11 | P2 | 未开始 | [proxy_tunnel.go](../../agent/internal/server/proxy_tunnel.go) | Proxy 写请求串行、逐请求同步审计 |
+| B-12 | P2 | 未开始 | [audit_purge.go](../../agent/internal/server/audit_purge.go) | 无自动保留；过期 token 未清理 |
 | B-13 | P3 | 未开始 | 各层超时常量 | 默认值未收敛，控制台未接 Gateway 时限 |
-| S-01 | P0 | 迁移窗口 | [agent_registration.go](../agent/internal/server/agent_registration.go)、凭据投递开关 | 代码已完成；线上显式开放，见下节 |
+| S-01 | P0 | 迁移窗口 | [agent_registration.go](../../agent/internal/server/agent_registration.go)、凭据投递开关 | 代码已完成；线上显式开放，见下节 |
 | S-02 | P2 | Chart 部分 | [values.yaml](../../deploy/helm/doops-agent/values.yaml)、[rbac.yaml](../../deploy/helm/doops-agent/templates/rbac.yaml) | 特权/RBAC 可配置；入口探测和 `node_info` 能力上报未合 |
 | S-03 | P2 | 未开始 | `proxy_tunnel.go` 的审计摘要 | 查询串仍进审计 |
 | S-04 | P2 | 未开始 | `gateway_store.go` 的 token 校验 | 每请求 bcrypt；需先跑基准 |
-| S-05 | P3 | 已修复 | [handler_ws.go](../agent/internal/server/handler_ws.go) 的 `checkWebSocketOrigin` | 主机 + 端口精确匹配 |
+| S-05 | P3 | 已修复 | [handler_ws.go](../../agent/internal/server/handler_ws.go) 的 `checkWebSocketOrigin` | 主机 + 端口精确匹配 |
 | S-06 | P3 | 未开始 | `gatewaycmd.go` 的 user/passwd | 口令仍可走命令行参数 |
-| S-07 | P3 | 已修复 | [next.config.mjs](../../next.config.mjs)、博客图片路由 | 安全头 + SVG 沙箱 CSP |
-| S-08 | P3 | 未开始 | [dispatcher.go](../agent/internal/dispatcher/dispatcher.go) | 拒绝规则仍是文本正则 |
-| M-01 | — | 第一阶段 | [超大文件拆分设计](../../docs/design/2026-11-22-oversized-file-split.md) | 纯搬运已落地；巨型函数/Web 拆分未做 |
+| S-07 | P3 | 已修复 | [next.config.mjs](../../../next.config.mjs)、博客图片路由 | 安全头 + SVG 沙箱 CSP |
+| S-08 | P3 | 未开始 | [dispatcher.go](../../agent/internal/dispatcher/dispatcher.go) | 拒绝规则仍是文本正则 |
+| M-01 | — | 第一阶段 | [超大文件拆分设计](../../../docs/design/2026-11-22-oversized-file-split.md) | 纯搬运已落地；巨型函数/Web 拆分未做 |
 | M-02 | — | 未开始 | `unresolvedExecutions`、`DeleteExpiredTokens` 等 | 死代码与从未置位标志 |
-| M-03 | — | 已修复 | [package.json](../../package.json)、三个 `go.mod` | pnpm 10.18.0（锁文件补丁哈希不兼容 pnpm 11）、Go 1.25.14 |
+| M-03 | — | 已修复 | [package.json](../../../package.json)、三个 `go.mod` | pnpm 10.18.0（锁文件补丁哈希不兼容 pnpm 11）、Go 1.25.14 |
 
 ## 线上迁移状态（重要）
 
