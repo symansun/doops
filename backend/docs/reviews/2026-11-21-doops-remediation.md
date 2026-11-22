@@ -21,11 +21,11 @@
 | Git 隧道流和取消 | 失败时中止流，取消回执按 RPC ID 匹配 | [handler_ws_test.go](../../agent/internal/server/handler_ws_test.go) | 已发布，macOS 和 Linux 各重复通过 100 次 |
 | 会话文本文件 | 限制相对路径访问，限制读取大小，Linux 相对路径已修复 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，工作区模板仍支持任意文本 |
 | 非空工作区替换 | 原子交换，交换不可用时保留现有工作区 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
-| Web 模型配置 | 本地存储清理旧 API key，发布入口采用凭证引用 | [Web 指南](../DOOPS_WEBUI.md) | v0.3.21 已发布，隔离 Web 会话和凭证流程通过，实际服务待验收 |
+| Web 模型配置 | 加载和保存时清除旧 `api_key`；模型设置须在凭据管理中验证并启用，不能从配置中心直接写入节点 | [Web 指南](../DOOPS_WEBUI.md) · [发布版本函数复验](https://github.com/symansun/doops/pull/30#issuecomment-7073362485) | v0.3.21 已发布。合成存储复验保留模型元数据和凭据引用；3 条模型直发路径均未调用模拟 RPC，普通文件对照调用 1 次。实际服务待验收。 |
 | Web 同源检查 | 默认使用请求源。正式部署脚本可传入公开 HTTPS origin，并检查候选与切换后容器的同源登录行为 | [部署规程](../DOOPS_WEBUI.md) · [PR #27](https://github.com/symansun/doops/pull/27) | v0.3.21 已发布，隔离 Web 容器和切换回滚分支通过，实际服务待验收 |
 | Web 升级观察 | 提交前持久化可从操作编号推导的 Job，关联证据补齐命名空间 | [升级面板](../../../components/agent-upgrade-panel.tsx) | 已发布 |
 | CLI 流式终态 | 拒绝缺失或空终态，解析失败以错误返回 | [CLI 流式测试](../../cli/cli/doops/client_test.go) | 已发布 |
-| CLI 历史 | 新历史省略 ask 和 exec 正文，收紧旧文件权限 | [命令记录位置](../../cli/cli/doops/main.go#L615-L627) · [历史写入与权限](../../cli/cli/doops/history.go#L29-L68) · [路径测试](../../cli/cli/doops/auth_test.go) | 已发布。用 v0.3.21 源码和临时 HOME 定向验证：写入一条合成 exec 记录后，新旧文件均为 0600，旧内容逐字节不变，新文件只含新记录。 |
+| CLI 历史 | 新历史省略 ask 和 exec 正文，收紧旧文件权限 | [命令记录位置](../../cli/cli/doops/main.go#L615-L627) · [历史写入与权限](../../cli/cli/doops/history.go#L29-L68) · [路径测试](../../cli/cli/doops/auth_test.go) · [正式 CLI 回读](https://github.com/symansun/doops/pull/30#issuecomment-7073177628) | 已发布。用 v0.3.21 源码和临时 HOME 验证：写入合成 exec 记录后新旧文件均为 0600，旧内容未变。正式 macOS ARM64 CLI 单独回读时只显示 v2 记录，不显示旧内容。 |
 | Operator Skill 示例 | SSH、Kubernetes 和凭证配置示例经过真实 CLI 的参数校验 | [合同测试](../../test/test_sql_skill_contract.py) | 已发布 |
 | DoWeb 安装挂载 | 将自定义目录作为完整挂载参数传递 | [DoWeb 脚本](../../agent/skills/doweb/scripts/doweb.mjs) | 已发布 |
 
@@ -63,9 +63,11 @@
 
 同日从 v0.3.21 标签导出源码（不使用当前开发工作区），禁用 Go 测试缓存，复跑并确认以下四个用例均执行且通过：`TestModelProviderCleanupRecoversInterruptedDelivery`、`TestRegistryOwnershipWriteFailureRestoresAuthfile`、`TestRegistryAuthfileCleanupKeepsLiveVersion`、`TestCredentialResourceRevocationRetryAfterRevoking`。这是发布版本的本地回归证据，不是共享服务验收。
 
+**部署前提：** 隔离试验中的 Agent 和 Web 均已核对源提交与 linux/amd64 平台。Agent 二进制报告 v0.3.21，内置 do-agent 报告 0.2.46，但该隔离 Agent 的基础镜像引用未按 digest 固定。正式构建脚本已验证会在调用 Docker 前拒绝这一输入；不能把本地镜像 ID 当作可部署的仓库地址。操作方需指定获准的镜像仓库和目标，在受控构建中固定基础镜像，再记录可拉取的 Agent/Web `repository@sha256` 及回滚依据。[镜像核对结果](https://github.com/symansun/doops/pull/30#issuecomment-7073286252)
+
 | 验收项 | 需记录的证据 |
 | --- | --- |
-| Gateway | 发布资产 SHA-256、运行中进程的可执行文件 SHA-256、发布提交及目标重连结果。见 [Gateway 发布规程](../BUILD_DEPLOY_SOP.md#一-gateway-发布边界)。 |
+| Gateway | v0.3.21 正式 Linux AMD64 资产的期望 SHA-256 是 `4dbd24b34aeee3bbf8b25e8ae715ff29632db336b630724f50ec5aebdca1f081`。须与目标上实际运行进程的可执行文件比对，再记录发布提交和重连结果；不能用发布清单代替现场回读。见 [Gateway 发布规程](../BUILD_DEPLOY_SOP.md#一-gateway-发布边界)。 |
 | Agent | 测试目标、候选镜像 digest、实际 Pod imageID、Ready 状态、Gateway 回读的 release_commit。见 [Agent 发布规程](../BUILD_DEPLOY_SOP.md)。 |
 | Web | 发布提交、实际运行的 Web 镜像 digest、公开 HTTPS origin、允许来源和跨源登录响应。见 [Web 部署规程](../DOOPS_WEBUI.md#部署)。 |
 | 合成凭证 | 创建与暂存回执、两个用户的列表隔离结果、持久化回读、验证与提升回执、撤销终态和 Secret 清理结果。保留元数据和审计结果。见 [凭据生命周期](../CREDENTIAL_RESOURCES.md#分步创建和首次激活) 与 [交付规程](../../../AGENTS.md)。 |
