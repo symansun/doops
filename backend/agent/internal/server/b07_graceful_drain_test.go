@@ -179,7 +179,7 @@ func TestB07WaitIdleTracksMultipleOperations(t *testing.T) {
 	}
 }
 
-func TestB07AdminOperationsEndpoint(t *testing.T) {
+func TestB07AdminOperationsEndpointStaysRemoved(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -191,70 +191,11 @@ func TestB07AdminOperationsEndpoint(t *testing.T) {
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 
-	user, err := store.CreateUser("bob")
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	userTok, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID})
-	if err != nil {
-		t.Fatalf("user token: %v", err)
-	}
-	admin, err := store.CreateUser("admin")
-	if err != nil {
-		t.Fatalf("create admin: %v", err)
-	}
-	if err := store.SetUserAdmin(admin.ID, true); err != nil {
-		t.Fatalf("set admin: %v", err)
-	}
-	adminTok, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: admin.ID})
-	if err != nil {
-		t.Fatalf("admin token: %v", err)
-	}
-
-	// Unauthenticated -> 401.
+	// AGENTS.md forbids reintroducing operation admin. Drain observability is
+	// limited to /health and logs; the removed route must stay 404.
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/operations", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated status = %d, want 401", rec.Code)
-	}
-
-	// Non-admin -> 403.
-	req := httptest.NewRequest(http.MethodGet, "/v1/admin/operations", nil)
-	req.Header.Set("Authorization", "Bearer "+userTok.Plaintext)
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("non-admin status = %d, want 403", rec.Code)
-	}
-
-	// Register one op and query as admin -> 200 with operation.
-	opID := hub.client.registerActiveOperation(GatewayActiveOperation{
-		UserID:   user.ID,
-		Cluster:  "prod",
-		Instance: "a1",
-		Action:   ActionExec,
-		Kind:     "rpc",
-	}, func() {})
-	defer hub.client.finishActiveOperation(opID)
-
-	req = httptest.NewRequest(http.MethodGet, "/v1/admin/operations", nil)
-	req.Header.Set("Authorization", "Bearer "+adminTok.Plaintext)
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("admin status = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-	var payload struct {
-		Draining   bool                     `json:"draining"`
-		Operations []GatewayActiveOperation `json:"operations"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if payload.Draining {
-		t.Fatal("draining = true, want false")
-	}
-	if len(payload.Operations) != 1 || payload.Operations[0].ID != opID {
-		t.Fatalf("operations = %+v, want [%s]", payload.Operations, opID)
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/operations?cluster=dev&instance=node", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("admin operations route = %d, want 404", rec.Code)
 	}
 }

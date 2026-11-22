@@ -174,7 +174,6 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	admin("/v1/admin/instances/archive", h.HandleAdminInstanceArchive)
 	admin("/v1/admin/instances/unarchive", h.HandleAdminInstanceUnarchive)
 	admin("/v1/admin/proxy-routes", h.HandleAdminProxyRoutes)
-	mux.HandleFunc("/v1/admin/operations", h.HandleAdminOperations)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if h.IsDraining() {
 			http.Error(w, "draining", http.StatusServiceUnavailable)
@@ -265,26 +264,6 @@ func (h *GatewayHub) CloseTunnels() {
 	if h.registry != nil {
 		h.registry.CloseAll()
 	}
-}
-
-func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	auth, err := h.authenticateUser(r)
-	if err != nil {
-		h.writeUserAuthError(w, r, err)
-		return
-	}
-	if !h.store.UserIsPlatformAdmin(auth.UserID) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-	writeJSONHTTP(w, map[string]interface{}{
-		"draining":   h.IsDraining(),
-		"operations": h.listActiveOperations(),
-	})
 }
 
 func (h *GatewayHub) listActiveOperations() []GatewayActiveOperation {

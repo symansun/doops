@@ -16,7 +16,7 @@
 
 ### Added
 
-- Gateway 新增优雅停机排空与活动操作观测：支持 `-shutdown-drain-timeout`（默认 `2m`）在收到 `SIGTERM`/`SIGINT` 时等待在途操作结束，排空期间 `/health` 返回 `503`、新操作快速拒绝（RPC `-32010 gateway_draining`，HTTP `503` + `Retry-After: 5`）；新增平台管理员只读接口 `GET /v1/admin/operations`；`deploy-gateway.sh` 同步配置 systemd `KillSignal=SIGTERM` 与 `TimeoutStopSec=150`。
+- Gateway 新增优雅停机排空与活动操作观测：支持 `-shutdown-drain-timeout`（默认 `2m`）在收到 `SIGTERM`/`SIGINT` 时等待在途操作结束，排空期间 `/health` 返回 `503`、新操作快速拒绝（RPC `-32010 gateway_draining`，HTTP `503` + `Retry-After: 5`）；`deploy-gateway.sh` 同步配置 systemd `KillSignal=SIGTERM` 与 `TimeoutStopSec=150`。
 - Agent 反向隧道在普通断线或拨号失败时启用指数退避与 `[0.5x, 1.5x)` 随机抖动（上限 `30s`，稳定在线超 1 分钟重置），避免 Gateway 重启后所有 Agent 同秒重连冲击。
 - 统一监控与策略巡检闭环引擎：Gateway 新增 `monitor_schedules`、`monitor_runs`、`monitor_run_items` 与 `monitor_resource_snapshots` 持久化结构、`-monitor-tick` 定时调度循环与 `/v1/monitor/{overview,resources/history,schedules,runs}` 接口；通过内部工具 `doops_monitor_inspect` 按目标下发资产清单至 Agent，Agent 依据资产类型自动执行 `vm_host`、`ssh_host`、`k8s_cluster`、`container_runtime`、`app_service` 与 `database_service` 六类只读策略，离线目标计入缺口而非通过，采集指标同步桥接至 `/v1/assets/monitor` 触发规则告警；控制台原左侧「后台任务」入口升级为「自动化」，统一承接「定时巡检与记录」与「后台运行任务（`exec --bg`）」，「平台监控」同步提供「系统资源监控」与「巡检任务与记录」页签，「Agent 监控」支持一键全策略巡检采集。
 - 控制台表单提供「AI 辅助填写」：本地模型生成建议，可逐项确认；凭据载荷不参与，填入不提交。

@@ -25,7 +25,7 @@
 | B-04 | P1 | 已本地整改，未发布 | [agent_registry.go](../../agent/internal/server/agent_registry.go)、[execution_lifecycle.go](../../agent/internal/server/execution_lifecycle.go)、[gateway_store.go](../../agent/internal/server/gateway_store.go) | 按目标锁 + DB 访问移出全局锁 + `Wait` 读锁快路径 + 只读连接池 + 心跳批量落库；`-race` 回归通过 |
 | B-05 | P1 | 已修复 | [tunnel_hub.go](../../agent/internal/server/tunnel_hub.go) 的 `targetReconnectGrace` | 探测和凭据工具立即返回 |
 | B-06 | P1 | 已修复 | [login_limit.go](../../agent/internal/server/login_limit.go)、[console-forward.ts](../../../lib/server/console-forward.ts) | 签名浏览器地址 + 成功登录清零 |
-| B-07 | P1 | 已本地整改，未发布 | [gatewaycmd.go](../../agent/pkg/gatewaycmd/gatewaycmd.go)、[client_service.go](../../agent/internal/server/client_service.go)、[tunnel_hub.go](../../agent/internal/server/tunnel_hub.go)、[main.go](../../agent/cmd/agent/main.go) | `SIGTERM` 排空与 `/health` 503、`/v1/admin/operations`、Agent 重连指数退避加抖动、`deploy-gateway.sh` systemd drop-in；`-race` 与二进制 `SIGTERM` 生命周期测试通过 |
+| B-07 | P1 | 已本地整改，未发布 | [gatewaycmd.go](../../agent/pkg/gatewaycmd/gatewaycmd.go)、[client_service.go](../../agent/internal/server/client_service.go)、[tunnel_hub.go](../../agent/internal/server/tunnel_hub.go)、[main.go](../../agent/cmd/agent/main.go) | `SIGTERM` 排空与 `/health` 503、Agent 重连指数退避加抖动（按 AGENTS.md 未重新引入 operation admin）、`deploy-gateway.sh` systemd drop-in；`-race` 与二进制 `SIGTERM` 生命周期测试通过 |
 | B-08 | P1 | 第一阶段 | [secret_box.go](../../agent/internal/server/secret_box.go) 的 `VerifySecretKey` | 启动校验已上线；密钥轮换未做 |
 | B-09 | P2 | 已实现并回归 | `agent_leases.go`、`session_concurrency_test.go` | 升级等待阻止新请求准入，超时释放；本轮定向 race 测试三轮通过 |
 | B-10 | P2 | 未开始 | `model_provider_delivery.go` | 模型凭据投递内联在 ask 前 |
