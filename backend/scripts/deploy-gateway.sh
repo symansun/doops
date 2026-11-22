@@ -28,6 +28,24 @@ Options:
                           Real deploys require both verification options.
   --source-commit SHA     Exact 40-character source commit embedded in the
                           candidate Gateway binary. Required for real deploys.
+  --allow-open-agent-registration
+                          Write DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1 to the
+                          remote environment file. Only for Gateways whose
+                          targets have no enrollment token (for example
+                          doops.aiedulab.cn); unenrolled Agents still receive
+                          no credential payloads.
+  --require-agent-enrollment
+                          Remove that switch; the Gateway rejects Agents that
+                          do not present their target enrollment token.
+                          Default when neither flag is given: leave the remote
+                          environment file unchanged.
+  --allow-unenrolled-credential-delivery
+                          Also write DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1.
+                          Insecure: unenrolled Agents receive model/registry
+                          credentials. Only for an open migration Gateway such
+                          as doops.aiedulab.cn.
+  --require-enrolled-credential-delivery
+                          Remove that insecure switch.
   --no-build              Do not run scripts/build-gateway.sh before deploy.
   --dry-run               Print the plan and verify SSH, but do not modify remote host.
   -h, --help              Show this help.
@@ -52,6 +70,8 @@ VERIFY_URL="https://doops.l8ai.cn"
 VERIFY_TARGET=""
 VERIFY_SESSION=""
 SOURCE_COMMIT=""
+AGENT_REGISTRATION="preserve" # preserve | open | required
+UNENROLLED_CREDENTIALS="preserve" # preserve | open | required
 BUILD=true
 DRY_RUN=false
 
@@ -100,6 +120,22 @@ while [[ $# -gt 0 ]]; do
     --source-commit)
       SOURCE_COMMIT="${2:-}"
       shift 2
+      ;;
+    --allow-open-agent-registration)
+      AGENT_REGISTRATION="open"
+      shift
+      ;;
+    --require-agent-enrollment)
+      AGENT_REGISTRATION="required"
+      shift
+      ;;
+    --allow-unenrolled-credential-delivery)
+      UNENROLLED_CREDENTIALS="open"
+      shift
+      ;;
+    --require-enrolled-credential-delivery)
+      UNENROLLED_CREDENTIALS="required"
+      shift
       ;;
     --no-build)
       BUILD=false
@@ -387,6 +423,50 @@ print(
   sudo -n systemctl daemon-reload
 fi
 "
+
+echo "[3.5/6] Configuring Agent registration policy (${AGENT_REGISTRATION})"
+if [[ "${AGENT_REGISTRATION}" != "preserve" ]]; then
+  "${SSH[@]}" "set -euo pipefail
+env_file=/etc/doops-gateway.env
+if [[ '${AGENT_REGISTRATION}' == 'open' ]]; then
+  if ! sudo -n test -f "\$env_file"; then
+    sudo -n install -m 0600 /dev/null "\$env_file"
+  fi
+  if sudo -n grep -q '^DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=' "\$env_file"; then
+    sudo -n sed -i 's/^DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=.*/DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1/' "\$env_file"
+  else
+    printf 'DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1\n' | sudo -n tee -a "\$env_file" >/dev/null
+  fi
+  sudo -n chmod 0600 "\$env_file"
+  sudo -n grep -q '^DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1$' "\$env_file"
+  echo 'agent_registration=open'
+else
+  if sudo -n test -f "\$env_file"; then
+    sudo -n sed -i '/^DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=/d' "\$env_file"
+  fi
+  echo 'agent_registration=required'
+fi
+if [[ '${UNENROLLED_CREDENTIALS}' == 'open' ]]; then
+  if [[ '__OPEN__' != 'open' ]]; then
+    echo '--allow-unenrolled-credential-delivery requires --allow-open-agent-registration' >&2
+    exit 1
+  fi
+  if sudo -n grep -q '^DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=' "\$env_file"; then
+    sudo -n sed -i 's/^DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=.*/DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1/' "\$env_file"
+  else
+    printf 'DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1\n' | sudo -n tee -a "\$env_file" >/dev/null
+  fi
+  sudo -n chmod 0600 "\$env_file"
+  sudo -n grep -q '^DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1$' "\$env_file"
+  echo 'unenrolled_credential_delivery=open'
+elif [[ '${UNENROLLED_CREDENTIALS}' == 'required' ]]; then
+  if sudo -n test -f "\$env_file"; then
+    sudo -n sed -i '/^DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=/d' "\$env_file"
+  fi
+  echo 'unenrolled_credential_delivery=required'
+fi
+"
+fi
 
 echo "[4/6] Restarting the systemd-owned gateway"
 "${SSH[@]}" "set -euo pipefail

@@ -68,6 +68,13 @@ enrollment token 的旧 Agent 会收到 `401` 并按退避重试。发布前先�
 [DOOPS_GATEWAY_TUNNEL.md](DOOPS_GATEWAY_TUNNEL.md) 为每个 target 签发 token 并注入 Agent；
 `doops targets` 的 `ENROLLED` 列为 `NO (not enrolled)` 即表示尚未完成。仅在迁移期可以
 临时以 `-allow-open-agent-registration` 启动，启动日志会打印醒目警告，迁移完成后必须移除。
+也可以在该主机的 `/etc/doops-gateway.env` 设置
+`DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1`；部署脚本用
+`--allow-open-agent-registration` 幂等写入。完全没有 enrollment 的私有 Gateway
+（`doops.aiedulab.cn`）如果还必须保留旧凭据投递，再加
+`--allow-unenrolled-credential-delivery`（对应
+`DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1`）。这两个开关都降低安全性，
+登记完成后用 `--require-agent-enrollment --require-enrolled-credential-delivery` 移除。
 
 固定发布入口：
 

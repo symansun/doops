@@ -31,7 +31,7 @@ type GatewayHubOptions struct {
 	LoginFailureLimit     int
 	LoginFailureWindow    time.Duration
 	MaxQueuedPerTarget    int
-	DetachedTaskTimeout time.Duration
+	DetachedTaskTimeout   time.Duration
 	// AllowOpenAgentRegistration admits an Agent without an enrollment token
 	// to a target with no confirmed enrollment. It exists only to migrate
 	// Agents that were deployed before enrollment existed.
@@ -44,6 +44,11 @@ type GatewayHubOptions struct {
 	// browser address of a login. It is loaded from DOOPS_CONSOLE_FORWARD_SECRET
 	// only, so it never appears in a process listing. Empty disables it.
 	ConsoleForwardSecret []byte
+	// AllowUnenrolledCredentialDelivery restores pre-enrollment credential
+	// delivery for an explicitly open Gateway (no enrollment tokens exist).
+	// It is insecure and only for migration deployments such as a private
+	// Gateway that has not issued a single enrollment token.
+	AllowUnenrolledCredentialDelivery bool
 }
 
 type GatewayHub struct {

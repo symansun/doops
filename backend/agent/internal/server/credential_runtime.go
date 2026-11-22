@@ -584,7 +584,7 @@ func (h *GatewayHub) materializeCredentialVersionAttempt(
 ) (CredentialMaterialization, CredentialMaterializeRequest, error) {
 	// Gate before decryption: an unenrolled live session never causes payload
 	// decryption, intentional metadata, or a send.
-	if agent := h.getAgent(cluster, instance); agent != nil && agent.TokenID == "" {
+	if agent := h.getAgent(cluster, instance); agent != nil && agent.TokenID == "" && !h.opts.AllowUnenrolledCredentialDelivery {
 		return CredentialMaterialization{}, CredentialMaterializeRequest{}, fmt.Errorf(
 			"%w: target %s", ErrCredentialTargetUnenrolled, tunnelKey(cluster, instance))
 	}

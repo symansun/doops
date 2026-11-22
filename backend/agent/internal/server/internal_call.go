@@ -130,7 +130,7 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	// Last gate before a credential payload leaves the Gateway for this exact
 	// session: the target lookup in the materialization entry point may have
 	// seen an earlier session that has since been replaced.
-	if tool == "doops_credential_materialize" && agent.TokenID == "" {
+	if tool == "doops_credential_materialize" && agent.TokenID == "" && !h.opts.AllowUnenrolledCredentialDelivery {
 		err := fmt.Errorf("%w: target %s", ErrCredentialTargetUnenrolled, tunnelKey(cluster, instance))
 		if auditErr := h.finishExecutionAudit(auditID, AuditFinish{
 			Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),

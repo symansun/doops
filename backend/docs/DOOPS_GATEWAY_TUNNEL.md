@@ -150,6 +150,12 @@ bash scripts/deploy-gateway.sh \
   `DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1`，等价于
   `-allow-open-agent-registration`；两者都只用于迁移。开放注册只恢复连接：
   未登记会话仍然不会收到模型密钥或镜像仓库凭据，登记一个就关闭一个。
+- 对于完全没有签发过 enrollment token、且必须保持旧行为的私有 Gateway（当前为
+  `doops.aiedulab.cn`），可以额外设置
+  `DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1`（部署脚本
+  `--allow-unenrolled-credential-delivery`）。这会把模型密钥和镜像仓库凭据重新投递给
+  未登记会话，等同恢复 S-01 之前的行为；只应在没有 enrollment 的迁移窗口使用，
+  完成登记后立即删除。
 - 带 token 的连接始终验证：token 无效、已吊销，或属于另一个 target 时返回 `401`
   （`code=agent_enrollment_auth_failed`），**不会**回退为开放注册。不带 token 且 target
   没有已确认的 enrollment 时同样返回 `401`。enrollment 存储不可用时返回 `503`。

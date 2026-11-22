@@ -63,7 +63,8 @@
 
 - Agent 注册默认要求 enrollment token，并新增 `DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1`
   环境开关（等价于 `-allow-open-agent-registration`）供没有 enrollment 的私有部署临时开放连接；
-  未登记的会话不再接收模型密钥或镜像仓库凭据，
+  完全没有 enrollment 的私有 Gateway 可再加 `DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1`
+  恢复旧凭据投递（不安全，仅迁移窗口）；未登记的会话默认不再接收模型密钥或镜像仓库凭据，
   `doops targets` 标出未登记目标。升级前先用 `doops-gateway enroll create` 登记现有
   Agent；确有迁移需要时可临时使用 `-allow-open-agent-registration`。
 - Gateway 启动时校验 `DOOPS_GATEWAY_SECRET_KEY` 与数据库中凭据密文匹配；不匹配时拒绝

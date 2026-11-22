@@ -68,6 +68,8 @@ func serve(args []string) {
 	// Gateway without enrollments) open it without editing the service unit.
 	allowOpenDefault := envFlagEnabled("DOOPS_ALLOW_OPEN_AGENT_REGISTRATION")
 	allowOpenAgentRegistration := fs.Bool("allow-open-agent-registration", allowOpenDefault, "TEMPORARY: accept Agents without an enrollment token on targets that have no confirmed enrollment (insecure; migrate them to enrollment tokens); DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1 sets the same switch")
+	allowUnenrolledCredentialDefault := envFlagEnabled("DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY")
+	allowUnenrolledCredentialDelivery := fs.Bool("allow-unenrolled-credential-delivery", allowUnenrolledCredentialDefault, "TEMPORARY and insecure: deliver model/registry credentials to an unenrolled Agent on an explicitly open Gateway; DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1 sets the same switch")
 	fs.Parse(args)
 
 	if *retiredGlobalLimit != 0 || *retiredUserLimit != 0 {
@@ -119,7 +121,8 @@ func serve(args []string) {
 		AllowOpenAgentRegistration: *allowOpenAgentRegistration,
 		RequireAgentEnrollment:     !*allowOpenAgentRegistration,
 		// Environment only, never a flag: a flag would expose the secret in ps.
-		ConsoleForwardSecret: []byte(consoleForwardSecret),
+		ConsoleForwardSecret:              []byte(consoleForwardSecret),
+		AllowUnenrolledCredentialDelivery: *allowUnenrolledCredentialDelivery,
 	})
 	hub.StartOfflineInstanceReaper(time.Hour)
 
@@ -135,6 +138,9 @@ func serve(args []string) {
 	log.Printf("   agent enrollment: %s", agentEnrollmentPolicy(*allowOpenAgentRegistration))
 	if *allowOpenAgentRegistration {
 		logOpenRegistrationWarning(hub)
+	}
+	if *allowUnenrolledCredentialDelivery {
+		log.Printf("[gateway] WARNING: DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY is enabled; unenrolled Agents can receive model and registry credentials. Use only while the Gateway has no enrollment tokens.")
 	}
 	if consoleForwardSecret != "" {
 		// Never print the secret itself.
