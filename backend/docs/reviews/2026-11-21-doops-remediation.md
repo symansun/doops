@@ -23,7 +23,7 @@
 | 非空工作区替换 | 原子交换，交换不可用时保留现有工作区 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
 | Web 模型配置 | 加载和保存时清除旧 `api_key`；模型设置须在凭据管理中验证并启用，不能从配置中心直接写入节点 | [Web 指南](../DOOPS_WEBUI.md) · [发布版本函数复验](https://github.com/symansun/doops/pull/30#issuecomment-7073362485) | v0.3.21 已发布。合成存储复验保留模型元数据和凭据引用；3 条模型直发路径均未调用模拟 RPC，普通文件对照调用 1 次。实际服务待验收。 |
 | Web 同源检查 | 默认使用请求源。正式部署脚本可传入公开 HTTPS origin，并检查候选与切换后容器的同源登录行为 | [部署规程](../DOOPS_WEBUI.md) · [PR #27](https://github.com/symansun/doops/pull/27) | v0.3.21 已发布，隔离 Web 容器和切换回滚分支通过，实际服务待验收 |
-| Web 升级观察 | 提交前持久化可从操作编号推导的 Job，关联证据补齐命名空间 | [升级面板](../../../components/agent-upgrade-panel.tsx) | 已发布 |
+| Web 升级观察 | 提交前保存可从操作编号推导的 Job；恢复观察时只补全匹配回执中的命名空间 | [升级面板](../../../components/agent-upgrade-panel.tsx) · [v0.3.21 客户端恢复用例](https://github.com/symansun/doops/blob/v0.3.21/lib/client.test.mjs#L575-L746) | 已发布。8 个恢复与失败用例在发布标签上通过。另用模拟 RPC 验证：提交前保存失败，发送 0 个请求；缺失命名空间时可从匹配回执补齐；已有命名空间与回执冲突时不报成功。后两种恢复各发送 1 个观察请求，均未重新提交。 |
 | CLI 流式终态 | 拒绝缺失或空终态，解析失败以错误返回 | [CLI 流式测试](../../cli/cli/doops/client_test.go) | 已发布 |
 | CLI 历史 | 新历史省略 ask 和 exec 正文，收紧旧文件权限 | [命令记录位置](../../cli/cli/doops/main.go#L615-L627) · [历史写入与权限](../../cli/cli/doops/history.go#L29-L68) · [路径测试](../../cli/cli/doops/auth_test.go) · [正式 CLI 回读](https://github.com/symansun/doops/pull/30#issuecomment-7073177628) | 已发布。用 v0.3.21 源码和临时 HOME 验证：写入合成 exec 记录后新旧文件均为 0600，旧内容未变。正式 macOS ARM64 CLI 单独回读时只显示 v2 记录，不显示旧内容。 |
 | Operator Skill 示例 | SSH、Kubernetes 和凭证配置示例经过真实 CLI 的参数校验 | [合同测试](../../test/test_sql_skill_contract.py) | 已发布 |
