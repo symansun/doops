@@ -96,9 +96,16 @@ bash scripts/deploy-gateway.sh \
 5. 替换二进制并重启 gateway。
 6. 校验 `/proc/<pid>/exe` hash 与下载的 Release Asset 一致。
 7. 校验 `/v1/targets` 未认证访问返回 `401`，并通过 `--verify-target` 复用 DoOps 已配置认证，
-   确认发布前的全部 target 均已重新连接；不得为发布导出或新建明文 token 文件。
+   等待该路由对应的 target 重新连接。`v0.3.21` 的 `doops targets --target` 按已配置路由的
+   `(cluster, instance)` 筛选；**脚本成功只证明这一个 target 重连**，不是共享 Gateway 的全量验收。
 8. 校验候选二进制内嵌的 `source-commit` 与本次构建 commit 完全一致；
    旧的本地 `bin/doops-gateway` 或没有 provenance 的二进制会在上传前拒绝。
+
+共享 Gateway 的发布仍须验证变更前在线的全部受影响 target。维护人应在发布前确认授权覆盖的
+影响清单、逐一记录各在线 `(cluster, instance)` 对应的路由，并约定由谁执行回退。发布后用同一份清单
+逐路由执行 `doops -session <验收会话> targets --target <路由名>`，检查退出状态和返回的目标身份。
+视图权限不足或缺少路由时，不要开始共享发布；某一目标未重连时，不得以另一目标成功或仅以 `/health`
+正常判定验收通过，按已批准的回退规程处理。不得为这些检查导出或新建明文 token 文件。
 
 禁止事项：
 
