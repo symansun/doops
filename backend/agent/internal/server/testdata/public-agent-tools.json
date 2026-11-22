@@ -1,0 +1,23 @@
+[
+  "doops_agent_prompt",
+  "doops_agent_upgrade",
+  "doops_bg",
+  "doops_check_deployment",
+  "doops_clean_workspace",
+  "doops_database_inventory",
+  "doops_file_read",
+  "doops_file_write",
+  "doops_k8s",
+  "doops_kb",
+  "doops_node_info",
+  "doops_shell",
+  "doops_ssh",
+  "doops_task_status",
+  "doops_web",
+  "doops_workspace_begin",
+  "doops_workspace_chunk",
+  "doops_workspace_commit",
+  "doops_workspace_pull_begin",
+  "doops_workspace_pull_chunk",
+  "doops_workspace_read"
+]

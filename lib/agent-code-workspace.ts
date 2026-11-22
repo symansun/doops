@@ -1,6 +1,6 @@
 import { workspaceFileArtifacts, type AgentArtifactItem, type CodeWorkspaceChange, type CodeWorkspaceChanges, type CodeWorkspaceDiff, type CodeWorkspaceEntry, type CodeWorkspaceFile, type CodeWorkspaceGitLog, type CodeWorkspaceGitSummary, type CodeWorkspaceSearchResult, type CodeWorkspaceSource } from "@agent-cloud/agent-ui"
 import { callTool, extractText, type Session, type Target } from "./client"
-import { TOOLS } from "./gateway"
+import { TOOLS, type WebToolName } from "./gateway"
 import { workspaceRootPath } from "./workspace-path"
 
 const WORKSPACE_ARTIFACT_REPRESENTATION = "workspace"
@@ -51,7 +51,7 @@ function artifactItems(sourceId: string, changes: CodeWorkspaceChanges): AgentAr
   }))
 }
 
-async function invoke(options: CodeWorkspaceOptions, tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<string> {
+async function invoke(options: CodeWorkspaceOptions, tool: WebToolName, args: Record<string, unknown>, signal: AbortSignal): Promise<string> {
   let streamed = ""
   let result = ""
   await callTool(options.session, {

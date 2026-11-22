@@ -7,23 +7,25 @@ import (
 	"strings"
 )
 
-// gatewayToolSpec declares one DoOps tool on the Gateway side: the action the
-// control plane authorises and the summary line it records in the audit log.
-//
-// The Agent-side handler lives in the Agent process (handleToolCallOverWS) and
-// cannot be declared here, so the two halves are held together by a contract
-// test (TestToolCatalogueMatchesAgentDispatch). Adding a tool means adding one
-// entry here, one dispatch case in the Agent, and the CLI/Web callers; a tool
-// registered on only one side fails the tests instead of becoming silently
-// unreachable at runtime, which is what happened to the removed doops_docker.
-//
-// Resource keys are deliberately not part of this table: resourceKeyForTool
-// encodes ordered, action-dependent compatibility rules for the concurrency
-// locks and is not a per-tool constant.
+// toolVisibility describes the RPC surface, not a user permission. Target grants
+// are checked separately. The zero value never exposes a handler to clients.
+type toolVisibility uint8
+
+const (
+	clientCallable toolVisibility = iota + 1
+	gatewayInternal
+)
+
+// gatewayToolSpec describes a tool executed by the Agent. An action classifies
+// calls for audit and admission; it is not evidence that a client may call it.
 type gatewayToolSpec struct {
-	name    string
-	action  func(json.RawMessage) GatewayAction
-	summary func(m map[string]interface{}, raw json.RawMessage) string
+	name       string
+	visibility toolVisibility
+	// publicDenial preserves the wire error for internal tools that return
+	// forbidden. An unadvertised internal tool otherwise looks unknown.
+	publicDenial string
+	action       func(json.RawMessage) GatewayAction
+	summary      func(m map[string]interface{}, raw json.RawMessage) string
 }
 
 func constantAction(action GatewayAction) func(json.RawMessage) GatewayAction {
@@ -34,33 +36,38 @@ func constantSummary(summary string) func(map[string]interface{}, json.RawMessag
 	return func(map[string]interface{}, json.RawMessage) string { return summary }
 }
 
+const credentialToolInternalMessage = "credential control-plane tools are internal only"
+
 // gatewayToolSpecs is the single declaration point for Gateway-side tool metadata.
 var gatewayToolSpecs = []gatewayToolSpec{
-	{name: "doops_shell", action: constantAction(ActionExec), summary: shellCommandSummary},
-	{name: "doops_bg", action: constantAction(ActionExec), summary: shellCommandSummary},
-	{name: "doops_ssh", action: constantAction(ActionExec), summary: sshCommandSummary},
-	{name: "doops_task_status", action: constantAction(ActionExec)},
-	{name: "doops_k8s", action: constantAction(ActionExec), summary: k8sCommandSummary},
-	{name: "doops_web", action: webToolAction, summary: webToolSummary},
-	{name: "doops_agent_prompt", action: agentPromptAction, summary: agentPromptSummary},
-	{name: "doops_file_read", action: constantAction(ActionRead), summary: filePathSummary("doops_file_read")},
-	{name: "doops_workspace_read", action: constantAction(ActionRead)},
-	{name: "doops_file_write", action: constantAction(ActionWrite), summary: filePathSummary("doops_file_write")},
-	{name: "doops_kb", action: knowledgeBaseToolAction, summary: knowledgeBaseToolSummary},
-	{name: "doops_cos_sync", action: constantAction(ActionWrite)},
-	{name: "doops_node_info", action: constantAction(ActionInfo)},
-	{name: "doops_database_inventory", action: constantAction(ActionInfo), summary: constantSummary("doops_database_inventory")},
-	{name: "doops_check_deployment", action: constantAction(ActionCheck)},
-	{name: "doops_clean_workspace", action: constantAction(ActionClean)},
-	{name: "doops_agent_upgrade", action: constantAction(ActionAgentUpgrade), summary: upgradeCommandSummary},
-	{name: "doops_credential_materialize", action: constantAction(ActionCredentialUse)},
-	{name: "doops_credential_import", action: constantAction(ActionCredentialRotate)},
-	{name: "doops_credential_cleanup", action: constantAction(ActionCredentialRevoke)},
-	{name: "doops_workspace_begin", action: constantAction(ActionPush)},
-	{name: "doops_workspace_chunk", action: constantAction(ActionPush)},
-	{name: "doops_workspace_commit", action: constantAction(ActionPush)},
-	{name: "doops_workspace_pull_begin", action: constantAction(ActionPull), summary: pullBeginSummary},
-	{name: "doops_workspace_pull_chunk", action: constantAction(ActionPull)},
+	{name: "doops_shell", visibility: clientCallable, action: constantAction(ActionExec), summary: shellCommandSummary},
+	{name: "doops_bg", visibility: clientCallable, action: constantAction(ActionExec), summary: shellCommandSummary},
+	{name: "doops_ssh", visibility: clientCallable, action: constantAction(ActionExec), summary: sshCommandSummary},
+	{name: "doops_task_status", visibility: clientCallable, action: constantAction(ActionExec)},
+	{name: "doops_k8s", visibility: clientCallable, action: constantAction(ActionExec), summary: k8sCommandSummary},
+	{name: "doops_web", visibility: clientCallable, action: webToolAction, summary: webToolSummary},
+	{name: "doops_agent_prompt", visibility: clientCallable, action: agentPromptAction, summary: agentPromptSummary},
+	{name: "doops_file_read", visibility: clientCallable, action: constantAction(ActionRead), summary: filePathSummary("doops_file_read")},
+	{name: "doops_workspace_read", visibility: clientCallable, action: constantAction(ActionRead)},
+	{name: "doops_file_write", visibility: clientCallable, action: constantAction(ActionWrite), summary: filePathSummary("doops_file_write")},
+	{name: "doops_kb", visibility: clientCallable, action: knowledgeBaseToolAction, summary: knowledgeBaseToolSummary},
+	{name: "doops_cos_sync", visibility: gatewayInternal, publicDenial: "cos_sync_internal", action: constantAction(ActionWrite)},
+	{name: "doops_node_info", visibility: clientCallable, action: constantAction(ActionInfo)},
+	{name: "doops_database_inventory", visibility: clientCallable, action: constantAction(ActionInfo), summary: constantSummary("doops_database_inventory")},
+	{name: "doops_check_deployment", visibility: clientCallable, action: constantAction(ActionCheck)},
+	{name: "doops_clean_workspace", visibility: clientCallable, action: constantAction(ActionClean)},
+	{name: "doops_agent_upgrade", visibility: clientCallable, action: constantAction(ActionAgentUpgrade), summary: upgradeCommandSummary},
+	{name: "doops_credential_materialize", visibility: gatewayInternal, publicDenial: credentialToolInternalMessage, action: constantAction(ActionCredentialUse)},
+	{name: "doops_credential_import", visibility: gatewayInternal, publicDenial: credentialToolInternalMessage, action: constantAction(ActionCredentialRotate)},
+	{name: "doops_credential_cleanup", visibility: gatewayInternal, publicDenial: credentialToolInternalMessage, action: constantAction(ActionCredentialRevoke)},
+	{name: "doops_workspace_begin", visibility: clientCallable, action: constantAction(ActionPush)},
+	{name: "doops_workspace_chunk", visibility: clientCallable, action: constantAction(ActionPush)},
+	{name: "doops_workspace_commit", visibility: clientCallable, action: constantAction(ActionPush)},
+	{name: "doops_workspace_pull_begin", visibility: clientCallable, action: constantAction(ActionPull), summary: pullBeginSummary},
+	{name: "doops_workspace_pull_chunk", visibility: clientCallable, action: constantAction(ActionPull)},
+	// Diagnostic collection uses a direct relay, not RunInternalToolCall.
+	{name: diagnosticReadTool, visibility: gatewayInternal},
+	{name: monitorInspectTool, visibility: gatewayInternal, publicDenial: "monitor_inspect_internal_only", action: constantAction(ActionInfo)},
 }
 
 var gatewayToolIndex = func() map[string]gatewayToolSpec {
@@ -81,10 +88,10 @@ func gatewayToolNames() []string {
 	return names
 }
 
-// actionForTool maps a tool call to the action the Gateway authorises. An empty
-// action means the Gateway does not know the tool and rejects the call.
+// actionForTool classifies an Agent tool for audit and admission on either path.
+// Direct relays without an audited action return the empty action.
 func actionForTool(tool string, args json.RawMessage) GatewayAction {
-	if spec, ok := gatewayToolIndex[tool]; ok {
+	if spec := gatewayToolIndex[tool]; spec.action != nil {
 		return spec.action(args)
 	}
 	return ""

@@ -3,6 +3,7 @@
 import { Globe2, RefreshCw } from "lucide-react"
 import { useEffect, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
+import { TOOLS } from "@/lib/gateway"
 import { Button, Input } from "./ui"
 
 type Site = { site_id: string; domain: string; current_release: string; previous_release: string | null; updated_at: string }
@@ -37,7 +38,7 @@ export function WebsiteInventory({ session, target, sessionId, revision, running
       setError("")
       try {
         let text = ""
-        await callTool(session, { cluster, instance, tool: "doops_web", arguments: { session_id: sessionId, operation: "site-list" }, signal: controller.signal }, (event) => {
+        await callTool(session, { cluster, instance, tool: TOOLS.web, arguments: { session_id: sessionId, operation: "site-list" }, signal: controller.signal }, (event) => {
           if (event.type === "result") text = extractText(event.result)
         })
         if (controller.signal.aborted) return

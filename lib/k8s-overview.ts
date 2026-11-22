@@ -1,3 +1,4 @@
+import { TOOLS } from "./gateway.ts"
 import { callTool, type Session, type Target } from "./client.ts"
 
 export const K8S_OVERVIEW_QUERIES = [
@@ -115,7 +116,7 @@ async function fetchResourceGroup(
       {
         cluster: target.cluster,
         instance: target.instance,
-        tool: "doops_k8s",
+        tool: TOOLS.k8s,
         signal,
         arguments: {
           session_id: sessionId,

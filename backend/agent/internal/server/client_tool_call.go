@@ -24,12 +24,9 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
 		return nil
 	}
-	if internalCredentialTool(params.Name) {
-		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
-		return nil
-	}
-	if params.Name == "doops_cos_sync" {
-		writeJSON(buildErrorResponse(req.ID, -32003, "cos_sync_internal"))
+	spec := gatewayToolIndex[params.Name]
+	if spec.visibility == gatewayInternal && spec.publicDenial != "" {
+		writeJSON(buildErrorResponse(req.ID, -32003, spec.publicDenial))
 		return nil
 	}
 	if cosToolName(params.Name) {
@@ -91,7 +88,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	params.Arguments = strippedArgs
-	action := actionForTool(params.Name, params.Arguments)
+	var action GatewayAction
+	if spec.visibility == clientCallable && spec.action != nil {
+		action = spec.action(params.Arguments)
+	}
 	if action == "" {
 		writeJSON(buildErrorResponse(req.ID, -32601, "unknown doops action for tool: "+params.Name))
 		return nil

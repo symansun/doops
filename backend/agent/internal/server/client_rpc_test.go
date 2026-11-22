@@ -487,7 +487,7 @@ func TestGatewayNotificationRoutingRequiresRequestID(t *testing.T) {
 	}
 }
 
-func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
+func TestGatewayRPCRejectsInternalToolsFromUserClients(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -512,7 +512,19 @@ func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
 
 	client := dialGatewayRPCClient(t, server.URL, token.Plaintext, "dev", "local")
 	defer client.Close()
-	for index, tool := range []string{"doops_credential_import", "doops_credential_materialize", "doops_credential_cleanup"} {
+	for index, tc := range []struct {
+		tool    string
+		code    float64
+		message string
+	}{
+		{"doops_credential_import", -32003, "credential control-plane tools are internal only"},
+		{"doops_credential_materialize", -32003, "credential control-plane tools are internal only"},
+		{"doops_credential_cleanup", -32003, "credential control-plane tools are internal only"},
+		{"doops_cos_sync", -32003, "cos_sync_internal"},
+		{diagnosticReadTool, -32601, "unknown doops action for tool: " + diagnosticReadTool},
+		{"doops_unknown", -32601, "unknown doops action for tool: doops_unknown"},
+	} {
+		tool := tc.tool
 		id := float64(index + 2)
 		writeGatewayJSON(t, client, map[string]interface{}{
 			"jsonrpc": "2.0",
@@ -525,8 +537,8 @@ func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
 		})
 		response := readUntilID(t, client, id)
 		rpcError, _ := response["error"].(map[string]interface{})
-		if rpcError["code"] != float64(-32003) {
-			t.Fatalf("%s was not rejected as internal-only: %#v", tool, response)
+		if rpcError["code"] != tc.code || rpcError["message"] != tc.message {
+			t.Fatalf("%s: want %v %q, got %#v", tool, tc.code, tc.message, response)
 		}
 	}
 }

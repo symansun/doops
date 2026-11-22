@@ -31,8 +31,8 @@ it: `backend/gateway` (via `pkg/gatewaycmd`) and `backend/agent/cmd/agent`.
 | `gateway.go`, `handler_ws.go`, `tool_notifications.go` | Agent | Agent runtime, inbound message loop and progress notifications |
 | `command_exec.go`, `command_process_group.go`, `command_output.go` | Agent | Command start, process group lifecycle and output streams |
 | `ws_transport.go`, `jsonrpc_response.go`, `redaction.go`, `tool_args.go`, `tool_operations.go` | Both | Wire I/O, response construction, output redaction and shared tool argument/operation rules |
-| `tool_registry.go` | Gateway | Single declaration of every caller-facing tool: name, action, audit summary |
-| `tool_dispatch.go`, `tool_handlers_*.go` | Agent | One handler per tool, grouped by domain; relay-only tools live in `internalAgentToolHandlers` |
+| `tool_registry.go` | Gateway | Agent tool catalogue: client visibility, action and audit summary |
+| `tool_dispatch.go`, `tool_handlers_*.go` | Agent | All executable Agent handlers, grouped by domain; dispatch does not grant client access |
 | `doagent_*` | Agent | doagent ACP bridge, tool binding, final answer, UI events |
 | `mutation_authority.go`, `json_digest.go`, `retired_ws.go` | Agent | Signed mutation authorization, attestation digests, retired inbound `/ws` |
 | `dosql_*` | Agent | DoSql direct execution and database runner |
@@ -45,17 +45,10 @@ it: `backend/gateway` (via `pkg/gatewaycmd`) and `backend/agent/cmd/agent`.
 
 ## Adding a tool
 
-A caller-facing tool is declared in three places, and the contract tests fail when they drift:
-
-1. `tool_registry.go` — add a `gatewayToolSpec` entry (name, action, audit summary).
-2. `tool_dispatch.go` — map the name to a handler in `agentToolHandlers`.
-3. `tool_handlers_<domain>.go` — implement the handler; the CLI and Web call sites come last.
-
-`TestToolCatalogueMatchesAgentDispatch` compares the two Go sides, and
-`TestWebClientToolCatalogueSubsetOfGatewayTools` checks the Next.js console. A tool the Gateway
-relays on its own behalf (for example `doops_machine_diagnostic_sample`) belongs in
-`internalAgentToolHandlers` instead: `TestInternalToolsAreNotCallerFacing` asserts it is never
-authorised for callers.
+1. In `tool_registry.go`, declare the Agent tool as `clientCallable` or `gatewayInternal`. An action classifies execution for audit and admission; it does not grant client access. The Gateway handles the public COS RPC itself; the Agent executes only its internal sync step.
+2. Add the handler to `agentToolHandlers` and implement it in the relevant domain file. The parity test covers both public and private handlers. Credential and COS relays retain their internal actions; the diagnostic collector uses a direct relay with no action.
+3. For tools with side effects, review the resource key and interruption rules. Test cancellation and disconnect without a terminal response before adding CLI or Web callers.
+4. When the public Agent tool list changes, update `testdata/public-agent-tools.json`. The Go test checks it against the registry; the console tests check the actual `TOOLS` values against it. Add Web callers via `TOOLS` rather than duplicating wire names.
 
 Protocol and lifecycle semantics are documented in
 [DOOPS_GATEWAY_TUNNEL.md](../../../docs/DOOPS_GATEWAY_TUNNEL.md).

@@ -176,7 +176,13 @@ export const TOOLS = {
   checkDeployment: "doops_check_deployment",
   cleanWorkspace: "doops_clean_workspace",
   databaseInventory: "doops_database_inventory",
+  k8s: "doops_k8s",
+  web: "doops_web",
+  ssh: "doops_ssh",
+  agentUpgrade: "doops_agent_upgrade",
 } as const
+
+export type WebToolName = (typeof TOOLS)[keyof typeof TOOLS]
 
 // 把 http(s):// 规整成 ws(s):// 基地址，去掉尾部斜杠
 export function toWsBase(gateway: string): string {

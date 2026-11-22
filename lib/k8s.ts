@@ -1,9 +1,10 @@
+import { TOOLS } from "./gateway.ts"
 import { gatewayAuthMessage } from "./gateway-auth.ts"
 import { classifyAgentAdmission } from "./agent-error.ts"
 // Web form for the Agent doops_k8s tool. The payload mirrors buildK8SRequest in
 // backend/cli/cli/doops/k8s.go so the console and `doops k8s` call the same contract.
 
-export const K8S_TOOL = "doops_k8s"
+export const K8S_TOOL = TOOLS.k8s
 
 export type K8sOperation =
   | "get"
@@ -249,7 +250,7 @@ export function k8sRequest(sessionId: string, input: K8sInput): Record<string, u
 export interface K8sCallOptions {
   cluster: string
   instance: string
-  tool: string
+  tool: typeof K8S_TOOL
   arguments: Record<string, unknown>
 }
 

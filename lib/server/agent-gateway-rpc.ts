@@ -1,5 +1,5 @@
 import WebSocket from "ws"
-import { toWsBase } from "../gateway"
+import { TOOLS, toWsBase } from "../gateway"
 import { readGatewayUpgradeRejection } from "./gateway-upgrade"
 
 export interface AgentGatewayContext {
@@ -113,7 +113,7 @@ export function agentGatewayCall(
           if (message.error) throw new AgentGatewayError(message.error.message || "Gateway initialize 失败")
           clearTimeout(timer)
           ws.send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: {
-            name: "doops_agent_prompt", arguments: { ...args, session_id: context.sessionId },
+            name: TOOLS.prompt, arguments: { ...args, session_id: context.sessionId },
           } }))
           dispatched = true
           // Silence while preparing or running a tool is not a connection failure.

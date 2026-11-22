@@ -1,3 +1,4 @@
+import { TOOLS } from "./gateway.ts"
 import { gatewayAuthMessage } from "./gateway-auth.ts"
 import { classifyAgentAdmission } from "./agent-error.ts"
 // 镜像构建、复制与 Registry 同步的表单到 doops_shell 参数映射。
@@ -57,7 +58,7 @@ export interface RegistrySyncInput {
 }
 
 export interface ShellToolRequest {
-  tool: "doops_shell"
+  tool: typeof TOOLS.shell
   arguments: { session_id: string; command: string }
 }
 
@@ -149,7 +150,7 @@ function buildPlatform(value: string): string {
 
 function shellRequest(sessionId: string, command: string): ShellToolRequest {
   if (!sessionId.trim()) throw new Error("缺少操作 session")
-  return { tool: "doops_shell", arguments: { session_id: sessionId, command } }
+  return { tool: TOOLS.shell, arguments: { session_id: sessionId, command } }
 }
 
 // 以下 shell 片段里内联的标记值只来自常量或已校验的 Registry token；

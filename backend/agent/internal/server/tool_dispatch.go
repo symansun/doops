@@ -21,9 +21,8 @@ type toolInvocation struct {
 	writePolicyDenial func(err error) bool
 }
 
-// agentToolHandlers maps a caller-facing tool name to its Agent-side handler. The
-// names must match gatewayToolSpecs in tool_registry.go; the contract test enforces
-// the two sides stay equal.
+// agentToolHandlers maps every executable Agent tool, including private relays.
+// Only the Gateway catalogue decides which names are reachable from client RPC.
 var agentToolHandlers = map[string]func(*Gateway, toolInvocation){
 	"doops_shell":                  (*Gateway).handleToolShell,
 	"doops_ssh":                    (*Gateway).handleToolSSH,
@@ -50,16 +49,8 @@ var agentToolHandlers = map[string]func(*Gateway, toolInvocation){
 	"doops_workspace_commit":       (*Gateway).handleToolWorkspaceCommit,
 	"doops_workspace_pull_begin":   (*Gateway).handleToolWorkspacePullBegin,
 	"doops_workspace_pull_chunk":   (*Gateway).handleToolWorkspacePullChunk,
-}
-
-// internalAgentToolHandlers serve calls the Gateway relays to the Agent on its own
-// behalf. No caller names them, so they are deliberately absent from
-// gatewayToolSpecs (actionForTool would otherwise expose them to clients) and from
-// the CLI/Web tool maps. TestInternalToolsAreNotCallerFacing keeps that
-// boundary explicit.
-var internalAgentToolHandlers = map[string]func(*Gateway, toolInvocation){
-	// Relay of doops_machine_diagnostic_sample, built in machine_diagnostic_collect.go.
-	diagnosticReadTool: (*Gateway).handleDiagnosticReadTool,
+	diagnosticReadTool:             (*Gateway).handleDiagnosticReadTool,
+	monitorInspectTool:             (*Gateway).handleToolMonitorInspect,
 }
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）。
@@ -115,11 +106,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	}
 
 	// 工具分发
-	handler, ok := agentToolHandlers[toolName]
-	if !ok {
-		handler, ok = internalAgentToolHandlers[toolName]
-	}
-	if ok {
+	if handler, ok := agentToolHandlers[toolName]; ok {
 		handler(gw, toolInvocation{
 			ctx:               ctx,
 			reqID:             reqID,

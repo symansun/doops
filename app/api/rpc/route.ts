@@ -1,5 +1,5 @@
 import WebSocket from "ws"
-import { toWsBase } from "@/lib/gateway"
+import { TOOLS, toWsBase } from "@/lib/gateway"
 import {
   gatewayPolicyResponse,
   readAllowedAuth,
@@ -117,7 +117,7 @@ export async function POST(req: Request) {
   // A detached doops_bg is Gateway-hosted: aborting this stream closes the
   // upstream socket without tools/cancel. Explicit stop uses the
   // /api/background-tasks/<id>/cancel endpoint.
-  const detached = tool === "doops_bg" && args.detach === true
+  const detached = tool === TOOLS.bg && args.detach === true
 
   const encoder = new TextEncoder()
   let requestCancellation = () => {}
@@ -182,7 +182,7 @@ export async function POST(req: Request) {
       }
       const armExecutionTimer = () => {
         clearExecutionTimer()
-        if (tool !== "doops_agent_prompt") return
+        if (tool !== TOOLS.prompt) return
         executionTimer = setTimeout(() => {
           if (closed || terminal) return
           requestCancellation()
@@ -273,7 +273,7 @@ export async function POST(req: Request) {
           }
           if (body.requiredProtocol) {
             const protocol = msg.result?.capabilities?.protocols?.[body.requiredProtocol]
-            if (body.requiredProtocol !== "structuredSSH" || protocol?.schemaVersion !== "doops.sh/structured-ssh/v1" || protocol?.tool !== "doops_ssh" || protocol?.structuredArgv !== true) {
+            if (body.requiredProtocol !== "structuredSSH" || protocol?.schemaVersion !== "doops.sh/structured-ssh/v1" || protocol?.tool !== TOOLS.ssh || protocol?.structuredArgv !== true) {
               terminal = true
               send({ type: "error", error: "目标 Agent 缺少 structuredSSH 协议能力，升级验收未通过" })
               ws.close()

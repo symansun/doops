@@ -3,8 +3,7 @@ package server
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
-	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -55,52 +54,54 @@ func TestToolCatalogueHasNoDuplicates(t *testing.T) {
 		if seen[spec.name] {
 			t.Fatalf("duplicate tool registry entry: %s", spec.name)
 		}
-		if spec.action == nil {
-			t.Fatalf("tool %s has no action mapping", spec.name)
+		switch spec.visibility {
+		case clientCallable:
+			if spec.action == nil || spec.publicDenial != "" {
+				t.Fatalf("public tool %s must have an action and no internal denial", spec.name)
+			}
+		case gatewayInternal:
+		default:
+			t.Fatalf("tool %s has no valid RPC visibility", spec.name)
 		}
 		seen[spec.name] = true
 	}
 }
 
-var webToolLiteral = regexp.MustCompile(`"(doops_[a-z_]+)"`)
-
-// TestWebClientToolCatalogueSubsetOfGatewayTools keeps the Next.js console from
-// calling a tool the Gateway would reject. The Web console lives outside this Go
-// module, so a missing file only skips the check.
-func TestWebClientToolCatalogueSubsetOfGatewayTools(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "lib", "gateway.ts")
-	raw, err := os.ReadFile(path)
+// This snapshot is consumed by the console test. It records public Agent tool
+// names only, not permissions or the Gateway-local COS RPC.
+func TestPublicAgentToolContract(t *testing.T) {
+	raw, err := os.ReadFile("testdata/public-agent-tools.json")
 	if err != nil {
-		if os.IsNotExist(err) {
-			t.Skipf("web console not present at %s", path)
-		}
-		t.Fatalf("read %s: %v", path, err)
+		t.Fatal(err)
 	}
-	known := map[string]bool{}
-	for _, name := range gatewayToolNames() {
-		known[name] = true
+	var documented []string
+	if err := json.Unmarshal(raw, &documented); err != nil {
+		t.Fatal(err)
 	}
-	var missing []string
-	for _, match := range webToolLiteral.FindAllStringSubmatch(string(raw), -1) {
-		if !known[match[1]] {
-			missing = append(missing, match[1])
+	var public []string
+	for _, spec := range gatewayToolSpecs {
+		if spec.visibility == clientCallable {
+			public = append(public, spec.name)
 		}
 	}
-	if len(missing) > 0 {
-		t.Fatalf("web console calls tools the Gateway does not authorise: %v", missing)
+	sort.Strings(public)
+	if !slices.Equal(public, documented) {
+		t.Fatalf("public-agent-tools.json is stale: want %v, got %v", public, documented)
 	}
 }
 
-// TestInternalToolsAreNotCallerFacing pins the boundary for tools the Gateway
-// relays on its own behalf: they must not be authorised for callers, and must not
-// shadow a caller-facing dispatch entry.
-func TestInternalToolsAreNotCallerFacing(t *testing.T) {
-	for name := range internalAgentToolHandlers {
-		if action := actionForTool(name, nil); action != "" {
-			t.Fatalf("internal relay tool %s is authorised for callers as %q", name, action)
-		}
-		if _, ok := agentToolHandlers[name]; ok {
-			t.Fatalf("internal relay tool %s is also in the caller-facing dispatch map", name)
+// Internal actions are still required for audit and resource admission. Their
+// presence must not make these Agent tools callable from the client socket.
+func TestInternalToolsRetainTheirAction(t *testing.T) {
+	for name, want := range map[string]GatewayAction{
+		"doops_credential_materialize": ActionCredentialUse,
+		"doops_credential_import":      ActionCredentialRotate,
+		"doops_credential_cleanup":     ActionCredentialRevoke,
+		"doops_cos_sync":               ActionWrite,
+		diagnosticReadTool:             "",
+	} {
+		if spec := gatewayToolIndex[name]; spec.visibility != gatewayInternal || actionForTool(name, nil) != want {
+			t.Errorf("%s: want Gateway-internal tool with action %q", name, want)
 		}
 	}
 }

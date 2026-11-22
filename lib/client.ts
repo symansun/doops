@@ -1,6 +1,6 @@
 "use client"
 
-import type { Target, AuditEvent, AuditSummary } from "./gateway"
+import { TOOLS, type WebToolName, type Target, type AuditEvent, type AuditSummary } from "./gateway.ts"
 import { consoleFetch } from "./network-error.ts"
 import { GatewaySessionError } from "./gateway-auth.ts"
 
@@ -198,7 +198,7 @@ export async function callTool(
   opts: {
     cluster: string
     instance: string
-    tool: string
+    tool: WebToolName
     arguments: Record<string, unknown>
     signal?: AbortSignal
     requiredProtocol?: "structuredSSH"
@@ -436,7 +436,7 @@ export async function runAgentUpgrade(
     let result: unknown
     try {
       await callTool(session, {
-        ...target, tool: "doops_agent_upgrade", signal,
+        ...target, tool: TOOLS.agentUpgrade, signal,
         requiredProtocol: verify ? "structuredSSH" : undefined,
         expectedReleaseCommit: verify ? operation.expectedCommit : undefined,
         arguments: {
