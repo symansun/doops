@@ -4,11 +4,27 @@
 
 本文件是控制台「更新内容」的数据源：Web 镜像构建时从仓库根打包 `CHANGELOG.md`，控制台读取其中最新带版本号的条目作为当前版本。`[Unreleased]` 收敛尚未发布的变更，发布时整段改成 `## [版本号] — YYYY-MM-DD`，已发布条目不再改写；0.1.0–0.2.2 为回填的历史记录。
 
-分类标题只使用 `### Added` / `### Changed`
-- 凭据列表用中文展示状态、版本和目标；编号与内容摘要收进详情。
- / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
+分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
 ## [Unreleased]
+
+### Added
+
+- 控制台表单提供「AI 辅助填写」：本地模型生成建议，可逐项确认；凭据载荷不参与，填入不提交。
+
+- Linux 宿主采集器支持按块设备采集读写 IOPS、吞吐和平均延迟；控制台监控可查看独立曲线并设置阈值。
+- 知识库新增 `doops_kb` 工具（`list`/`read`/`write`/`delete`）和只读的 `mcp_doops_kb_read`：普通 ask 会话可以直接查目标上由操作者维护的运维文档，写回仍走控制台或授权路径。删除改为移动到 `.trash/` 并按会话区同一过期时间清理；新增每库 500 篇、256 MiB 和单篇 1 MiB 的配额。
+
+### Changed
+
+- 控制台知识库改用 `doops_kb` 读写，根目录由 Agent 返回而不是写死 `/root/kb`；预览不再加载远程图片，镜像不再下发 `docs/reviews`。
+- 凭据列表用中文展示状态、版本和目标；编号与内容摘要收进详情。
+
+## [0.3.23] — 2026-11-22
+
+### Fixed
+
+- 修复 `deploy-gateway.sh` 在 `--allow-unenrolled-credential-delivery` 校验中引用未展开变量、导致部署中止的问题；该开关仍要求同时使用 `--allow-open-agent-registration`。
 
 ## [0.3.22] — 2026-11-22
 

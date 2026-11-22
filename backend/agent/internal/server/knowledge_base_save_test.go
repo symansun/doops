@@ -12,12 +12,11 @@ import (
 )
 
 // The knowledge base is read back into an agent or console session, so a
-// document that exceeds the read bound is unreachable once written. Saves must
-// refuse it instead of storing a file the read path will always reject.
+// document larger than one read is unreachable once written. Saves must refuse
+// it instead of storing a file the read path will always reject.
 func TestKnowledgeBaseSaveRejectsOversizedDocument(t *testing.T) {
 	kb := t.TempDir()
 	t.Setenv("DOOPS_KB_ROOT", kb)
-	t.Setenv("DOOPS_MAX_FILE_READ_BYTES", "1024")
 	t.Setenv("DOOPS_MAX_FILE_WRITE_BYTES", "8192")
 
 	doc := filepath.Join(kb, "运维手册.md")
@@ -25,8 +24,8 @@ func TestKnowledgeBaseSaveRejectsOversizedDocument(t *testing.T) {
 		t.Fatalf("seed write failed: %v", err)
 	}
 
-	_, err := writeKnowledgeBaseFile("kb-save", doc, strings.Repeat("x", 1025))
-	if err == nil || !strings.Contains(err.Error(), "over the 1024-byte limit") {
+	_, err := writeKnowledgeBaseFile("kb-save", doc, strings.Repeat("x", int(maxKnowledgeBaseDocumentBytes)+1))
+	if err == nil || !strings.Contains(err.Error(), "over the 1048576-byte limit") {
 		t.Fatalf("oversized document was accepted: %v", err)
 	}
 

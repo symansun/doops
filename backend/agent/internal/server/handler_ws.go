@@ -165,6 +165,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 							registryAuthfileProtocol:      registryAuthfileCapability(),
 							cosSnapshotExecutableProtocol: cosSnapshotExecutableCapability(),
 							toolDeadlineProtocol:          toolDeadlineCapability(),
+			knowledgeBaseProtocol:         knowledgeBaseCapability(),
 						},
 					},
 				},

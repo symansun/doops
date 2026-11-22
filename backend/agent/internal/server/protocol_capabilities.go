@@ -16,7 +16,24 @@ const (
 	cosSnapshotExecutableSchema   = "doops.sh/cos-snapshot-executable/v1"
 	toolDeadlineProtocol          = "toolDeadline"
 	toolDeadlineSchema            = "doops.sh/tool-deadline/v1"
+	knowledgeBaseProtocol         = "knowledgeBase"
+	knowledgeBaseSchema           = "doops.sh/knowledge-base/v1"
 )
+
+// knowledgeBaseCapability tells a caller that this Agent serves the knowledge
+// base through doops_kb and reports the root it uses, instead of every caller
+// hard-coding /root/kb.
+func knowledgeBaseCapability() map[string]interface{} {
+	return map[string]interface{}{
+		"schemaVersion": knowledgeBaseSchema,
+		"tool":          "doops_kb",
+		"readTool":      "kb_read",
+	}
+}
+
+func knowledgeBaseCapabilityCompatible(value interface{}) bool {
+	return capabilityMatches(value, knowledgeBaseCapability())
+}
 
 // toolDeadlineCapability lets the Gateway tell the Agent how long it will wait
 // for a tools/call. The Agent then replies with a definite timeout instead of
