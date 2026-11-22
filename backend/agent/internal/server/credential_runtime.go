@@ -1101,6 +1101,10 @@ func credentialOperationErrorCategory(err error) string {
 		return "credential_payload_invalid"
 	case errors.Is(err, ErrCredentialAuditUnavailable):
 		return "credential_audit_unavailable"
+	case errors.Is(err, ErrSecretKeyMismatch):
+		return "credential_key_mismatch"
+	case errors.Is(err, ErrCredentialCiphertextInvalid):
+		return "credential_ciphertext_invalid"
 	}
 	category := sanitizeCredentialCategory(err.Error())
 	if category != "credential_operation_failed" {

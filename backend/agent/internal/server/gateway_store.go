@@ -401,6 +401,11 @@ func (s *GatewayStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_credential_versions_resource ON credential_versions(credential_id, created_at DESC)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_credential_versions_one_active
 			ON credential_versions(credential_id) WHERE state = 'active'`,
+		`CREATE TABLE IF NOT EXISTS gateway_secret_key_check (
+			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+			key_mac TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS credential_grants (
 			id TEXT PRIMARY KEY,
 			credential_id TEXT NOT NULL,
