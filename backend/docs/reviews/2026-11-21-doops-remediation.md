@@ -11,7 +11,7 @@
 | DoSQL 直接查询与验证 | 收紧只读语句准入并保留引号中的字面量 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，采用词法规则 |
 | MySQL 查询模式 | 拒绝 INTO 和可执行注释 | [Skill 查询准入](../../agent/skills/dosql/Server/lib/database-operation-executor.mjs#L477-L483) · [执行器回归套件](../../agent/skills/dosql/Server/lib/database-operation-executor.test.mjs) | 已发布；v0.3.21 执行器套件 19 项通过。另用合成适配器定向验证：普通只读查询调用适配器一次，含 INTO 和含可执行注释的两种输入均在调用前被拒绝（各零次）。未连接数据库。 |
 | MongoDB 文档校验 | 在解码后区分键和字面值 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
-| DoSQL 部分提交 | 结果未知时保留已知提交证据；版本日志区分普通失败与已确认的部分提交 | [直连执行结果](../../agent/internal/server/dosql_direct_prompt.go) · [版本日志回归](../../agent/internal/server/dosql_version_journal_test.go) | RPC 错误证据已发布。版本日志修复尚未发布：已复现执行器报告部分提交而结束记录写为 `failed`，并验证新记录保留状态与计数、旧记录只读兼容且原字节不变。 |
+| DoSQL 部分提交 | 结果未知时保留已知提交证据；版本日志区分普通失败与已确认的部分提交 | [直连执行结果](../../agent/internal/server/dosql_direct_prompt.go) · [版本日志回归](../../agent/internal/server/dosql_version_journal_test.go) | RPC 错误证据已发布。版本日志修复尚未发布：已复现执行器报告部分提交而结束记录写为 `failed`，并验证新记录保留状态与计数、旧记录只读兼容且原字节不变。另见下文真实 MySQL 复验。 |
 | Helm 补偿回滚 | 等待回滚并回读 live release 状态 | [helm_interrupt_test.go](../../agent/internal/server/helm_interrupt_test.go) | 已发布 |
 | Helm 原生回滚和卸载中断 | 保留结果未知，补充有界的只读状态观测 | [Helm 中断测试](../../agent/internal/server/helm_interrupt_test.go) | 已随 v0.3.20 发布，macOS 和 Linux 非 root 定向通过 |
 | Agent 回滚候选 | 要求匹配的成功持久化回执 | [self_upgrade_test.go](../../agent/internal/server/self_upgrade_test.go) | 已发布 |
@@ -66,6 +66,8 @@
 同一提交在本机单次运行整个 Agent 模块时收到 `signal: terminated`，日志未给出信号来源，不能将这次运行记为通过，也没有证据表明是 Helm 断言失败。当时正在执行的 Helm 凭据选择用例单独复跑 5 次通过。随后将 Agent 的 9 个 Go 包分为 11 组进行离线验证；`internal/server` 的 956 个顶层测试与 Go 枚举清单逐一对账，无遗漏或重复。各组均正常退出，合计 2651 个通过事件（含子测试），另有 12 个跳过事件，涉及双 GPU 硬件和真实数据库。以上为分组回归结果，不等同于单次整包 CI、真实引擎验收或线上 T2。
 
 对齐上游 `580db2c7` 后，CLI 增加了 `ENROLLED` 列及独立的未登记提示行。部署脚本现在区分目标行和对应的登记提示，保留警告并拒绝错配提示；重连通过不等于登记或凭据验收通过。合并工作树的 CLI 包测试通过，部署合同及文档链接检查 19 项通过。前述 11 组 Agent 结果仅属于 `ed675e9c`，不作为合并后提交的 CI 结果。
+
+**真实 MySQL 复验（`4750e340`）：** 在本机回环地址的临时 MySQL 8.4.13 上，事务边界用例及全部 10 个子用例均实际执行并通过。另用临时驱动调用生产 DoSQL Handler，仅模拟凭据交付：同一批次第二次建表失败，独立连接确认第一条建表已提交；错误包含版本 1 和已提交 DDL 数 1。经哈希链校验的结束记录及重新读取的摘要均为 `partially_committed`、`committed=true`、`implicit_commits=1`，读取摘要前后日志字节一致。已移除临时容器和数据卷。此项只验证候选版本的数据库行为，不代表线上 T2 已验收。
 
 ## 实际服务验收
 
