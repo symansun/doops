@@ -97,6 +97,11 @@ bash scripts/deploy-gateway.sh \
 
 - SSH 地址与用户：由运维密钥库或维护人保管，文档、示例和提交信息只保留占位符。
 - Gateway URL：`https://doops.l8ai.cn`
+- 无 enrollment 的私有 Gateway：`https://doops.aiedulab.cn`。它当前没有签发任何
+  enrollment token，发布命令固定追加
+  `--allow-open-agent-registration --allow-unenrolled-credential-delivery`，
+  以保留升级前的接入和凭据投递行为；这是迁移窗口，完成 enrollment 后改用
+  `--require-agent-enrollment --require-enrolled-credential-delivery`。
 - SSH 凭据、生产 IP 和登录用户禁止写入仓库、日志、提交信息和文档正文。
 
 这条脚本只走 SSH/SCP，在宿主机真实 root 下完成：
