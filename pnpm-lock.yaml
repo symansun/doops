@@ -5,9 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@agent-cloud/agent-ui@0.3.52':
-    hash: bllm36ncsd7kykjxsjiw3mdez4
-    path: patches/@agent-cloud__agent-ui@0.3.52.patch
+  '@agent-cloud/agent-ui@0.3.52': 73c667e2580454312c3fcc7d7a89a0ff42dfb4d346f02fc70c1ef39053636c28
 
 importers:
 
@@ -15,7 +13,7 @@ importers:
     dependencies:
       '@agent-cloud/agent-ui':
         specifier: 0.3.52
-        version: 0.3.52(patch_hash=bllm36ncsd7kykjxsjiw3mdez4)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(lucide-react@0.577.0(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react-markdown@10.1.0(@types/react@19.2.17)(react@19.2.7))(react@19.2.7)(remark-gfm@4.0.1)
+        version: 0.3.52(patch_hash=73c667e2580454312c3fcc7d7a89a0ff42dfb4d346f02fc70c1ef39053636c28)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(lucide-react@0.577.0(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react-markdown@10.1.0(@types/react@19.2.17)(react@19.2.7))(react@19.2.7)(remark-gfm@4.0.1)
       '@bufbuild/protobuf':
         specifier: 2.16.0
         version: 2.16.0
@@ -3157,7 +3155,7 @@ packages:
 
 snapshots:
 
-  '@agent-cloud/agent-ui@0.3.52(patch_hash=bllm36ncsd7kykjxsjiw3mdez4)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(lucide-react@0.577.0(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react-markdown@10.1.0(@types/react@19.2.17)(react@19.2.7))(react@19.2.7)(remark-gfm@4.0.1)':
+  '@agent-cloud/agent-ui@0.3.52(patch_hash=73c667e2580454312c3fcc7d7a89a0ff42dfb4d346f02fc70c1ef39053636c28)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(lucide-react@0.577.0(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react-markdown@10.1.0(@types/react@19.2.17)(react@19.2.7))(react@19.2.7)(remark-gfm@4.0.1)':
     dependencies:
       '@bufbuild/protobuf': 2.16.0
       '@codemirror/commands': 6.11.1

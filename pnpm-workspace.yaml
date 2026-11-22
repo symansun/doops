@@ -2,3 +2,5 @@ packages:
   - '.'
 allowBuilds:
   sharp: true
+patchedDependencies:
+  '@agent-cloud/agent-ui@0.3.52': patches/@agent-cloud__agent-ui@0.3.52.patch
