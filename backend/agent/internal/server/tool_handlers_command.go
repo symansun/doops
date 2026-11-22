@@ -1,5 +1,8 @@
 package server
 
+// Tool handlers that run or report commands inside the target: a shell
+// command, an SSH command, a background command and its task status.
+
 import (
 	"context"
 	"encoding/json"
@@ -14,12 +17,8 @@ import (
 	"github.com/user/doops/agent/api"
 )
 
-// Tool handlers for command execution: shell, SSH and background tasks.
-// Moved out of handleToolCallOverWS so each tool keeps its protocol logic in
-// one place; dispatch lives in tool_dispatch.go.
-
-func (gw *Gateway) handleToolShell(call toolCall) {
-	ctx, reqID, argBytes, writeJSON, sessionID, pushProgress, writePolicyDenial := call.ctx, call.reqID, call.args, call.write, call.sessionID, call.progress, call.policyDenial
+func (gw *Gateway) handleToolShell(call toolInvocation) {
+	ctx, reqID, argBytes, writeJSON, sessionID, pushProgress, writePolicyDenial := call.ctx, call.reqID, call.args, call.writeJSON, call.sessionID, call.pushProgress, call.writePolicyDenial
 	var args api.ShellParams
 	json.Unmarshal(argBytes, &args)
 
@@ -61,8 +60,8 @@ func (gw *Gateway) handleToolShell(call toolCall) {
 	}
 }
 
-func (gw *Gateway) handleToolSSH(call toolCall) {
-	ctx, reqID, argBytes, writeJSON, sessionID, pushProgress := call.ctx, call.reqID, call.args, call.write, call.sessionID, call.progress
+func (gw *Gateway) handleToolSSH(call toolInvocation) {
+	ctx, reqID, argBytes, writeJSON, sessionID, pushProgress := call.ctx, call.reqID, call.args, call.writeJSON, call.sessionID, call.pushProgress
 	var args api.SSHParams
 	if err := json.Unmarshal(argBytes, &args); err != nil {
 		writeJSON(buildErrorResponse(reqID, -32602, "invalid SSH arguments"))
@@ -108,8 +107,8 @@ func (gw *Gateway) handleToolSSH(call toolCall) {
 	}
 }
 
-func (gw *Gateway) handleToolBackground(call toolCall) {
-	ctx, reqID, argBytes, writeJSON, sessionID, pushProgress, writePolicyDenial := call.ctx, call.reqID, call.args, call.write, call.sessionID, call.progress, call.policyDenial
+func (gw *Gateway) handleToolBackground(call toolInvocation) {
+	ctx, reqID, argBytes, writeJSON, sessionID, pushProgress, writePolicyDenial := call.ctx, call.reqID, call.args, call.writeJSON, call.sessionID, call.pushProgress, call.writePolicyDenial
 	var args api.BgExecParams
 	json.Unmarshal(argBytes, &args)
 	log.Printf("🚀 WS doops_bg: [%s]", sessionID)
@@ -199,5 +198,19 @@ func (gw *Gateway) handleToolBackground(call toolCall) {
 		writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("Task failed.\nTaskID: %s\nExitCode: %d", task.TaskID, task.ExitCode)))
 	} else {
 		writeJSON(buildSuccessResponse(reqID, fmt.Sprintf("Task complete.\nTaskID: %s\nExitCode: %d", task.TaskID, task.ExitCode)))
+	}
+}
+
+func (gw *Gateway) handleToolTaskStatus(call toolInvocation) {
+	reqID, argBytes, writeJSON := call.reqID, call.args, call.writeJSON
+	var args api.TaskStatusParams
+	json.Unmarshal(argBytes, &args)
+	info, err := gw.getTaskStatus(args.TaskID, args.Lines)
+	if err != nil {
+		writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
+	} else {
+		resultText := fmt.Sprintf("TaskID: %s\nPID: %d\nStatus: %s\nExitCode: %d\nLog: %s\n---\n%s",
+			info.TaskID, info.PID, info.Status, info.ExitCode, info.LogPath, info.LogTail)
+		writeJSON(buildSuccessResponse(reqID, resultText))
 	}
 }

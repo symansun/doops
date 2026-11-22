@@ -1,11 +1,11 @@
 package server
 
+// Tool handlers for credential materialisation, import and cleanup.
+
 import ()
 
-// Tool handlers for credential materialisation and cleanup.
-
-func (gw *Gateway) handleToolCredentialImport(call toolCall) {
-	ctx, reqID, argBytes, writeJSON := call.ctx, call.reqID, call.args, call.write
+func (gw *Gateway) handleToolCredentialImport(call toolInvocation) {
+	ctx, reqID, argBytes, writeJSON := call.ctx, call.reqID, call.args, call.writeJSON
 	result, err := handleCredentialSecretImportTool(ctx, argBytes)
 	if err != nil {
 		writeJSON(buildToolErrorResponse(reqID, err.Error()))
@@ -14,8 +14,8 @@ func (gw *Gateway) handleToolCredentialImport(call toolCall) {
 	}
 }
 
-func (gw *Gateway) handleToolCredentialMaterialize(call toolCall) {
-	ctx, reqID, argBytes, writeJSON := call.ctx, call.reqID, call.args, call.write
+func (gw *Gateway) handleToolCredentialMaterialize(call toolInvocation) {
+	ctx, reqID, argBytes, writeJSON := call.ctx, call.reqID, call.args, call.writeJSON
 	result, err := handleCredentialMaterializeTool(ctx, argBytes)
 	if err != nil {
 		writeJSON(buildToolErrorResponse(reqID, err.Error()))
@@ -24,8 +24,8 @@ func (gw *Gateway) handleToolCredentialMaterialize(call toolCall) {
 	}
 }
 
-func (gw *Gateway) handleToolCredentialCleanup(call toolCall) {
-	ctx, reqID, argBytes, writeJSON := call.ctx, call.reqID, call.args, call.write
+func (gw *Gateway) handleToolCredentialCleanup(call toolInvocation) {
+	ctx, reqID, argBytes, writeJSON := call.ctx, call.reqID, call.args, call.writeJSON
 	result, err := handleCredentialCleanupTool(ctx, argBytes)
 	if err != nil {
 		writeJSON(buildToolErrorResponse(reqID, err.Error()))

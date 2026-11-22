@@ -16,15 +16,15 @@ import (
 // test fails with the exact missing names.
 func TestToolCatalogueMatchesAgentDispatch(t *testing.T) {
 	gateway := gatewayToolNames()
-	agent := make([]string, 0, len(toolHandlers))
-	for name := range toolHandlers {
+	agent := make([]string, 0, len(agentToolHandlers))
+	for name := range agentToolHandlers {
 		agent = append(agent, name)
 	}
 	sort.Strings(agent)
 	if strings.Join(gateway, ",") != strings.Join(agent, ",") {
 		t.Fatalf("tool catalogue drifted between Gateway and Agent; only in tool_registry.go: %v; only in tool_dispatch.go: %v", diffToolNames(gateway, agent), diffToolNames(agent, gateway))
 	}
-	for name, handler := range toolHandlers {
+	for name, handler := range agentToolHandlers {
 		if handler == nil {
 			t.Fatalf("tool %s has a nil Agent handler", name)
 		}
@@ -47,7 +47,7 @@ func diffToolNames(left, right []string) []string {
 
 func TestToolCatalogueHasNoDuplicates(t *testing.T) {
 	seen := map[string]bool{}
-	for _, spec := range gatewayTools {
+	for _, spec := range gatewayToolSpecs {
 		if spec.name == "" {
 			t.Fatalf("tool registry contains an entry without a name: %#v", spec)
 		}
@@ -94,11 +94,11 @@ func TestWebClientToolCatalogueSubsetOfGatewayTools(t *testing.T) {
 // relays on its own behalf: they must not be authorised for callers, and must not
 // shadow a caller-facing dispatch entry.
 func TestInternalToolsAreNotCallerFacing(t *testing.T) {
-	for name := range internalToolHandlers {
+	for name := range internalAgentToolHandlers {
 		if action := actionForTool(name, nil); action != "" {
 			t.Fatalf("internal relay tool %s is authorised for callers as %q", name, action)
 		}
-		if _, ok := toolHandlers[name]; ok {
+		if _, ok := agentToolHandlers[name]; ok {
 			t.Fatalf("internal relay tool %s is also in the caller-facing dispatch map", name)
 		}
 	}

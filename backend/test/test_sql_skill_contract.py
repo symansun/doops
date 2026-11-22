@@ -173,7 +173,7 @@ func TestSQLDocumentationContract(t *testing.T) {
             name := tool.(map[string]interface{})["name"].(string)
             names = append(names, name)
             for _, apply := range []bool{false, true} {
-                if !sliceContainsString(doagentAllowedTools(apply, "dosql"), "mcp_dosql_"+name) {
+                if !sliceContainsString(doagentAllowedTools(apply, "dosql", false), "mcp_dosql_"+name) {
                     t.Fatalf("registered tool %q unavailable to DoSql", name)
                 }
             }

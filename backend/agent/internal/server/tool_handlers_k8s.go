@@ -1,5 +1,8 @@
 package server
 
+// Tool handlers for cluster inspection: node inventory, Kubernetes
+// operations and deployment checks.
+
 import (
 	"context"
 	"encoding/json"
@@ -10,21 +13,8 @@ import (
 	"github.com/user/doops/agent/api"
 )
 
-// Tool handlers for cluster and node inspection, deployment checks and Agent
-// upgrades.
-
-func (gw *Gateway) handleDiagnosticReadTool(call toolCall) {
-	reqID, argBytes, writeJSON := call.reqID, call.args, call.write
-	sample, err := agentDiagnosticSample(argBytes)
-	if err != nil {
-		writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-		return
-	}
-	writeJSON(api.JSONRPCResponse{JSONRPC: "2.0", ID: reqID, Result: sample})
-}
-
-func (gw *Gateway) handleToolNodeInfo(call toolCall) {
-	ctx, reqID, argBytes, writeJSON, pushProgress := call.ctx, call.reqID, call.args, call.write, call.progress
+func (gw *Gateway) handleToolNodeInfo(call toolInvocation) {
+	ctx, reqID, argBytes, writeJSON, pushProgress := call.ctx, call.reqID, call.args, call.writeJSON, call.pushProgress
 	var args api.NodeInfoParams
 	json.Unmarshal(argBytes, &args)
 	if args.Section != "" {
@@ -88,8 +78,8 @@ func (gw *Gateway) handleToolNodeInfo(call toolCall) {
 	}
 }
 
-func (gw *Gateway) handleToolK8s(call toolCall) {
-	ctx, reqID, argBytes, writeJSON, pushProgress := call.ctx, call.reqID, call.args, call.write, call.progress
+func (gw *Gateway) handleToolK8s(call toolInvocation) {
+	ctx, reqID, argBytes, writeJSON, pushProgress := call.ctx, call.reqID, call.args, call.writeJSON, call.pushProgress
 	result, err := handleK8STool(ctx, argBytes, pushProgress)
 	if errors.Is(err, errExecutionOutcomeUnknown) {
 		writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
@@ -100,27 +90,12 @@ func (gw *Gateway) handleToolK8s(call toolCall) {
 	}
 }
 
-func (gw *Gateway) handleToolCheckDeployment(call toolCall) {
-	reqID, argBytes, writeJSON := call.reqID, call.args, call.write
+func (gw *Gateway) handleToolCheckDeployment(call toolInvocation) {
+	reqID, argBytes, writeJSON := call.reqID, call.args, call.writeJSON
 	result, err := handleCheckDeployment(argBytes)
 	if err != nil {
 		writeJSON(buildToolErrorResponse(reqID, err.Error()))
 	} else {
 		writeJSON(buildSuccessResponse(reqID, result))
 	}
-}
-
-func (gw *Gateway) handleToolCleanWorkspace(call toolCall) {
-	reqID, argBytes, writeJSON := call.reqID, call.args, call.write
-	result, err := handleCleanWorkspace(argBytes)
-	if err != nil {
-		writeJSON(buildToolErrorResponse(reqID, err.Error()))
-	} else {
-		writeJSON(buildSuccessResponse(reqID, result))
-	}
-}
-
-func (gw *Gateway) handleToolAgentUpgrade(call toolCall) {
-	reqID, argBytes, writeJSON := call.reqID, call.args, call.write
-	writeJSON(buildAgentUpgradeResponse(reqID, argBytes))
 }

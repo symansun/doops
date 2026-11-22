@@ -1,32 +1,17 @@
 package server
 
+// Tool handler for prompt-driven Agent work (doagent session and SSE relay).
+
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/user/doops/agent/api"
 )
 
-// Tool handlers for prompt-driven Agent work and background task status.
-
-func (gw *Gateway) handleToolTaskStatus(call toolCall) {
-	reqID, argBytes, writeJSON := call.reqID, call.args, call.write
-	var args api.TaskStatusParams
-	json.Unmarshal(argBytes, &args)
-	info, err := gw.getTaskStatus(args.TaskID, args.Lines)
-	if err != nil {
-		writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
-	} else {
-		resultText := fmt.Sprintf("TaskID: %s\nPID: %d\nStatus: %s\nExitCode: %d\nLog: %s\n---\n%s",
-			info.TaskID, info.PID, info.Status, info.ExitCode, info.LogPath, info.LogTail)
-		writeJSON(buildSuccessResponse(reqID, resultText))
-	}
-}
-
-func (gw *Gateway) handleToolAgentPrompt(call toolCall) {
-	ctx, reqID, argBytes, writeJSON, sessionID, pushProgress := call.ctx, call.reqID, call.args, call.write, call.sessionID, call.progress
+func (gw *Gateway) handleToolAgentPrompt(call toolInvocation) {
+	ctx, reqID, argBytes, writeJSON, sessionID, pushProgress := call.ctx, call.reqID, call.args, call.writeJSON, call.sessionID, call.pushProgress
 	var args api.AgentPromptParams
 	json.Unmarshal(argBytes, &args)
 	operation := strings.ToLower(strings.TrimSpace(args.Operation))

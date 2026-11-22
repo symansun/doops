@@ -9,22 +9,22 @@ import (
 	"github.com/user/doops/agent/internal/dispatcher"
 )
 
-// toolCall carries the per-request state shared by every tool handler.
-type toolCall struct {
-	ctx              context.Context
-	reqID            interface{}
-	gatewayTimeoutMS int64
-	args             json.RawMessage
-	write            func(v interface{})
-	sessionID        string
-	progress         func(evt notificationEvent)
-	policyDenial     func(err error) bool
+// toolInvocation carries the per-request state shared by every tool handler.
+type toolInvocation struct {
+	ctx               context.Context
+	reqID             interface{}
+	gatewayTimeoutMS  int64
+	args              json.RawMessage
+	writeJSON         func(v interface{})
+	sessionID         string
+	pushProgress      func(evt notificationEvent)
+	writePolicyDenial func(err error) bool
 }
 
-// toolHandlers maps a caller-facing tool name to its Agent-side handler. The
-// names must match gatewayTools in tool_registry.go; the contract test enforces
+// agentToolHandlers maps a caller-facing tool name to its Agent-side handler. The
+// names must match gatewayToolSpecs in tool_registry.go; the contract test enforces
 // the two sides stay equal.
-var toolHandlers = map[string]func(*Gateway, toolCall){
+var agentToolHandlers = map[string]func(*Gateway, toolInvocation){
 	"doops_shell":                  (*Gateway).handleToolShell,
 	"doops_ssh":                    (*Gateway).handleToolSSH,
 	"doops_database_inventory":     (*Gateway).handleToolDatabaseInventory,
@@ -51,18 +51,18 @@ var toolHandlers = map[string]func(*Gateway, toolCall){
 	"doops_workspace_pull_chunk":   (*Gateway).handleToolWorkspacePullChunk,
 }
 
-// internalToolHandlers serve calls the Gateway relays to the Agent on its own
+// internalAgentToolHandlers serve calls the Gateway relays to the Agent on its own
 // behalf. No caller names them, so they are deliberately absent from
-// gatewayTools (actionForTool would otherwise expose them to clients) and from
+// gatewayToolSpecs (actionForTool would otherwise expose them to clients) and from
 // the CLI/Web tool maps. TestInternalToolsAreNotCallerFacing keeps that
 // boundary explicit.
-var internalToolHandlers = map[string]func(*Gateway, toolCall){
+var internalAgentToolHandlers = map[string]func(*Gateway, toolInvocation){
 	// Relay of doops_machine_diagnostic_sample, built in machine_diagnostic_collect.go.
 	diagnosticReadTool: (*Gateway).handleDiagnosticReadTool,
 }
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）。
-// 校验会话后按 toolHandlers 分发给各工具的处理函数（tool_handlers_*.go）。
+// 校验会话后按 agentToolHandlers 分发给各工具的处理函数（tool_handlers_*.go）。
 func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, gatewayTimeoutMS int64, writeJSON func(v interface{})) {
 	var sessionID string
 	var argsMap map[string]interface{}
@@ -114,20 +114,20 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	}
 
 	// 工具分发
-	handler, ok := toolHandlers[toolName]
+	handler, ok := agentToolHandlers[toolName]
 	if !ok {
-		handler, ok = internalToolHandlers[toolName]
+		handler, ok = internalAgentToolHandlers[toolName]
 	}
 	if ok {
-		handler(gw, toolCall{
-			ctx:              ctx,
-			reqID:            reqID,
-			gatewayTimeoutMS: gatewayTimeoutMS,
-			args:             argBytes,
-			write:            writeJSON,
-			sessionID:        sessionID,
-			progress:         pushProgress,
-			policyDenial:     writePolicyDenial,
+		handler(gw, toolInvocation{
+			ctx:               ctx,
+			reqID:             reqID,
+			gatewayTimeoutMS:  gatewayTimeoutMS,
+			args:              argBytes,
+			writeJSON:         writeJSON,
+			sessionID:         sessionID,
+			pushProgress:      pushProgress,
+			writePolicyDenial: writePolicyDenial,
 		})
 		return
 	}

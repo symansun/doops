@@ -872,3 +872,10 @@ func (s *GatewayStore) credentialGrantByID(credentialID, grantID string) (Creden
 	}
 	return grant, err
 }
+
+func (s *GatewayStore) canManageCredential(resource CredentialResource, actorID string, action GatewayAction) bool {
+	if resource.Scope == CredentialScopePersonal {
+		return resource.OwnerID == actorID || s.UserIsPlatformAdmin(actorID)
+	}
+	return s.UserIsPlatformAdmin(actorID)
+}

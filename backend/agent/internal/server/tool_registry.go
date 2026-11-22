@@ -26,45 +26,45 @@ type gatewayToolSpec struct {
 	summary func(m map[string]interface{}, raw json.RawMessage) string
 }
 
-func fixedAction(action GatewayAction) func(json.RawMessage) GatewayAction {
+func constantAction(action GatewayAction) func(json.RawMessage) GatewayAction {
 	return func(json.RawMessage) GatewayAction { return action }
 }
 
-func fixedSummary(summary string) func(map[string]interface{}, json.RawMessage) string {
+func constantSummary(summary string) func(map[string]interface{}, json.RawMessage) string {
 	return func(map[string]interface{}, json.RawMessage) string { return summary }
 }
 
-// gatewayTools is the single declaration point for Gateway-side tool metadata.
-var gatewayTools = []gatewayToolSpec{
-	{name: "doops_shell", action: fixedAction(ActionExec), summary: shellCommandSummary},
-	{name: "doops_bg", action: fixedAction(ActionExec), summary: shellCommandSummary},
-	{name: "doops_ssh", action: fixedAction(ActionExec), summary: sshCommandSummary},
-	{name: "doops_task_status", action: fixedAction(ActionExec)},
-	{name: "doops_k8s", action: fixedAction(ActionExec), summary: k8sCommandSummary},
+// gatewayToolSpecs is the single declaration point for Gateway-side tool metadata.
+var gatewayToolSpecs = []gatewayToolSpec{
+	{name: "doops_shell", action: constantAction(ActionExec), summary: shellCommandSummary},
+	{name: "doops_bg", action: constantAction(ActionExec), summary: shellCommandSummary},
+	{name: "doops_ssh", action: constantAction(ActionExec), summary: sshCommandSummary},
+	{name: "doops_task_status", action: constantAction(ActionExec)},
+	{name: "doops_k8s", action: constantAction(ActionExec), summary: k8sCommandSummary},
 	{name: "doops_web", action: webToolAction, summary: webToolSummary},
 	{name: "doops_agent_prompt", action: agentPromptAction, summary: agentPromptSummary},
-	{name: "doops_file_read", action: fixedAction(ActionRead), summary: filePathSummary("doops_file_read")},
-	{name: "doops_workspace_read", action: fixedAction(ActionRead)},
-	{name: "doops_file_write", action: fixedAction(ActionWrite), summary: filePathSummary("doops_file_write")},
-	{name: "doops_cos_sync", action: fixedAction(ActionWrite)},
-	{name: "doops_node_info", action: fixedAction(ActionInfo)},
-	{name: "doops_database_inventory", action: fixedAction(ActionInfo), summary: fixedSummary("doops_database_inventory")},
-	{name: "doops_check_deployment", action: fixedAction(ActionCheck)},
-	{name: "doops_clean_workspace", action: fixedAction(ActionClean)},
-	{name: "doops_agent_upgrade", action: fixedAction(ActionAgentUpgrade), summary: upgradeCommandSummary},
-	{name: "doops_credential_materialize", action: fixedAction(ActionCredentialUse)},
-	{name: "doops_credential_import", action: fixedAction(ActionCredentialRotate)},
-	{name: "doops_credential_cleanup", action: fixedAction(ActionCredentialRevoke)},
-	{name: "doops_workspace_begin", action: fixedAction(ActionPush)},
-	{name: "doops_workspace_chunk", action: fixedAction(ActionPush)},
-	{name: "doops_workspace_commit", action: fixedAction(ActionPush)},
-	{name: "doops_workspace_pull_begin", action: fixedAction(ActionPull), summary: pullBeginSummary},
-	{name: "doops_workspace_pull_chunk", action: fixedAction(ActionPull)},
+	{name: "doops_file_read", action: constantAction(ActionRead), summary: filePathSummary("doops_file_read")},
+	{name: "doops_workspace_read", action: constantAction(ActionRead)},
+	{name: "doops_file_write", action: constantAction(ActionWrite), summary: filePathSummary("doops_file_write")},
+	{name: "doops_cos_sync", action: constantAction(ActionWrite)},
+	{name: "doops_node_info", action: constantAction(ActionInfo)},
+	{name: "doops_database_inventory", action: constantAction(ActionInfo), summary: constantSummary("doops_database_inventory")},
+	{name: "doops_check_deployment", action: constantAction(ActionCheck)},
+	{name: "doops_clean_workspace", action: constantAction(ActionClean)},
+	{name: "doops_agent_upgrade", action: constantAction(ActionAgentUpgrade), summary: upgradeCommandSummary},
+	{name: "doops_credential_materialize", action: constantAction(ActionCredentialUse)},
+	{name: "doops_credential_import", action: constantAction(ActionCredentialRotate)},
+	{name: "doops_credential_cleanup", action: constantAction(ActionCredentialRevoke)},
+	{name: "doops_workspace_begin", action: constantAction(ActionPush)},
+	{name: "doops_workspace_chunk", action: constantAction(ActionPush)},
+	{name: "doops_workspace_commit", action: constantAction(ActionPush)},
+	{name: "doops_workspace_pull_begin", action: constantAction(ActionPull), summary: pullBeginSummary},
+	{name: "doops_workspace_pull_chunk", action: constantAction(ActionPull)},
 }
 
-var gatewayToolByName = func() map[string]gatewayToolSpec {
-	index := make(map[string]gatewayToolSpec, len(gatewayTools))
-	for _, spec := range gatewayTools {
+var gatewayToolIndex = func() map[string]gatewayToolSpec {
+	index := make(map[string]gatewayToolSpec, len(gatewayToolSpecs))
+	for _, spec := range gatewayToolSpecs {
 		index[spec.name] = spec
 	}
 	return index
@@ -72,8 +72,8 @@ var gatewayToolByName = func() map[string]gatewayToolSpec {
 
 // gatewayToolNames lists every declared Gateway tool, sorted.
 func gatewayToolNames() []string {
-	names := make([]string, 0, len(gatewayTools))
-	for _, spec := range gatewayTools {
+	names := make([]string, 0, len(gatewayToolSpecs))
+	for _, spec := range gatewayToolSpecs {
 		names = append(names, spec.name)
 	}
 	sort.Strings(names)
@@ -83,7 +83,7 @@ func gatewayToolNames() []string {
 // actionForTool maps a tool call to the action the Gateway authorises. An empty
 // action means the Gateway does not know the tool and rejects the call.
 func actionForTool(tool string, args json.RawMessage) GatewayAction {
-	if spec, ok := gatewayToolByName[tool]; ok {
+	if spec, ok := gatewayToolIndex[tool]; ok {
 		return spec.action(args)
 	}
 	return ""
@@ -96,7 +96,7 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 	if json.Unmarshal(args, &m) != nil {
 		return tool
 	}
-	if spec, ok := gatewayToolByName[tool]; ok && spec.summary != nil {
+	if spec, ok := gatewayToolIndex[tool]; ok && spec.summary != nil {
 		if summary := spec.summary(m, args); summary != "" {
 			return summary
 		}
