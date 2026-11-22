@@ -107,16 +107,15 @@ func TestDockerToolCommandOutcomes(t *testing.T) {
 			wantText: []string{"operation canceled"},
 		},
 		{
-			name: "outcome unknown",
+			name: "residual background processes",
 			runtime: func(t *testing.T) (string, string) {
-				// The detached descendant keeps the output pipe open after the
-				// leader exits, so the bounded drain cannot prove the outcome.
+				// The leader exits 0 but leaves a same-group process behind. The
+				// exit status is known, so this is a tool error, not outcome unknown.
 				return fakeContainerRuntime(t, "sleep 60 &\nexit 0"), ""
 			},
 			command:  "ps",
-			want:     wantRPCError,
-			wantCode: -32603,
-			wantText: []string{errExecutionOutcomeUnknown.Error()},
+			want:     wantToolError,
+			wantText: []string{"background processes in the same process group"},
 		},
 	}
 	for _, tc := range cases {

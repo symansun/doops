@@ -2999,7 +2999,14 @@ func waitForGatewayAgent(t *testing.T, hub *GatewayHub, cluster, instance string
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if hub.getAgent(cluster, instance) != nil {
+		if agent := hub.getAgent(cluster, instance); agent != nil {
+			// Tests model Agents that completed enrollment; token-less sessions
+			// are covered explicitly by the impersonation tests.
+			hub.registry.mu.Lock()
+			if agent.TokenID == "" {
+				agent.TokenID = "test-enrollment"
+			}
+			hub.registry.mu.Unlock()
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
