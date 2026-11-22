@@ -23,6 +23,7 @@ Skill 或 Agent 镜像发布。
 | [物理机访问](PHYSICAL_HOST_ACCESS.md) | 物理机/宿主机访问与硬件检查 | 环境相关 |
 | [Harbor 镜像同步规范](HARBOR_REPLICATION_SPEC.md) | Harbor 镜像同步配置 | 草案 |
 | [DoOps Edge 设计](design/DOOPS_EDGE_TUNNEL.md) | Agent 反向代理与 Gateway 动态域名映射 | 设计（未上线） |
+| [监控、巡检与资产感知闭环](design/MONITORING_INSPECTION_LOOP.md) | 采集通道、观测模型、事件闭环与逐项功能设计 | 设计（待评审，未实现） |
 
 ## 阅读顺序
 
