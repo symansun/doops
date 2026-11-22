@@ -1,9 +1,12 @@
 package server
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -86,4 +89,30 @@ func performCleanup(maxAge time.Duration) {
 			}
 		}
 	}
+}
+
+type cleanWorkspaceParams struct {
+	Workspace string `json:"workspace"`
+}
+
+func handleCleanWorkspace(argBytes json.RawMessage) (string, error) {
+	var args cleanWorkspaceParams
+	if err := json.Unmarshal(argBytes, &args); err != nil {
+		return "", fmt.Errorf("invalid clean workspace params: %w", err)
+	}
+	workspace := strings.TrimSpace(args.Workspace)
+	if err := validateSession(workspace); err != nil {
+		return "", err
+	}
+	wsPath := filepath.Join(workspaceRoot(), workspace)
+	repoPath := filepath.Join("/tmp/repos", workspace+".git")
+	workspaceReplacementMu.Lock()
+	defer workspaceReplacementMu.Unlock()
+	if err := os.RemoveAll(wsPath); err != nil {
+		return "", err
+	}
+	if err := os.RemoveAll(repoPath); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Cleaned workspace and bare repo: %s", workspace), nil
 }

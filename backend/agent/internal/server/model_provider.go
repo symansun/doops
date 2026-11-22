@@ -397,3 +397,11 @@ func credentialImportFormatMatchesType(format string, credentialType CredentialT
 		return false
 	}
 }
+
+// doagentSettingsFile is the only settings file doagent reads. It is a variable
+// solely so tests can point it at a fixture.
+var doagentSettingsFile = "/root/.agent/settings.json"
+
+func doagentSettingsPath() string {
+	return doagentSettingsFile
+}

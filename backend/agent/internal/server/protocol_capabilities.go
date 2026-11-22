@@ -1,5 +1,10 @@
 package server
 
+import (
+	"github.com/user/doops/agent/pkg/release"
+	"time"
+)
+
 const (
 	structuredSSHProtocol         = "structuredSSH"
 	structuredSSHSchema           = "doops.sh/structured-ssh/v1"
@@ -93,4 +98,59 @@ func capabilityMatches(value interface{}, expected map[string]interface{}) bool 
 		}
 	}
 	return true
+}
+
+const (
+	credentialPlanProtocolV2    = "doops.sh/credential-plan/v2"
+	credentialPlanDeclarationV3 = "doops.sh/v3"
+)
+
+func credentialPlanCapability() map[string]interface{} {
+	return map[string]interface{}{
+		"schemaVersion":            credentialPlanProtocolV2,
+		"declarationSchemaVersion": credentialPlanDeclarationV3,
+		"sourceRevision":           true,
+		"targetBinding":            true,
+		"sessionBinding":           true,
+		"buildDefinition":          true,
+	}
+}
+
+func credentialPlanCapabilityCompatible(value interface{}) bool {
+	return capabilityMatches(value, credentialPlanCapability())
+}
+
+func clientCapabilities(agent *GatewayAgent) map[string]interface{} {
+	return clientCapabilitiesFor(agent, defaultDetachedTaskTimeout)
+}
+
+func clientCapabilitiesFor(agent *GatewayAgent, detachedTimeout time.Duration) map[string]interface{} {
+	protocols := map[string]interface{}{}
+	if agent != nil && agent.StructuredSSH {
+		protocols[structuredSSHProtocol] = structuredSSHCapability()
+	}
+	if agent != nil && agent.ExecutionLifecycle {
+		protocols[executionLifecycleProtocol] = executionLifecycleCapability()
+	}
+	if agent != nil && agent.ToolDeadline {
+		protocols[toolDeadlineProtocol] = toolDeadlineCapability()
+	}
+	if agent != nil && agent.UpgradeAudit {
+		protocols[upgradeAuditProtocol] = upgradeAuditCapability()
+	}
+	capabilities := map[string]interface{}{
+		"tools": map[string]interface{}{},
+		// Gateway-owned protocols apply even when the selected Agent is offline.
+		"gatewayProtocols": map[string]interface{}{
+			cosSnapshotExecutableProtocol: cosSnapshotExecutableCapability(),
+			detachedBackgroundProtocol:    detachedBackgroundCapability(detachedTimeout),
+		},
+	}
+	if agent != nil && release.ValidCommit(agent.ReleaseCommit) {
+		capabilities["releaseCommit"] = agent.ReleaseCommit
+	}
+	if len(protocols) != 0 {
+		capabilities["protocols"] = protocols
+	}
+	return capabilities
 }

@@ -6,13 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/user/doops/agent/api"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/user/doops/agent/api"
 )
 
 const (
@@ -24,10 +23,6 @@ const (
 )
 
 var (
-	k8sReadOperations = []string{
-		"get", "describe", "logs", "top", "events", "rollout-status", "configmap-keys",
-		"helm-list", "helm-history", "helm-status", "helm-values",
-	}
 	helmMutationOperations = []string{
 		"upgrade-install", "rollback", "uninstall",
 	}

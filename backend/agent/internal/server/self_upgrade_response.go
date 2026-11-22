@@ -4,15 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/user/doops/agent/api"
+	"github.com/user/doops/agent/pkg/release"
 	"log"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/user/doops/agent/api"
-	"github.com/user/doops/agent/pkg/release"
 )
 
 var upgradeOperationPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
@@ -289,4 +288,39 @@ func (p upgradeProcess) readUpgradeReceipt(ctx context.Context, namespace, jobNa
 		}
 	}
 	return fields, nil
+}
+
+// The stable categories an upgrade preflight can report. They name why an
+// upgrade was refused, so an operator reads the reason instead of guessing
+// whether the Agent or the release is broken.
+const (
+	selfUpgradeCategoryRollbackBaselineUnavailable   = "rollback_baseline_image_unavailable"
+	selfUpgradeCategoryRollbackBaselineUnresolved    = "rollback_baseline_image_unresolved"
+	selfUpgradeCategoryRollbackBaselineProbeFailed   = "rollback_baseline_probe_failed"
+	selfUpgradeCategoryStaleVolumeMountsUnresolved   = "stale_volume_mounts_unresolved"
+	selfUpgradeCategoryRBACControllerIdentityChanged = "rbac_controller_identity_changed"
+)
+
+var selfUpgradeFailureCategories = []string{
+	selfUpgradeCategoryRollbackBaselineUnavailable,
+	selfUpgradeCategoryRollbackBaselineUnresolved,
+	selfUpgradeCategoryRollbackBaselineProbeFailed,
+	selfUpgradeCategoryStaleVolumeMountsUnresolved,
+	selfUpgradeCategoryRBACControllerIdentityChanged,
+}
+
+// selfUpgradeFailureCategory reports the stable category a failed upgrade Job
+// carried, or "" when the failure has no category. The category is part of the
+// Job log, so it survives the Job, the observation and the CLI report.
+func selfUpgradeFailureCategory(logs string) string {
+	matches := upgradeCategoryPattern.FindAllStringSubmatch(logs, -1)
+	if len(matches) > 0 {
+		return matches[len(matches)-1][1]
+	}
+	for _, category := range selfUpgradeFailureCategories {
+		if strings.Contains(logs, category) {
+			return category
+		}
+	}
+	return ""
 }

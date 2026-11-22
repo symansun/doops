@@ -156,3 +156,8 @@ func (s *GatewayStore) migrateGrantActions() error {
 	}
 	return tx.Commit()
 }
+
+type ScopeGrant struct {
+	Cluster  string
+	Instance string
+}

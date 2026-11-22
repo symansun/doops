@@ -1,8 +1,11 @@
 package server
 
 import (
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const auditLogRoot = "/root/.doops/audit"
@@ -28,4 +31,16 @@ func appendSessionAuditLogAt(root, sessionID, content string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+func writeSessionCommandAudit(sessionID, summary string, cmdErr error) {
+	if sessionID == "" {
+		return
+	}
+	entry := fmt.Sprintf("# [%s] exit=%d\n%s\n", time.Now().Format("2006-01-02 15:04:05"), commandExitCode(cmdErr), summary)
+	if logFile, err := appendSessionAuditLog(sessionID, entry); err == nil {
+		log.Printf("✅ Audit Log saved to %s", logFile)
+	} else {
+		log.Printf("❌ Failed to save Audit Log for session %s: %v", sessionID, err)
+	}
 }

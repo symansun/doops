@@ -51,3 +51,26 @@ func releaseCredentialMutationLocks(locks []*contextMutex) {
 		locks[index].Release()
 	}
 }
+
+type contextMutex struct {
+	ready chan struct{}
+}
+
+func newContextMutex() contextMutex {
+	ready := make(chan struct{}, 1)
+	ready <- struct{}{}
+	return contextMutex{ready: ready}
+}
+
+func (m *contextMutex) Acquire(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.ready:
+		return nil
+	}
+}
+
+func (m *contextMutex) Release() {
+	m.ready <- struct{}{}
+}

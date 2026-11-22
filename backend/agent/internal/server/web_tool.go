@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/user/doops/agent/api"
 	"io"
 	"os"
 	"os/exec"
@@ -13,18 +14,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/user/doops/agent/api"
 )
 
 const webMCPToolName = "web"
-
-var (
-	webReadOperations     = []string{"render", "check", "config-get", "domain-list", "site-list"}
-	webMutationOperations = []string{
-		"deploy", "rollback", "config-set", "snippet-set", "install-nginx", "domain-set",
-	}
-)
 
 func handleWebTool(ctx context.Context, raw json.RawMessage, push notificationSender) (string, error) {
 	var params api.WebParams
@@ -246,13 +238,4 @@ func resolveWebSession(session string) (string, error) {
 		return "", fmt.Errorf("DoWeb requires an existing session workspace: %s", session)
 	}
 	return path, nil
-}
-
-func containsWebString(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }

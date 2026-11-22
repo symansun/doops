@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -94,4 +95,34 @@ func (s *GatewayStore) PruneOfflineAgentStatus(now time.Time) (int64, error) {
 		deleted += n
 	}
 	return deleted, nil
+}
+
+// StartOfflineInstanceReaper removes offline instance records past the
+// retention window once immediately and then on interval. It is started by
+// the gateway process, not by tests that only construct a hub.
+func (h *GatewayHub) StartOfflineInstanceReaper(interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	go func() {
+		h.pruneOfflineInstances()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			h.pruneOfflineInstances()
+		}
+	}()
+	log.Printf("[gateway] offline instance cleanup started (active=%s, retention=%s, interval=%s)",
+		ActiveInstanceWindow, OfflineInstanceRetention, interval)
+}
+
+func (h *GatewayHub) pruneOfflineInstances() {
+	deleted, err := h.store.PruneOfflineAgentStatus(time.Now().UTC())
+	if err != nil {
+		log.Printf("[gateway] offline instance cleanup failed: %v", err)
+		return
+	}
+	if deleted > 0 {
+		log.Printf("[gateway] removed %d offline instance records older than %s", deleted, OfflineInstanceRetention)
+	}
 }

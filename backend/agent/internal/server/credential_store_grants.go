@@ -336,3 +336,79 @@ func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 	grant.RevokedAt = &now
 	return grant, nil
 }
+
+func (s *GatewayStore) ActiveCredentialGrants(credentialID string) ([]CredentialGrant, error) {
+	rows, err := s.db.Query(`SELECT id, credential_id, grantee_id, scope_json, state, created_by, created_at, revoked_at
+		FROM credential_grants WHERE credential_id = ? AND state = ? ORDER BY id`,
+		strings.TrimSpace(credentialID), CredentialStateActive)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var grants []CredentialGrant
+	seenTargets := make(map[string]struct{})
+	for rows.Next() {
+		grant, err := scanCredentialGrant(rows)
+		if err != nil {
+			return nil, err
+		}
+		targetKey := grant.Scope.Cluster + "\x00" + grant.Scope.Instance
+		if _, exists := seenTargets[targetKey]; exists {
+			continue
+		}
+		seenTargets[targetKey] = struct{}{}
+		grants = append(grants, grant)
+	}
+	return grants, rows.Err()
+}
+
+func (s *GatewayStore) CredentialGrantsForContext(credentialID string, scope CredentialGrantScope) ([]CredentialGrant, error) {
+	grants, err := s.ActiveCredentialGrants(credentialID)
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]CredentialGrant, 0, len(grants))
+	seenTargets := make(map[string]struct{})
+	for _, grant := range grants {
+		if credentialScopeEqual(grant.Scope, scope) {
+			targetKey := grant.Scope.Cluster + "\x00" + grant.Scope.Instance
+			if _, exists := seenTargets[targetKey]; exists {
+				continue
+			}
+			seenTargets[targetKey] = struct{}{}
+			matches = append(matches, grant)
+		}
+	}
+	if len(matches) == 0 {
+		return nil, ErrCredentialGrantDenied
+	}
+	return matches, nil
+}
+
+func (s *GatewayStore) CredentialGrants(credentialID string) ([]CredentialGrant, error) {
+	rows, err := s.db.Query(`SELECT id, credential_id, grantee_id, scope_json, state, created_by, created_at, revoked_at
+		FROM credential_grants WHERE credential_id = ? ORDER BY created_at DESC, id DESC`, strings.TrimSpace(credentialID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	grants := make([]CredentialGrant, 0)
+	for rows.Next() {
+		grant, err := scanCredentialGrant(rows)
+		if err != nil {
+			return nil, err
+		}
+		grants = append(grants, grant)
+	}
+	return grants, rows.Err()
+}
+
+func (s *GatewayStore) credentialGrantByID(credentialID, grantID string) (CredentialGrant, error) {
+	row := s.db.QueryRow(`SELECT id, credential_id, grantee_id, scope_json, state, created_by, created_at, revoked_at
+		FROM credential_grants WHERE credential_id = ? AND id = ?`, credentialID, grantID)
+	grant, err := scanCredentialGrant(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CredentialGrant{}, ErrCredentialGrantDenied
+	}
+	return grant, err
+}

@@ -313,3 +313,66 @@ func operationsConflict(left, right GatewayActiveOperation) bool {
 	return (leftWorkspace != "" && leftWorkspace == right.Session) ||
 		(rightWorkspace != "" && rightWorkspace == left.Session)
 }
+
+type GatewayActiveOperation struct {
+	ID                string        `json:"id"`
+	AuditID           int64         `json:"audit_id,omitempty"`
+	State             string        `json:"state"`
+	Resource          string        `json:"resource,omitempty"`
+	RequestedResource string        `json:"requested_resource,omitempty"`
+	EffectiveLock     string        `json:"effective_lock,omitempty"`
+	BlockedBy         []string      `json:"blocked_by,omitempty"`
+	UserID            string        `json:"user_id"`
+	TokenID           string        `json:"token_id,omitempty"`
+	Cluster           string        `json:"cluster"`
+	Instance          string        `json:"instance"`
+	Action            GatewayAction `json:"action"`
+	Session           string        `json:"session,omitempty"`
+	CommandSummary    string        `json:"command_summary,omitempty"`
+	Kind              string        `json:"kind"`
+	StartedAt         time.Time     `json:"started_at"`
+	AgeSeconds        int64         `json:"age_seconds"`
+}
+
+type gatewayActiveOperation struct {
+	GatewayActiveOperation
+	cancel context.CancelFunc
+	agent  *GatewayAgent
+	lease  *operationLease
+	finish *AuditFinish
+}
+
+// operationLease binds a resource release to the operation that acquired it.
+// The release is idempotent so normal completion and operation finalization
+// can safely converge on one terminal cleanup path.
+type operationLease struct {
+	once    sync.Once
+	release func()
+}
+
+func newOperationLease(release func()) *operationLease {
+	return &operationLease{release: release}
+}
+
+func (l *operationLease) Release() {
+	if l == nil || l.release == nil {
+		return
+	}
+	l.once.Do(l.release)
+}
+
+// targetReconnectGrace returns how long a forwarded RPC may wait for a target
+// that is reconnecting. Liveness probes stay immediate so `doops targets` and
+// `doops targets remove` keep reporting an exact "target offline" answer.
+func (h *ClientService) targetReconnectGrace(tool string) time.Duration {
+	switch tool {
+	case "doops_node_info", "doops_task_status":
+		// Liveness probes must report the current state.
+		return 0
+	case "doops_credential_materialize", "doops_credential_cleanup", "doops_credential_import":
+		// Credential delivery and cleanup bind to one target and must fail (or
+		// succeed) promptly instead of holding a request for the reconnect grace.
+		return 0
+	}
+	return h.opts.TargetReconnectGrace
+}
