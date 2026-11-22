@@ -62,8 +62,36 @@ export const DEMO_TARGETS: Target[] = [
 
 export const DEMO_AUDIT: AuditEvent[] = [
   {
+    id: 1046,
+    user_id: "admin",
+    cluster: "prod-cn",
+    instance: "web-01",
+    action: "monitor:run",
+    session: "monitor-sched_demo01",
+    command_summary: "定时全策略巡检 run_demo04（虚机 / SSH / K8s / 容器 / 站点 / 数据库）",
+    status: "success",
+    bytes_in: 1280,
+    bytes_out: 18420,
+    started_at: new Date(Date.now() - 180_000).toISOString(),
+    ended_at: new Date(Date.now() - 174_000).toISOString(),
+  },
+  {
+    id: 1045,
+    user_id: "ops-zhang",
+    cluster: "prod-cn",
+    instance: "web-02",
+    action: "asset_monitor:collect",
+    session: "console-aa11bb22",
+    command_summary: "隧道采集虚拟机与容器指标（mode=host, containers）",
+    status: "success",
+    bytes_in: 256,
+    bytes_out: 6420,
+    started_at: new Date(Date.now() - 420_000).toISOString(),
+    ended_at: new Date(Date.now() - 418_000).toISOString(),
+  },
+  {
     id: 1042,
-    user_id: "gaojiaqi",
+    user_id: "ops-zhang",
     cluster: "prod-cn",
     instance: "web-01",
     action: "exec",
@@ -77,7 +105,7 @@ export const DEMO_AUDIT: AuditEvent[] = [
   },
   {
     id: 1041,
-    user_id: "gaojiaqi",
+    user_id: "ops-zhang",
     cluster: "prod-cn",
     instance: "web-02",
     action: "ask",
@@ -932,8 +960,32 @@ interface DemoBackgroundTask {
 
 const demoBgTasks: DemoBackgroundTask[] = [
   {
+    audit_id: 1291, operation_id: "op-demo-1291", cluster: "prod-cn", instance: "web-01",
+    session: "console-a1b2c3d4", command_summary: "tar -czf /var/backups/nginx-access-20261122.tgz /var/log/nginx/access.log*",
+    status: "running", started_at: ago(1), task_id: "task-a18f",
+    output: "Task submitted.\nTaskID: task-a18f\nPID: 18421\nArchiving /var/log/nginx/access.log (312 MiB)...\n",
+  },
+  {
+    audit_id: 1288, operation_id: "op-demo-1288", cluster: "prod-cn", instance: "web-01",
+    session: "console-a1b2c3d4", command_summary: "certbot renew --dry-run --quiet && nginx -t",
+    status: "success", started_at: ago(95), finished_at: ago(94), task_id: "task-b71d",
+    output: "Task submitted.\nTaskID: task-b71d\nCongratulations, all simulated renewals succeeded.\nnginx: configuration file /etc/nginx/nginx.conf test is successful\nTask complete.\nExitCode: 0\n",
+  },
+  {
+    audit_id: 1286, operation_id: "op-demo-1286", cluster: "prod-cn", instance: "web-02",
+    session: "deploy-zz99", command_summary: "nerdctl -n k8s.io image pull harbor.edu.example/apps/edu-portal:2.4.1",
+    status: "running", started_at: ago(3), task_id: "task-c40e",
+    output: "Task submitted.\nTaskID: task-c40e\nPulling harbor.edu.example/apps/edu-portal:2.4.1...\nsha256:88a1c3... downloading 68%\n",
+  },
+  {
+    audit_id: 1285, operation_id: "op-demo-1285", cluster: "prod-cn", instance: "web-02",
+    session: "deploy-zz99", command_summary: "docker system prune --filter until=168h -f",
+    status: "success", started_at: ago(180), finished_at: ago(179), task_id: "task-d29b",
+    output: "Task submitted.\nTaskID: task-d29b\nTotal reclaimed space: 4.82GB\nTask complete.\nExitCode: 0\n",
+  },
+  {
     audit_id: 1284, operation_id: "op-demo-1284", cluster: "staging", instance: "db-01",
-    session: "console-demo", command_summary: "pg_dump demo_db -Fc -f /tmp/demo_db.dump",
+    session: "console-demo", command_summary: "pg_dump campus_core -Fc -f /tmp/campus_core.dump",
     status: "running", started_at: ago(2), task_id: "task-9f2c",
     output: "Task submitted.\nTaskID: task-9f2c\nPID: 4213\npg_dump: dumping table orders (41238 rows)\n",
   },
@@ -1209,13 +1261,16 @@ export async function demoPlatformMonitor(
       : [],
     detached_tasks: demoBgTasks
       .filter((t) => !cluster || t.cluster === cluster)
-      .map(({ output: _out, cancel_requested, ...rest }) => ({
-        ...rest,
-        user_id: "usr_ops01",
-        user_name: isAdmin ? "ops-zhang" : "演示用户",
-        is_own: !isAdmin,
-        cancel_requested: Boolean(cancel_requested),
-      })),
+      .map(({ output: _out, cancel_requested, ...rest }) => {
+        const own = rest.instance === "web-01" || !isAdmin
+        return {
+          ...rest,
+          user_id: own ? "usr_admin01" : "usr_ops01",
+          user_name: own ? (isAdmin ? "admin" : "演示用户") : "ops-zhang",
+          is_own: own,
+          cancel_requested: Boolean(cancel_requested),
+        }
+      }),
     recent_issues: [
       ...(!cluster || cluster === "staging"
         ? [{
@@ -1240,11 +1295,14 @@ export async function demoPlatformMonitor(
   }
 }
 
-const demoMonitorRules = new Map<string, { threshold: number; duration_seconds: number }>()
-const demoCollectedNamespaces = new Set<string>(["apps"])
+const demoMonitorRules = new Map<string, { threshold: number; duration_seconds: number }>([
+  ["web-02/vm-web-02/agent_host/memory/", { threshold: 24 * 1073741824, duration_seconds: 300 }],
+  ["db-01/vm-db-01/agent_host/disk_write_latency_ms/vda", { threshold: 15, duration_seconds: 180 }],
+])
+const demoCollectedNamespaces = new Set<string>(["apps", "auth"])
 
 export async function demoAssetMonitorRead(url: string): Promise<unknown> {
-  await sleep(80)
+  await sleep(70)
   const parsed = new URL(url, "http://console.local")
   const q = parsed.searchParams
   const instance = q.get("instance") || "web-01"
@@ -1255,13 +1313,19 @@ export async function demoAssetMonitorRead(url: string): Promise<unknown> {
 
   const allAssets = [
     { type: "machine", asset_id: `vm-${instance}`, namespace: "", origin: "agent_host" },
+    ...(instance === "web-02"
+      ? [{ type: "machine", asset_id: "phy-gpu-01", namespace: "", origin: "agent_host" }]
+      : []),
     { type: "kernel", asset_id: `vm-${instance}`, namespace: "", origin: "agent_host" },
+    { type: "process", asset_id: "nginx", namespace: "", origin: "exporter" },
+    { type: "process", asset_id: "doops-app", namespace: "", origin: "exporter" },
     { type: "container", asset_id: "doops-app", namespace: "", origin: "container_stats" },
     { type: "container", asset_id: "nginx-gateway", namespace: "", origin: "container_stats" },
     { type: "container", asset_id: "redis-cache", namespace: "", origin: "container_stats" },
-    { type: "app", asset_id: "portal.example.test", namespace: "", origin: "app_probe" },
+    { type: "app", asset_id: "portal.edu.example", namespace: "", origin: "app_probe" },
     { type: "app", asset_id: "nginx", namespace: "", origin: "app_probe" },
-    ...[...demoCollectedNamespaces].map((ns) => ({ type: "app", asset_id: `${ns}-api-7c9d8f`, namespace: ns, origin: "k8s_top" })),
+    { type: "database", asset_id: "pg-main-01", namespace: "", origin: "exporter" },
+    ...[...demoCollectedNamespaces].map((ns) => ({ type: "app", asset_id: `${ns}-edu-portal-7c9d8f`, namespace: ns, origin: "k8s_top" })),
   ]
 
   if (!assetId) {
@@ -1276,66 +1340,104 @@ export async function demoAssetMonitorRead(url: string): Promise<unknown> {
   const from_ms = now - span
   const mkSeries = (metric: string, unit: string, base: number, device_id?: string, constant = false) => {
     const key = `${instance}/${assetId}/${origin}/${metric}/${device_id || ""}`
+    const rule = demoMonitorRules.get(key) || null
     const points = Array.from({ length: 24 }, (_, idx) => {
       const at_ms = Math.round(from_ms + (span * (idx + 1)) / 24)
-      const factor = constant ? 1 : 0.78 + 0.28 * Math.sin(idx * 0.55 + metric.length)
+      const factor = constant ? 1 : 0.8 + 0.24 * Math.sin(idx * 0.55 + metric.length)
       return { at_ms, status: "ok", value: Number((base * factor).toPrecision(5)) }
     })
+    const latest = points[points.length - 1]
+    const alerts = rule && latest.value > rule.threshold
+      ? [{ opened_ms: now - 420_000, ended_ms: null, state: "open", threshold: rule.threshold, duration_seconds: rule.duration_seconds }]
+      : []
     return {
       ...(device_id ? { device_id } : {}),
       metric,
       unit,
-      latest: points[points.length - 1],
+      latest,
       stale: false,
       points,
-      rule: demoMonitorRules.get(key) || null,
-      alerts: [],
+      rule,
+      alerts,
     }
   }
 
   let series: unknown[] = []
   if (q.get("type") === "container") {
-    const scale = assetId === "doops-app" ? 1 : assetId === "nginx-gateway" ? 0.35 : 0.2
-    const limit = assetId === "doops-app" ? 1073741824 : 536870912
+    const scale = assetId === "doops-app" ? 1 : assetId === "nginx-gateway" ? 0.38 : 0.22
+    const limit = assetId === "doops-app" ? 2 * 1073741824 : 536870912
     series = [
-      mkSeries("cpu", "cores", 0.68 * scale),
-      mkSeries("memory", "bytes", 380 * 1048576 * scale),
+      mkSeries("cpu", "cores", 0.74 * scale),
+      mkSeries("memory", "bytes", 620 * 1048576 * scale),
       mkSeries("memory_limit", "bytes", limit, undefined, true),
     ]
   } else if (q.get("type") === "kernel") {
     series = [
-      mkSeries("cpu", "cores", 0.24),
-      mkSeries("memory", "bytes", 412 * 1048576),
+      mkSeries("cpu", "cores", 0.28),
+      mkSeries("memory", "bytes", 518 * 1048576),
+    ]
+  } else if (q.get("type") === "process") {
+    series = [
+      mkSeries("cpu", "cores", assetId === "doops-app" ? 0.52 : 0.19),
+      mkSeries("memory", "bytes", (assetId === "doops-app" ? 840 : 218) * 1048576),
+    ]
+  } else if (q.get("type") === "database") {
+    series = [
+      mkSeries("response_time_ms", "ms", 4.2),
+      mkSeries("active_connections", "connections", 64),
+      mkSeries("requests", "req/s", 312),
     ]
   } else if (origin === "app_probe") {
     series = assetId === "nginx"
       ? [
-          mkSeries("active_connections", "connections", 42),
-          mkSeries("requests", "req/s", 118),
+          mkSeries("active_connections", "connections", 128),
+          mkSeries("requests", "req/s", 186),
         ]
       : [
-          mkSeries("response_time_ms", "ms", 28.4),
-          mkSeries("error_rate", "%", 0, undefined, true),
+          mkSeries("response_time_ms", "ms", 42.6),
+          mkSeries("error_rate", "%", 0.18),
         ]
   } else if (origin === "k8s_top") {
     series = [
-      mkSeries("cpu", "cores", 0.42),
-      mkSeries("memory", "bytes", 256 * 1048576),
+      mkSeries("cpu", "cores", 0.46),
+      mkSeries("memory", "bytes", 384 * 1048576),
+    ]
+  } else if (assetId === "phy-gpu-01") {
+    series = [
+      mkSeries("cpu", "cores", 37.4),
+      mkSeries("memory", "bytes", 342 * 1073741824),
+      mkSeries("gpu", "%", 74.2, "GPU-a1b2c3d4-1111-2222-3333-444455556666"),
+      mkSeries("gpu", "%", 61.5, "GPU-e5f6a7b8-7777-8888-9999-aaaabbbbcccc"),
+      mkSeries("network", "bytes/s", 48_600_000, "ens3f0"),
+      mkSeries("storage_total", "bytes", 8000 * 1073741824, "/data/models", true),
+      mkSeries("storage", "bytes", 4920 * 1073741824, "/data/models"),
+      mkSeries("storage_available", "bytes", 3080 * 1073741824, "/data/models"),
+      mkSeries("disk_read_iops", "ops/s", 1420, "nvme0n1"),
+      mkSeries("disk_write_iops", "ops/s", 680, "nvme0n1"),
+      mkSeries("disk_read_bytes_per_second", "bytes/s", 215_000_000, "nvme0n1"),
+      mkSeries("disk_write_bytes_per_second", "bytes/s", 94_000_000, "nvme0n1"),
+      mkSeries("disk_read_latency_ms", "ms", 0.4, "nvme0n1"),
+      mkSeries("disk_write_latency_ms", "ms", 0.7, "nvme0n1"),
     ]
   } else {
+    const isWeb02 = instance === "web-02"
+    const isDb01 = instance === "db-01"
     series = [
-      mkSeries("cpu", "cores", 1.85),
-      mkSeries("memory", "bytes", 5.4 * 1073741824),
-      mkSeries("network", "bytes/s", 1_850_000, "eth0"),
-      mkSeries("storage_total", "bytes", 80 * 1073741824, "/", true),
-      mkSeries("storage", "bytes", 31 * 1073741824, "/"),
-      mkSeries("storage_available", "bytes", 49 * 1073741824, "/"),
-      mkSeries("disk_read_iops", "ops/s", 145, "vda"),
-      mkSeries("disk_write_iops", "ops/s", 92, "vda"),
-      mkSeries("disk_read_bytes_per_second", "bytes/s", 3_200_000, "vda"),
-      mkSeries("disk_write_bytes_per_second", "bytes/s", 1_900_000, "vda"),
-      mkSeries("disk_read_latency_ms", "ms", 2.1, "vda"),
-      mkSeries("disk_write_latency_ms", "ms", 3.4, "vda"),
+      mkSeries("cpu", "cores", isWeb02 ? 7.8 : isDb01 ? 5.2 : 1.85),
+      mkSeries("memory", "bytes", (isWeb02 ? 26.8 : isDb01 ? 41.2 : 5.4) * 1073741824),
+      mkSeries("network", "bytes/s", isWeb02 ? 6_420_000 : 1_850_000, "eth0"),
+      mkSeries("storage_total", "bytes", (isDb01 ? 1000 : 100) * 1073741824, "/", true),
+      mkSeries("storage", "bytes", (isDb01 ? 618 : 38.8) * 1073741824, "/"),
+      mkSeries("storage_available", "bytes", (isDb01 ? 382 : 61.2) * 1073741824, "/"),
+      mkSeries("storage_total", "bytes", 80 * 1073741824, "/var/log", true),
+      mkSeries("storage", "bytes", 24 * 1073741824, "/var/log"),
+      mkSeries("storage_available", "bytes", 56 * 1073741824, "/var/log"),
+      mkSeries("disk_read_iops", "ops/s", isDb01 ? 820 : 145, "vda"),
+      mkSeries("disk_write_iops", "ops/s", isDb01 ? 640 : 92, "vda"),
+      mkSeries("disk_read_bytes_per_second", "bytes/s", isDb01 ? 28_400_000 : 3_200_000, "vda"),
+      mkSeries("disk_write_bytes_per_second", "bytes/s", isDb01 ? 19_200_000 : 1_900_000, "vda"),
+      mkSeries("disk_read_latency_ms", "ms", isDb01 ? 6.4 : 2.1, "vda"),
+      mkSeries("disk_write_latency_ms", "ms", isDb01 ? 18.6 : 3.4, "vda"),
     ]
   }
   return { from_ms, to_ms: now, max_gap_ms: 300_000, series }
@@ -1369,13 +1471,17 @@ export async function demoAssetMonitorWrite(body: Record<string, unknown>): Prom
 
 const demoMonitorSchedulesStore: Array<Record<string, unknown>> = []
 const demoMonitorRunsStore: Array<Record<string, unknown>> = []
+const demoMonitorRunItemsMap = new Map<string, Array<Record<string, unknown>>>()
 
 export async function demoMonitorEngineRequest(path: string, body?: Record<string, unknown>): Promise<unknown> {
-  await sleep(80)
+  await sleep(70)
   const now = Date.now()
   const parsed = new URL(`http://console.local/${path.replace(/^\/+/, "")}`)
   const route = parsed.pathname.replace(/^\/+/, "")
   const clusterFilter = parsed.searchParams.get("cluster") || ""
+  const kindFilter = parsed.searchParams.get("kind") || ""
+  const tagFilter = parsed.searchParams.get("tag") || ""
+  const statusFilter = parsed.searchParams.get("status") || ""
 
   const strategies = [
     { id: "vm_host", name: "虚机 / 物理机本机策略", description: "直采 CPU、内存、磁盘 I/O、网络、GPU 及 M1–M5 巡检。", asset_kinds: ["vm", "physical"], collector_method: "agent_local", checks: ["M1", "M2", "M3", "M4", "M5"] },
@@ -1385,83 +1491,316 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
     { id: "app_service", name: "应用 / Web / API 策略", description: "采集 Nginx 并发、请求速率、响应时间及 HTTPS 安全头。", asset_kinds: ["app"], collector_method: "http_probe", checks: ["A1可用性", "响应时间", "A4安全头"] },
     { id: "database_service", name: "数据库策略", description: "探测已登记数据库连通性与延迟。", asset_kinds: ["database"], collector_method: "tcp_probe", checks: ["A2连通性", "建连延迟"] },
   ]
+
   const allResources = [
     {
       id: 1, cluster: "prod-cn", instance: "web-01", asset_id: "vm-web-01", asset_name: "教务门户节点 01", asset_kind: "vm",
-      strategy: "vm_host", collector_method: "agent_local", collected_at_ms: now - 30_000, run_id: "run_demo01", status: "ok",
+      strategy: "vm_host", collector_method: "agent_local", collected_at_ms: now - 25_000, run_id: "run_demo04", status: "ok",
       online: true, stale: false, cpu_cores: 1.85, cpu_total_cores: 8, cpu_percent: 23.1,
       memory_used_bytes: 5.4 * 1073741824, memory_total_bytes: 16 * 1073741824, memory_percent: 33.8,
-      disk_used_bytes: 31 * 1073741824, disk_total_bytes: 80 * 1073741824, disk_percent: 38.8,
+      disk_used_bytes: 62.8 * 1073741824, disk_total_bytes: 180 * 1073741824, disk_percent: 38.8,
       net_bytes_per_sec: 1_850_000, disk_iops: 237, disk_latency_ms: 2.8, uptime_seconds: 864000, load_1m: 0.82,
-      os_info: "Ubuntu 24.04 LTS", kernel_info: "Linux 6.8.0", tags: ["env=prod", "role=web"],
+      os_info: "Ubuntu 24.04 LTS", kernel_info: "Linux 6.8.0-49-generic", tags: ["env=prod", "dept=edu", "role=web"],
       details: {
-        mounts: [{ mount: "/", total_bytes: 80 * 1073741824, used_bytes: 31 * 1073741824, avail_bytes: 49 * 1073741824, used_pct: 38.8 }],
-        disks: [{ device_id: "vda", read_iops: 145, write_iops: 92, read_bytes_per_sec: 3_200_000, write_bytes_per_sec: 1_900_000, read_latency_ms: 2.1, write_latency_ms: 3.4 }],
+        mounts: [
+          { mount: "/", total_bytes: 100 * 1073741824, used_bytes: 38.8 * 1073741824, avail_bytes: 61.2 * 1073741824, used_pct: 38.8 },
+          { mount: "/var/log", total_bytes: 80 * 1073741824, used_bytes: 24 * 1073741824, avail_bytes: 56 * 1073741824, used_pct: 30.0 },
+        ],
+        disks: [
+          { device_id: "vda", read_iops: 145, write_iops: 92, read_bytes_per_sec: 3_200_000, write_bytes_per_sec: 1_900_000, read_latency_ms: 2.1, write_latency_ms: 3.4 },
+        ],
         networks: [{ device_id: "eth0", bytes_per_sec: 1_850_000 }],
       },
     },
     {
-      id: 2, cluster: "prod-cn", instance: "web-02", asset_id: "k8s-prod-cn", asset_name: "核心业务 K8s 集群", asset_kind: "k8s",
-      strategy: "k8s_cluster", collector_method: "k8s_api", collected_at_ms: now - 30_000, run_id: "run_demo01", status: "warning",
-      online: true, stale: false, cpu_cores: 14.4, cpu_total_cores: 32, cpu_percent: 45.0,
-      memory_used_bytes: 52.8 * 1073741824, memory_total_bytes: 64 * 1073741824, memory_percent: 82.5,
-      os_info: "K8s v1.30.2", tags: ["env=prod", "tier=core"],
+      id: 2, cluster: "prod-cn", instance: "web-02", asset_id: "phy-gpu-01", asset_name: "科研算力 GPU 物理机 G01", asset_kind: "physical",
+      strategy: "vm_host", collector_method: "agent_local", collected_at_ms: now - 30_000, run_id: "run_demo04", status: "ok",
+      online: true, stale: false, cpu_cores: 37.4, cpu_total_cores: 64, cpu_percent: 58.4,
+      memory_used_bytes: 342 * 1073741824, memory_total_bytes: 512 * 1073741824, memory_percent: 66.8,
+      disk_used_bytes: 4920 * 1073741824, disk_total_bytes: 8000 * 1073741824, disk_percent: 61.5,
+      net_bytes_per_sec: 48_600_000, disk_iops: 2100, disk_latency_ms: 0.7, gpu_percent: 74.2, uptime_seconds: 2_592_000, load_1m: 14.6,
+      os_info: "Ubuntu 24.04 LTS", kernel_info: "Linux 6.8.0-49-generic", tags: ["env=prod", "rack=G01", "gpu=a100", "dept=research"],
       details: {
-        nodes: [{ name: "node-1", ready: true, pressures: [] }, { name: "node-2", ready: true, pressures: ["MemoryPressure"] }],
-        abnormal_pods: [{ namespace: "apps", name: "report-worker-7b8d", phase: "Running", reason: "HighRestarts", restarts: 6 }],
+        mounts: [
+          { mount: "/", total_bytes: 500 * 1073741824, used_bytes: 165 * 1073741824, avail_bytes: 335 * 1073741824, used_pct: 33.0 },
+          { mount: "/data/models", total_bytes: 7500 * 1073741824, used_bytes: 4755 * 1073741824, avail_bytes: 2745 * 1073741824, used_pct: 63.4 },
+        ],
+        disks: [
+          { device_id: "nvme0n1", read_iops: 1420, write_iops: 680, read_bytes_per_sec: 215_000_000, write_bytes_per_sec: 94_000_000, read_latency_ms: 0.4, write_latency_ms: 0.7 },
+        ],
+        networks: [
+          { device_id: "ens3f0", bytes_per_sec: 48_600_000 },
+          { device_id: "ib0", bytes_per_sec: 128_000_000 },
+        ],
+        gpus: [
+          { uuid: "GPU-a1b2c3d4-1111-2222-3333-444455556666", name: "NVIDIA A100-SXM4-80GB #0", util_percent: 74.2, mem_used_mib: 58420, mem_total_mib: 81920, temp_c: 67 },
+          { uuid: "GPU-e5f6a7b8-7777-8888-9999-aaaabbbbcccc", name: "NVIDIA A100-SXM4-80GB #1", util_percent: 61.5, mem_used_mib: 49152, mem_total_mib: 81920, temp_c: 63 },
+        ],
       },
     },
     {
-      id: 3, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-legacy-01", asset_name: "教务老旧宿主机 (SSH)", asset_kind: "vm",
-      strategy: "ssh_host", collector_method: "ssh", collected_at_ms: now - 45_000, run_id: "run_demo01", status: "ok",
+      id: 3, cluster: "prod-cn", instance: "web-02", asset_id: "k8s-prod-cn", asset_name: "核心业务生产集群 (K8s)", asset_kind: "k8s",
+      strategy: "k8s_cluster", collector_method: "k8s_api", collected_at_ms: now - 30_000, run_id: "run_demo04", status: "warning",
+      online: true, stale: false, cpu_cores: 18.4, cpu_total_cores: 32, cpu_percent: 57.5,
+      memory_used_bytes: 53.6 * 1073741824, memory_total_bytes: 64 * 1073741824, memory_percent: 83.8,
+      os_info: "K8s v1.30.2", tags: ["env=prod", "tier=core"],
+      details: {
+        nodes: [
+          { name: "node-web-01", ready: true, pressures: [] },
+          { name: "node-web-02", ready: true, pressures: ["MemoryPressure"] },
+          { name: "node-gpu-01", ready: true, pressures: [] },
+        ],
+        abnormal_pods: [
+          { namespace: "apps", name: "report-worker-7b8d", phase: "Running", reason: "HighRestarts", restarts: 6 },
+        ],
+      },
+    },
+    {
+      id: 4, cluster: "prod-cn", instance: "web-02", asset_id: "docker-web-02", asset_name: "核心节点容器运行时 (Docker)", asset_kind: "container",
+      strategy: "container_runtime", collector_method: "agent_local", collected_at_ms: now - 28_000, run_id: "run_demo04", status: "ok",
+      online: true, stale: false, cpu_cores: 1.18, cpu_total_cores: 16, cpu_percent: 7.4,
+      memory_used_bytes: 1.02 * 1073741824, memory_total_bytes: 3 * 1073741824, memory_percent: 34.0,
+      os_info: "Docker 27.3.1", tags: ["env=prod", "runtime=docker"],
+      details: {
+        containers: [
+          { name: "doops-app", cpu_cores: 0.74, memory_bytes: 620 * 1048576, memory_limit_bytes: 2 * 1073741824 },
+          { name: "nginx-gateway", cpu_cores: 0.28, memory_bytes: 235 * 1048576, memory_limit_bytes: 512 * 1048576 },
+          { name: "redis-cache", cpu_cores: 0.16, memory_bytes: 186 * 1048576, memory_limit_bytes: 512 * 1048576 },
+        ],
+      },
+    },
+    {
+      id: 5, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-legacy-01", asset_name: "教务老旧业务机 (SSH)", asset_kind: "vm",
+      strategy: "ssh_host", collector_method: "ssh", collected_at_ms: now - 45_000, run_id: "run_demo04", status: "ok",
       online: true, stale: false, cpu_cores: 1.1, cpu_total_cores: 4, cpu_percent: 27.5,
       memory_used_bytes: 4.9 * 1073741824, memory_total_bytes: 8 * 1073741824, memory_percent: 61.3,
       disk_used_bytes: 68 * 1073741824, disk_total_bytes: 100 * 1073741824, disk_percent: 68.0,
-      uptime_seconds: 1_920_000, load_1m: 1.05, os_info: "Rocky Linux 9.4", tags: ["via=ssh", "dept=edu"],
+      uptime_seconds: 1_920_000, load_1m: 1.05, os_info: "Rocky Linux 9.4", tags: ["env=prod", "via=ssh", "dept=edu"],
       details: { mounts: [{ mount: "/", total_bytes: 100 * 1073741824, used_bytes: 68 * 1073741824, avail_bytes: 32 * 1073741824, used_pct: 68.0 }] },
     },
     {
-      id: 4, cluster: "staging", instance: "db-01", asset_id: "pg-main-01", asset_name: "PostgreSQL 主库 (TCP)", asset_kind: "database",
-      strategy: "database_service", collector_method: "tcp_probe", collected_at_ms: now - 30_000, run_id: "run_demo01", status: "ok",
-      online: true, stale: false, response_time_ms: 4.2, error_rate: 0, tags: ["env=staging", "db=postgres"],
+      id: 6, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-archive-02", asset_name: "财务归档服务器 (SSH)", asset_kind: "vm",
+      strategy: "ssh_host", collector_method: "ssh", collected_at_ms: now - 50_000, run_id: "run_demo04", status: "warning",
+      online: true, stale: false, cpu_cores: 2.2, cpu_total_cores: 8, cpu_percent: 27.5,
+      memory_used_bytes: 10.6 * 1073741824, memory_total_bytes: 16 * 1073741824, memory_percent: 66.3,
+      disk_used_bytes: 438 * 1073741824, disk_total_bytes: 500 * 1073741824, disk_percent: 87.6,
+      uptime_seconds: 4_120_000, load_1m: 1.42, os_info: "CentOS Stream 9", tags: ["env=prod", "via=ssh", "dept=finance"],
+      details: { mounts: [{ mount: "/", total_bytes: 500 * 1073741824, used_bytes: 438 * 1073741824, avail_bytes: 62 * 1073741824, used_pct: 87.6 }] },
+    },
+    {
+      id: 7, cluster: "prod-cn", instance: "web-01", asset_id: "portal.edu.example", asset_name: "教务门户站点 (HTTPS)", asset_kind: "app",
+      strategy: "app_service", collector_method: "http_probe", collected_at_ms: now - 25_000, run_id: "run_demo04", status: "ok",
+      online: true, stale: false, response_time_ms: 42.6, error_rate: 0.2, active_connections: 128, requests_per_sec: 186.4,
+      tags: ["env=prod", "dept=edu", "proto=https"],
+      details: {},
+    },
+    {
+      id: 8, cluster: "staging", instance: "db-01", asset_id: "pg-main-01", asset_name: "PostgreSQL 核心主库 (TCP)", asset_kind: "database",
+      strategy: "database_service", collector_method: "tcp_probe", collected_at_ms: now - 30_000, run_id: "run_demo04", status: "ok",
+      online: true, stale: false, response_time_ms: 4.2, error_rate: 0, active_connections: 64, requests_per_sec: 312,
+      tags: ["env=staging", "dept=finance", "db=postgres"],
       details: {},
     },
   ]
-  const sampleResources = clusterFilter
-    ? allResources.filter((r) => r.cluster === clusterFilter)
-    : allResources
+
+  const sampleResources = allResources.filter((r) => {
+    if (clusterFilter && r.cluster !== clusterFilter) return false
+    if (kindFilter && r.asset_kind !== kindFilter) return false
+    if (tagFilter && !r.tags.includes(tagFilter)) return false
+    return true
+  })
 
   const allAlerts = [
     {
       cluster: "prod-cn", instance: "web-02", type: "machine", asset_id: "vm-web-02",
       origin: "agent_host", metric: "memory",
-      threshold: 12 * 1073741824, duration_seconds: 300, opened_ms: now - 420_000,
+      threshold: 24 * 1073741824, duration_seconds: 300, opened_ms: now - 420_000,
+    },
+    {
+      cluster: "staging", instance: "db-01", type: "machine", asset_id: "vm-db-01",
+      origin: "agent_host", metric: "disk_write_latency_ms", device_id: "vda",
+      threshold: 15, duration_seconds: 180, opened_ms: now - 260_000,
     },
   ]
   const thresholdAlerts = clusterFilter
     ? allAlerts.filter((a) => a.cluster === clusterFilter)
     : allAlerts
 
-  const baseSchedule = {
-    id: "sched_demo01", name: "全校 5 分钟自动巡检", description: "覆盖本机虚机、SSH 远程主机、K8s、容器与数据库连通性探测",
-    enabled: true, scope_mode: "all_online", targets: [], tags: [],
-    strategies: ["vm_host", "ssh_host", "k8s_cluster", "container_runtime", "app_service", "database_service"],
-    thresholds: { cpu_warn_percent: 80, cpu_crit_percent: 90, mem_warn_percent: 80, mem_crit_percent: 90, disk_warn_percent: 85, disk_crit_percent: 95 },
-    interval_seconds: 300, next_run_at_ms: now + 270_000, last_run_at_ms: now - 30_000, last_run_id: "run_demo01", last_status: "warning",
-    created_by: "admin", created_at: new Date(now - 86400_000).toISOString(), updated_at: new Date(now - 30_000).toISOString(),
-  }
-  if (demoMonitorSchedulesStore.length === 0) {
-    demoMonitorSchedulesStore.push(baseSchedule)
+  const defaultThresholds = {
+    cpu_warn_percent: 80, cpu_crit_percent: 90,
+    mem_warn_percent: 80, mem_crit_percent: 90,
+    disk_warn_percent: 85, disk_crit_percent: 95,
+    disk_latency_warn_ms: 50, latency_warn_ms: 1000,
+    error_rate_warn_pct: 5, cert_warn_days: 14, min_uptime_seconds: 300,
   }
 
-  const baseRun = {
-    id: "run_demo01", schedule_id: "sched_demo01", schedule_name: "全校 5 分钟自动巡检", trigger_kind: "scheduled",
-    triggered_by: "system", status: "warning", total_targets: 3, total_assets: 4, passed_checks: 11, warning_checks: 1,
-    failed_checks: 0, skipped_checks: 0, offline_targets: 0, metrics_written: 42,
-    started_at_ms: now - 35_000, finished_at_ms: now - 30_000, duration_ms: 5000, summary: "4 项资产巡检完成：通过 11 项，告警 1 项（K8s node-2 内存压力）",
+  const seedSchedules = [
+    {
+      id: "sched_demo01", name: "全校核心基础设施 5 分钟自动巡检",
+      description: "覆盖虚机/GPU物理机、SSH 远程主机、K8s、容器、站点与数据库全策略巡检",
+      enabled: true, scope_mode: "all_online", targets: [], tags: [],
+      strategies: ["vm_host", "ssh_host", "k8s_cluster", "container_runtime", "app_service", "database_service"],
+      thresholds: defaultThresholds,
+      interval_seconds: 300, next_run_at_ms: now + 240_000, last_run_at_ms: now - 60_000, last_run_id: "run_demo04", last_status: "warning",
+      created_by: "admin", created_at: new Date(now - 7 * 86400_000).toISOString(), updated_at: new Date(now - 60_000).toISOString(),
+    },
+    {
+      id: "sched_demo02", name: "重点门户站点与数据库 15 分钟拨测",
+      description: "专注 HTTPS 可用性、证书剩余天数、Nginx 并发与 PostgreSQL 建连延迟",
+      enabled: true, scope_mode: "targets", targets: [{ cluster: "prod-cn", instance: "web-01" }, { cluster: "staging", instance: "db-01" }], tags: [],
+      strategies: ["app_service", "database_service"],
+      thresholds: { ...defaultThresholds, latency_warn_ms: 300, cert_warn_days: 30 },
+      interval_seconds: 900, next_run_at_ms: now + 540_000, last_run_at_ms: now - 360_000, last_run_id: "run_demo02", last_status: "pass",
+      created_by: "admin", created_at: new Date(now - 5 * 86400_000).toISOString(), updated_at: new Date(now - 360_000).toISOString(),
+    },
+    {
+      id: "sched_demo03", name: "GPU 算力节点每小时深度合规巡检",
+      description: "针对带 gpu=a100 标签的高密度算力物理机核查 GPU 温度、显存与 M4/M5 安全基线",
+      enabled: false, scope_mode: "tags", targets: [], tags: ["gpu=a100"],
+      strategies: ["vm_host", "container_runtime"],
+      thresholds: defaultThresholds,
+      interval_seconds: 3600, next_run_at_ms: 0, last_run_at_ms: now - 4 * 3600_000, last_run_id: "run_demo01", last_status: "critical",
+      created_by: "admin", created_at: new Date(now - 3 * 86400_000).toISOString(), updated_at: new Date(now - 2 * 3600_000).toISOString(),
+    },
+  ]
+
+  const buildStandardItems = (runId: string, baseMs: number, includeOffline = false, includeCriticalK8s = false): Array<Record<string, unknown>> => [
+    {
+      id: 1, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "vm-web-01", asset_name: "教务门户节点 01", asset_kind: "vm",
+      strategy: "vm_host", collector_method: "agent_local", status: "pass", started_at_ms: baseMs, finished_at_ms: baseMs + 420, duration_ms: 420,
+      metrics: { cpu_percent: 23.1, memory_percent: 33.8, disk_percent: 38.8, memory_used_bytes: 5.4 * 1073741824, os_info: "Ubuntu 24.04 LTS" },
+      checks: [
+        { id: "host.uptime", name: "运行与重启 (M1)", category: "availability", status: "pass", value: "864000s", threshold: ">=300s", detail: "运行稳定，近 10 天无异常重启" },
+        { id: "host.cpu_memory", name: "CPU 与内存水位 (M2)", category: "resource", status: "pass", value: "CPU 23.1% / 内存 33.8%", threshold: "<80%", detail: "水位正常" },
+        { id: "host.disk_capacity", name: "磁盘存储容量", category: "resource", status: "pass", value: "/ 38.8%", threshold: "<85%", detail: "检查 2 个挂载点，最高占用 38.8%" },
+        { id: "host.disk_io", name: "磁盘 I/O 与延迟", category: "resource", status: "pass", value: "237 ops/s · 3.4ms", threshold: "<50ms", detail: "vda 读写延迟正常" },
+        { id: "host.processes", name: "进程与可疑进程 (M3)", category: "security", status: "pass", value: "142 进程 / 0 僵尸", threshold: "无黑名单进程", detail: "正常" },
+        { id: "host.sysctl_compliance", name: "内核配置合规 (M4)", category: "compliance", status: "pass", value: "4/4 合规", threshold: "全部基线符合", detail: "全部满足加固基线" },
+        { id: "host.auth_security", name: "登录与权限基线 (M5)", category: "security", status: "pass", value: "0 异常失败登录", threshold: "账户基线可核验", detail: "指纹一致" },
+      ],
+      evidence: { mounts: [{ mount: "/", used_pct: 38.8 }, { mount: "/var/log", used_pct: 30.0 }], load_1m: 0.82 },
+    },
+    {
+      id: 2, run_id: runId, cluster: "prod-cn", instance: "web-02", asset_id: "phy-gpu-01", asset_name: "科研算力 GPU 物理机 G01", asset_kind: "physical",
+      strategy: "vm_host", collector_method: "agent_local", status: "pass", started_at_ms: baseMs + 100, finished_at_ms: baseMs + 680, duration_ms: 580,
+      metrics: { cpu_percent: 58.4, memory_percent: 66.8, disk_percent: 63.4, gpu_percent: 74.2, os_info: "Ubuntu 24.04 LTS" },
+      checks: [
+        { id: "host.cpu_memory", name: "CPU 与内存水位 (M2)", category: "resource", status: "pass", value: "CPU 58.4% / 内存 66.8%", threshold: "<80%", detail: "算力负载健康" },
+        { id: "host.gpu", name: "NVIDIA GPU 状态", category: "resource", status: "pass", value: "2 卡在线 · 峰值 74.2% / 67°C", threshold: "<95% / <85°C", detail: "A100 #0 74.2%，A100 #1 61.5%" },
+        { id: "host.disk_io", name: "NVMe 磁盘 I/O", category: "resource", status: "pass", value: "2100 ops/s · 0.7ms", threshold: "<50ms", detail: "nvme0n1 读写吞吐正常" },
+      ],
+      evidence: { gpu_count: 2, max_temp_c: 67, nvme_iops: 2100 },
+    },
+    {
+      id: 3, run_id: runId, cluster: "prod-cn", instance: "web-02", asset_id: "k8s-prod-cn", asset_name: "核心业务生产集群 (K8s)", asset_kind: "k8s",
+      strategy: "k8s_cluster", collector_method: "k8s_api", status: includeCriticalK8s ? "critical" : "warning", started_at_ms: baseMs + 200, finished_at_ms: baseMs + 1050, duration_ms: 850,
+      metrics: { cpu_percent: 57.5, memory_percent: 83.8, os_info: "K8s v1.30.2" },
+      checks: [
+        { id: "k8s.nodes", name: "K8s 节点健康", category: "availability", status: "warning", value: "3 节点 Ready · 1 节点 MemoryPressure", threshold: "0 压力节点", detail: "node-web-02 报告 MemoryPressure" },
+        {
+          id: "k8s.pods", name: "工作负载 Pod 状态", category: "workload",
+          status: includeCriticalK8s ? "critical" : "warning",
+          value: includeCriticalK8s ? "1 CrashLoopBackOff · 1 高重启" : "1 异常重启",
+          threshold: "0 异常 Pod",
+          detail: includeCriticalK8s ? "batch/etl-sync-9x2k CrashLoopBackOff（重启 14 次）" : "apps/report-worker-7b8d 重启 6 次",
+        },
+        { id: "k8s.controllers", name: "Deployment / StatefulSet 副本", category: "workload", status: "pass", value: "14/14 就绪", threshold: "期望与可用一致", detail: "核心控制器副本全部就绪" },
+      ],
+      evidence: { nodes: 3, memory_pressure_nodes: ["node-web-02"], abnormal_pods: includeCriticalK8s ? 2 : 1 },
+    },
+    {
+      id: 4, run_id: runId, cluster: "prod-cn", instance: "web-02", asset_id: "docker-web-02", asset_name: "核心节点容器运行时 (Docker)", asset_kind: "container",
+      strategy: "container_runtime", collector_method: "agent_local", status: "pass", started_at_ms: baseMs + 300, finished_at_ms: baseMs + 720, duration_ms: 420,
+      metrics: { cpu_percent: 7.4, memory_percent: 34.0, os_info: "Docker 27.3.1" },
+      checks: [
+        { id: "container.runtime", name: "容器运行时可用性", category: "runtime", status: "pass", value: "docker · 3 运行中", threshold: "运行时在线", detail: "doops-app / nginx-gateway / redis-cache 均正常" },
+        { id: "container.memory_limit", name: "容器内存限额占用", category: "resource", status: "pass", value: "最高 45.9% (nginx-gateway)", threshold: "<85%", detail: "无容器逼近 OOM 上限" },
+      ],
+      evidence: { runtime: "docker", running_containers: 3 },
+    },
+    {
+      id: 5, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-archive-02", asset_name: "财务归档服务器 (SSH)", asset_kind: "vm",
+      strategy: "ssh_host", collector_method: "ssh", status: "warning", started_at_ms: baseMs + 400, finished_at_ms: baseMs + 1310, duration_ms: 910,
+      metrics: { cpu_percent: 27.5, memory_percent: 66.3, disk_percent: 87.6, os_info: "CentOS Stream 9" },
+      checks: [
+        { id: "ssh.reachability", name: "只读 SSH 连通性", category: "availability", status: "pass", value: "reachable (10.0.3.42:22)", threshold: "BatchMode=yes", detail: "只读结构化采集成功" },
+        { id: "ssh.disk", name: "远程主机磁盘容量", category: "storage", status: "warning", value: "/ 87.6%", threshold: "告警 85% / 严重 95%", detail: "归档分区占用超过 85%，建议清理历史快照" },
+      ],
+      evidence: { collector: "ssh_batch_readonly", root_used_pct: 87.6 },
+    },
+    {
+      id: 6, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "portal.edu.example", asset_name: "教务门户站点 (HTTPS)", asset_kind: "app",
+      strategy: "app_service", collector_method: "http_probe", status: "pass", started_at_ms: baseMs + 500, finished_at_ms: baseMs + 690, duration_ms: 190,
+      metrics: { response_time_ms: 42.6, error_rate: 0.2, active_connections: 128, requests_per_sec: 186.4 },
+      checks: [
+        { id: "app.availability", name: "HTTPS 可用性与响应 (A1)", category: "availability", status: "pass", value: "HTTP 200 · 42.6ms", threshold: "<1000ms", detail: "状态正常，错误率 0.2%" },
+        { id: "app.tls_security", name: "证书有效期与安全头 (A4)", category: "security", status: "pass", value: "剩余 68 天 · HSTS/nosniff", threshold: ">=14 天", detail: "TLS 1.3 + 完整安全响应头" },
+        { id: "app.nginx", name: "Nginx 并发与请求速率", category: "resource", status: "pass", value: "128 并发 · 186.4 req/s", threshold: "stub_status 可达", detail: "吞吐平稳" },
+      ],
+      evidence: { status_code: 200, tls_days_remaining: 68, hsts: true },
+    },
+    {
+      id: 7, run_id: runId, cluster: "staging", instance: "db-01", asset_id: "pg-main-01", asset_name: "PostgreSQL 核心主库 (TCP)", asset_kind: "database",
+      strategy: "database_service", collector_method: "tcp_probe", status: "pass", started_at_ms: baseMs + 600, finished_at_ms: baseMs + 615, duration_ms: 15,
+      metrics: { response_time_ms: 4.2, error_rate: 0 },
+      checks: [
+        { id: "db.connectivity", name: "数据库 TCP 连通与延迟 (A2)", category: "availability", status: "pass", value: "4.2ms (10.0.2.21:5432)", threshold: "<500ms", detail: "TCP 握手成功，连接池健康" },
+      ],
+      evidence: { host: "10.0.2.21", port: 5432, latency_ms: 4.2 },
+    },
+    ...(includeOffline
+      ? [{
+          id: 8, run_id: runId, cluster: "staging", instance: "worker-legacy", asset_id: "vm-worker-legacy", asset_name: "离线计算测试节点", asset_kind: "vm",
+          strategy: "vm_host", collector_method: "agent_local", status: "offline", reason: "target_offline",
+          started_at_ms: baseMs + 650, finished_at_ms: baseMs + 652, duration_ms: 2,
+          metrics: {},
+          checks: [
+            { id: "target.online", name: "Agent 在线可达性", category: "availability", status: "offline", value: "offline", threshold: "online", detail: "目标 staging/worker-legacy 当前离线，记为巡检缺口" },
+          ],
+          evidence: { reason: "target_offline" },
+        }]
+      : []),
+  ]
+
+  if (demoMonitorSchedulesStore.length === 0) {
+    demoMonitorSchedulesStore.push(...seedSchedules)
   }
   if (demoMonitorRunsStore.length === 0) {
-    demoMonitorRunsStore.push(baseRun)
+    const seedRuns = [
+      {
+        id: "run_demo04", schedule_id: "sched_demo01", schedule_name: "全校核心基础设施 5 分钟自动巡检", trigger_kind: "scheduled",
+        triggered_by: "system", status: "warning", total_targets: 3, total_assets: 7, passed_checks: 16, warning_checks: 3,
+        failed_checks: 0, skipped_checks: 0, offline_targets: 0, metrics_written: 124,
+        started_at_ms: now - 65_000, finished_at_ms: now - 60_000, duration_ms: 5000,
+        summary: "7 项资产完成巡检：通过 16 项，告警 3 项（K8s 节点内存压力、归档服务器磁盘 87.6%）",
+      },
+      {
+        id: "run_demo03", schedule_id: "", schedule_name: "全量节点手动核查", trigger_kind: "manual",
+        triggered_by: "admin", status: "partial", total_targets: 4, total_assets: 8, passed_checks: 16, warning_checks: 3,
+        failed_checks: 0, skipped_checks: 0, offline_targets: 1, metrics_written: 124,
+        started_at_ms: now - 25 * 60_000, finished_at_ms: now - 25 * 60_000 + 5400, duration_ms: 5400,
+        summary: "部分完成：离线缺口 1（staging/worker-legacy），通过 16，告警 3",
+      },
+      {
+        id: "run_demo02", schedule_id: "sched_demo02", schedule_name: "重点门户站点与数据库 15 分钟拨测", trigger_kind: "scheduled",
+        triggered_by: "system", status: "pass", total_targets: 2, total_assets: 2, passed_checks: 4, warning_checks: 0,
+        failed_checks: 0, skipped_checks: 0, offline_targets: 0, metrics_written: 18,
+        started_at_ms: now - 6 * 60_000, finished_at_ms: now - 6 * 60_000 + 620, duration_ms: 620,
+        summary: "全部通过：门户 HTTPS (42.6ms) 与 PostgreSQL 主库 (4.2ms) 正常",
+      },
+      {
+        id: "run_demo01", schedule_id: "sched_demo01", schedule_name: "全校核心基础设施 5 分钟自动巡检", trigger_kind: "scheduled",
+        triggered_by: "system", status: "critical", total_targets: 3, total_assets: 7, passed_checks: 15, warning_checks: 2,
+        failed_checks: 1, skipped_checks: 0, offline_targets: 0, metrics_written: 120,
+        started_at_ms: now - 90 * 60_000, finished_at_ms: now - 90 * 60_000 + 5800, duration_ms: 5800,
+        summary: "发现 1 项严重异常（K8s batch/etl-sync-9x2k CrashLoopBackOff），通过 15，告警 2",
+      },
+    ]
+    demoMonitorRunsStore.push(...seedRuns)
+    demoMonitorRunItemsMap.set("run_demo04", buildStandardItems("run_demo04", now - 65_000, false, false))
+    demoMonitorRunItemsMap.set("run_demo03", buildStandardItems("run_demo03", now - 25 * 60_000, true, false))
+    demoMonitorRunItemsMap.set("run_demo02", buildStandardItems("run_demo02", now - 6 * 60_000, false, false).slice(5, 7))
+    demoMonitorRunItemsMap.set("run_demo01", buildStandardItems("run_demo01", now - 90 * 60_000, false, true))
   }
 
   if (route === "overview") {
@@ -1472,38 +1811,57 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
     const cpuItems = sampleResources.filter((r) => typeof r.cpu_percent === "number")
     const memItems = sampleResources.filter((r) => typeof r.memory_percent === "number")
     const diskItems = sampleResources.filter((r) => typeof r.disk_percent === "number")
+    const hostItems = sampleResources.filter((r) => r.asset_kind === "vm" || r.asset_kind === "physical")
+    const rangeParam = parsed.searchParams.get("range") || "1h"
+    const spanMap: Record<string, { ms: number; buckets: number }> = {
+      "1h": { ms: 3600_000, buckets: 12 },
+      "6h": { ms: 6 * 3600_000, buckets: 18 },
+      "24h": { ms: 24 * 3600_000, buckets: 24 },
+      "7d": { ms: 7 * 86400_000, buckets: 21 },
+    }
+    const sp = spanMap[rangeParam] || spanMap["1h"]
     return {
-      scope: "global", range: parsed.searchParams.get("range") || "1h", from_ms: now - 3600_000, to_ms: now,
+      scope: "global", range: rangeParam, from_ms: now - sp.ms, to_ms: now,
       summary: {
         total_assets: sampleResources.length,
         online_agents: clusterFilter === "staging" ? 1 : clusterFilter === "prod-cn" ? 2 : 3,
-        offline_agents: 0,
+        offline_agents: clusterFilter === "prod-cn" ? 0 : 1,
         covered_assets: sampleResources.length,
-        probe_coverage_pct: sampleResources.length ? 100 : 0,
+        probe_coverage_pct: sampleResources.length ? (clusterFilter === "prod-cn" ? 100 : 87.5) : 0,
         healthy_assets: sampleResources.filter((r) => r.status === "ok").length,
         warning_assets: sampleResources.filter((r) => r.status === "warning").length,
-        critical_assets: 0,
-        offline_assets: 0,
+        critical_assets: sampleResources.filter((r) => r.status === "critical").length,
+        offline_assets: clusterFilter === "prod-cn" ? 0 : 1,
         open_threshold_alerts: thresholdAlerts.length,
         avg_cpu_percent: cpuItems.length ? Number((cpuItems.reduce((s, r) => s + (r.cpu_percent || 0), 0) / cpuItems.length).toFixed(1)) : 0,
         avg_memory_percent: memItems.length ? Number((memItems.reduce((s, r) => s + (r.memory_percent || 0), 0) / memItems.length).toFixed(1)) : 0,
         avg_disk_percent: diskItems.length ? Number((diskItems.reduce((s, r) => s + (r.disk_percent || 0), 0) / diskItems.length).toFixed(1)) : 0,
-        total_cpu_cores: 12, used_cpu_cores: 2.95,
-        total_memory_bytes: 24 * 1073741824, used_memory_bytes: 10.3 * 1073741824,
-        total_disk_bytes: 180 * 1073741824, used_disk_bytes: 99 * 1073741824,
+        total_cpu_cores: hostItems.reduce((s, r) => s + (r.cpu_total_cores || 0), 0),
+        used_cpu_cores: Number(hostItems.reduce((s, r) => s + (r.cpu_cores || 0), 0).toFixed(2)),
+        total_memory_bytes: hostItems.reduce((s, r) => s + (r.memory_total_bytes || 0), 0),
+        used_memory_bytes: hostItems.reduce((s, r) => s + (r.memory_used_bytes || 0), 0),
+        total_disk_bytes: hostItems.reduce((s, r) => s + (r.disk_total_bytes || 0), 0),
+        used_disk_bytes: hostItems.reduce((s, r) => s + (r.disk_used_bytes || 0), 0),
         active_schedules: demoMonitorSchedulesStore.filter((s) => s.enabled).length,
         total_runs: demoMonitorRunsStore.length,
-        last_collected_at_ms: now - 30_000,
+        last_collected_at_ms: now - 25_000,
       },
       by_kind: byKind,
       resources: sampleResources,
-      top_cpu: [...cpuItems].sort((a, b) => (b.cpu_percent || 0) - (a.cpu_percent || 0)),
-      top_memory: [...memItems].sort((a, b) => (b.memory_percent || 0) - (a.memory_percent || 0)),
-      top_disk: [...diskItems].sort((a, b) => (b.disk_percent || 0) - (a.disk_percent || 0)),
-      trends: Array.from({ length: 12 }, (_, i) => ({
-        start_ms: now - (12 - i) * 300_000, end_ms: now - (11 - i) * 300_000, samples: sampleResources.length,
-        avg_cpu_percent: 29 + (i % 5) * 1.4, avg_memory_percent: 56 + (i % 4) * 1.6, avg_disk_percent: 53.4,
-      })),
+      top_cpu: [...cpuItems].sort((a, b) => (b.cpu_percent || 0) - (a.cpu_percent || 0)).slice(0, 5),
+      top_memory: [...memItems].sort((a, b) => (b.memory_percent || 0) - (a.memory_percent || 0)).slice(0, 5),
+      top_disk: [...diskItems].sort((a, b) => (b.disk_percent || 0) - (a.disk_percent || 0)).slice(0, 5),
+      trends: Array.from({ length: sp.buckets }, (_, i) => {
+        const wave = Math.sin(i * 0.55)
+        return {
+          start_ms: Math.round(now - sp.ms + (sp.ms * i) / sp.buckets),
+          end_ms: Math.round(now - sp.ms + (sp.ms * (i + 1)) / sp.buckets),
+          samples: sampleResources.length,
+          avg_cpu_percent: Number((33.8 + wave * 6.2).toFixed(1)),
+          avg_memory_percent: Number((58.4 + Math.cos(i * 0.4) * 4.1).toFixed(1)),
+          avg_disk_percent: Number((63.9 + (i * 0.08)).toFixed(1)),
+        }
+      }),
       recent_runs: demoMonitorRunsStore.slice(0, 6),
       threshold_alerts: thresholdAlerts,
       strategies,
@@ -1511,22 +1869,29 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
   }
   if (route === "resources/history") {
     const assetId = parsed.searchParams.get("asset_id") || "vm-web-01"
+    const rangeParam = parsed.searchParams.get("range") || "1h"
+    const spanMs = ({ "1h": 3600_000, "6h": 6 * 3600_000, "24h": 24 * 3600_000, "7d": 7 * 86400_000 } as Record<string, number>)[rangeParam] || 3600_000
     const match = allResources.find((r) => r.asset_id === assetId) || allResources[0]
-    const points = Array.from({ length: 12 }, (_, idx) => ({
-      ...match,
-      collected_at_ms: now - (12 - idx) * 300_000,
-      cpu_percent: typeof match.cpu_percent === "number" ? Number((match.cpu_percent * (0.85 + 0.04 * (idx % 5))).toFixed(1)) : undefined,
-      memory_percent: typeof match.memory_percent === "number" ? Number((match.memory_percent * (0.94 + 0.015 * (idx % 4))).toFixed(1)) : undefined,
-    }))
+    const points = Array.from({ length: 20 }, (_, idx) => {
+      const wave = 0.86 + 0.16 * Math.sin(idx * 0.6 + assetId.length)
+      return {
+        ...match,
+        collected_at_ms: Math.round(now - spanMs + (spanMs * (idx + 1)) / 20),
+        cpu_percent: typeof match.cpu_percent === "number" ? Number(Math.min(99, match.cpu_percent * wave).toFixed(1)) : undefined,
+        memory_percent: typeof match.memory_percent === "number" ? Number(Math.min(99, match.memory_percent * (0.95 + 0.06 * Math.cos(idx * 0.4))).toFixed(1)) : undefined,
+        disk_percent: typeof match.disk_percent === "number" ? Number(match.disk_percent.toFixed(1)) : undefined,
+        net_bytes_per_sec: typeof match.net_bytes_per_sec === "number" ? Math.round(match.net_bytes_per_sec * wave) : undefined,
+      }
+    })
     return {
       cluster: match.cluster, instance: match.instance, asset_kind: match.asset_kind, asset_id: match.asset_id,
-      range: parsed.searchParams.get("range") || "1h", from_ms: now - 3600_000, to_ms: now,
+      range: rangeParam, from_ms: now - spanMs, to_ms: now,
       latest: match, points,
     }
   }
   if (route === "schedules") {
     if (body) {
-      const action = String(body.action || "upsert")
+      const action = String(body.action || "create")
       if (action === "delete") {
         const idx = demoMonitorSchedulesStore.findIndex((s) => s.id === body.id)
         if (idx >= 0) demoMonitorSchedulesStore.splice(idx, 1)
@@ -1534,17 +1899,24 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       }
       if (action === "toggle") {
         const found = demoMonitorSchedulesStore.find((s) => s.id === body.id)
-        if (found) found.enabled = Boolean(body.enabled)
-        return { schedule: found || baseSchedule }
+        if (found) {
+          found.enabled = Boolean(body.enabled)
+          found.updated_at = new Date(now).toISOString()
+        }
+        return { schedule: found || demoMonitorSchedulesStore[0] }
       }
       const next = {
-        ...baseSchedule,
+        ...seedSchedules[0],
         id: String(body.id || `sched_demo_${Math.floor(now / 1000)}`),
-        name: String(body.name || "新建巡检计划"),
+        name: String(body.name || "新建自动巡检计划"),
         description: String(body.description || ""),
         enabled: body.enabled !== false,
+        scope_mode: String(body.scope_mode || "all_online"),
+        targets: Array.isArray(body.targets) ? body.targets : [],
+        tags: Array.isArray(body.tags) ? body.tags : [],
         interval_seconds: Number(body.interval_seconds || 300),
-        strategies: Array.isArray(body.strategies) && body.strategies.length ? body.strategies : baseSchedule.strategies,
+        strategies: Array.isArray(body.strategies) && body.strategies.length ? body.strategies : seedSchedules[0].strategies,
+        thresholds: body.thresholds && typeof body.thresholds === "object" ? { ...defaultThresholds, ...(body.thresholds as Record<string, unknown>) } : defaultThresholds,
         updated_at: new Date(now).toISOString(),
       }
       const idx = demoMonitorSchedulesStore.findIndex((s) => s.id === next.id)
@@ -1555,64 +1927,104 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
     return {
       schedules: [...demoMonitorSchedulesStore],
       strategies,
-      defaults: { cpu_warn_percent: 80, cpu_crit_percent: 90, mem_warn_percent: 80, mem_crit_percent: 90, disk_warn_percent: 85, disk_crit_percent: 95 },
+      defaults: defaultThresholds,
     }
   }
   if (route.startsWith("runs/")) {
     const runId = route.slice("runs/".length)
-    const run = demoMonitorRunsStore.find((r) => r.id === runId) || baseRun
-    return {
-      run, strategies,
-      items: [
-        {
-          id: 1, run_id: run.id, cluster: "prod-cn", instance: "web-01", asset_id: "vm-web-01", asset_name: "教务门户节点 01", asset_kind: "vm",
-          strategy: "vm_host", collector_method: "agent_local", status: "pass", started_at_ms: now - 35_000, finished_at_ms: now - 30_000, duration_ms: 420,
-          metrics: { cpu_percent: 23.1, memory_percent: 33.8, disk_percent: 38.8, memory_used_bytes: 5.4 * 1073741824, os_info: "Ubuntu 24.04 LTS" },
-          checks: [
-            { id: "host.uptime", name: "运行与重启 (M1)", category: "availability", status: "pass", value: "864000s", threshold: ">=300s", detail: "运行稳定" },
-            { id: "host.cpu_memory", name: "CPU 与内存水位 (M2)", category: "resource", status: "pass", value: "CPU 23.1% / 内存 33.8%", threshold: "<80%", detail: "水位正常" },
-            { id: "host.disk", name: "挂载点容量 (M2)", category: "storage", status: "pass", value: "/ 38.8%", threshold: "<85%", detail: "空间充足" },
-          ],
-          evidence: { mounts: [{ mount: "/", used_pct: 38.8 }], load_1m: 0.82 },
-        },
-        {
-          id: 2, run_id: run.id, cluster: "prod-cn", instance: "web-02", asset_id: "k8s-prod-cn", asset_name: "核心业务 K8s 集群", asset_kind: "k8s",
-          strategy: "k8s_cluster", collector_method: "k8s_api", status: "warning", started_at_ms: now - 35_000, finished_at_ms: now - 30_500, duration_ms: 780,
-          metrics: { cpu_percent: 45.0, memory_percent: 82.5, os_info: "K8s v1.30.2" },
-          checks: [
-            { id: "k8s.nodes", name: "节点健康状态", category: "availability", status: "warning", value: "1 节点 MemoryPressure", threshold: "0 压力节点", detail: "node-2 报告 MemoryPressure" },
-            { id: "k8s.pods", name: "工作负载 Pod 状态", category: "workload", status: "warning", value: "1 异常重启", threshold: "0 异常 Pod", detail: "apps/report-worker-7b8d 重启 6 次" },
-          ],
-          evidence: { nodes: 2, abnormal_pods: 1 },
-        },
-        {
-          id: 3, run_id: run.id, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-legacy-01", asset_name: "教务老旧宿主机 (SSH)", asset_kind: "vm",
-          strategy: "ssh_host", collector_method: "ssh", status: "pass", started_at_ms: now - 34_000, finished_at_ms: now - 31_000, duration_ms: 910,
-          metrics: { cpu_percent: 27.5, memory_percent: 61.3, disk_percent: 68.0, os_info: "Rocky Linux 9.4" },
-          checks: [
-            { id: "ssh.reachability", name: "只读 SSH 连通性", category: "availability", status: "pass", value: "reachable", threshold: "BatchMode=yes", detail: "只读结构化采集成功" },
-            { id: "ssh.resource", name: "远程主机 CPU/内存/磁盘", category: "resource", status: "pass", value: "CPU 27.5% / 内存 61.3% / 盘 68.0%", threshold: "<80%", detail: "正常" },
-          ],
-          evidence: { collector: "ssh_batch_readonly" },
-        },
-      ],
-    }
+    const run = demoMonitorRunsStore.find((r) => r.id === runId) || demoMonitorRunsStore[0]
+    const items = demoMonitorRunItemsMap.get(String(run.id)) || buildStandardItems(String(run.id), now - 60_000)
+    return { run, strategies, items }
   }
   if (body) {
+    const newId = `run_demo_${Math.floor(now / 1000)}`
+    const reqStrategies = Array.isArray(body.strategies) && body.strategies.length ? (body.strategies as string[]) : null
+    const reqTargets = Array.isArray(body.targets) ? (body.targets as Array<{ cluster: string; instance: string }>) : []
+    const sshHosts = Array.isArray(body.ssh_hosts) ? (body.ssh_hosts as Array<Record<string, unknown>>) : []
+
+    let generatedItems = buildStandardItems(newId, now - 2200, false, false)
+    if (body.retest_run_id) {
+      const prevItems = demoMonitorRunItemsMap.get(String(body.retest_run_id)) || []
+      const flagged = prevItems.filter((i) => ["warning", "critical", "error", "offline"].includes(String(i.status)))
+      generatedItems = (flagged.length ? flagged : generatedItems.slice(0, 2)).map((it, idx) => ({
+        ...it,
+        id: idx + 1,
+        run_id: newId,
+        status: it.status === "offline" ? "offline" : "pass",
+        started_at_ms: now - 1400,
+        finished_at_ms: now - 200,
+      }))
+    } else {
+      if (reqTargets.length > 0) {
+        generatedItems = generatedItems.filter((it) =>
+          reqTargets.some((t) => t.cluster === it.cluster && t.instance === it.instance),
+        )
+      }
+      if (reqStrategies) {
+        generatedItems = generatedItems.filter((it) => reqStrategies.includes(String(it.strategy)))
+      }
+      for (const h of sshHosts) {
+        const addr = String(h.address || "10.0.9.50")
+        const aid = String(h.asset_id || addr)
+        generatedItems.push({
+          id: generatedItems.length + 1,
+          run_id: newId,
+          cluster: reqTargets[0]?.cluster || "prod-cn",
+          instance: reqTargets[0]?.instance || "web-01",
+          asset_id: aid,
+          asset_name: `${aid} (临时 SSH)`,
+          asset_kind: "vm",
+          strategy: "ssh_host",
+          collector_method: "ssh",
+          status: "pass",
+          started_at_ms: now - 1600,
+          finished_at_ms: now - 400,
+          duration_ms: 1200,
+          metrics: { cpu_percent: 19.4, memory_percent: 48.2, disk_percent: 54.0, os_info: "Ubuntu 22.04 LTS" },
+          checks: [
+            { id: "ssh.reachability", name: "只读 SSH 连通性", category: "availability", status: "pass", value: `reachable (${addr}:${Number(h.port) || 22})`, threshold: "BatchMode=yes", detail: "临时只读 SSH 巡检采集成功" },
+            { id: "ssh.resource", name: "远程主机 CPU/内存/磁盘", category: "resource", status: "pass", value: "CPU 19.4% / 内存 48.2% / 盘 54.0%", threshold: "<80%", detail: "水位正常" },
+          ],
+          evidence: { collector: "ssh_batch_readonly", address: addr },
+        })
+      }
+      if (generatedItems.length === 0) {
+        generatedItems = buildStandardItems(newId, now - 1800, false, false).slice(0, 2)
+      }
+    }
+
+    const passedChecks = generatedItems.reduce((sum, it) => sum + ((it.checks as Array<{ status: string }>).filter((c) => c.status === "pass").length), 0)
+    const warnChecks = generatedItems.reduce((sum, it) => sum + ((it.checks as Array<{ status: string }>).filter((c) => c.status === "warning").length), 0)
+    const failChecks = generatedItems.reduce((sum, it) => sum + ((it.checks as Array<{ status: string }>).filter((c) => ["critical", "error"].includes(c.status)).length), 0)
+    const offlineCount = generatedItems.filter((it) => it.status === "offline").length
+    const runStatus = failChecks > 0 ? "critical" : offlineCount > 0 ? "partial" : warnChecks > 0 ? "warning" : "pass"
+    const sched = body.schedule_id ? demoMonitorSchedulesStore.find((s) => s.id === body.schedule_id) : null
     const newRun = {
-      ...baseRun,
-      id: `run_demo_${Math.floor(now / 1000)}`,
+      id: newId,
       schedule_id: String(body.schedule_id || ""),
-      schedule_name: body.schedule_id ? baseSchedule.name : "手动立即巡检",
+      schedule_name: sched ? String(sched.name) : body.retest_run_id ? "异常项一键复检" : "手动立即巡检",
       trigger_kind: body.retest_run_id ? "retest" : "manual",
       triggered_by: "admin",
-      started_at_ms: now - 1800,
+      status: runStatus,
+      total_targets: new Set(generatedItems.map((i) => `${i.cluster}/${i.instance}`)).size || 1,
+      total_assets: generatedItems.length,
+      passed_checks: passedChecks,
+      warning_checks: warnChecks,
+      failed_checks: failChecks,
+      skipped_checks: 0,
+      offline_targets: offlineCount,
+      metrics_written: generatedItems.length * 16,
+      started_at_ms: now - 2200,
       finished_at_ms: now,
-      duration_ms: 1800,
-      summary: "本次采集完成 4 项资产，指标已同步到系统资源监控与 Agent 曲线。",
+      duration_ms: 2200,
+      summary: `本次完成 ${generatedItems.length} 项资产巡检：通过 ${passedChecks}，告警 ${warnChecks}${failChecks ? `，严重 ${failChecks}` : ""}${offlineCount ? `，离线 ${offlineCount}` : ""}；指标已同步。`,
     }
+    demoMonitorRunItemsMap.set(newId, generatedItems)
     demoMonitorRunsStore.unshift(newRun)
-    return { run: newRun, items: [] }
+    return { run: newRun, items: generatedItems }
   }
-  return { runs: [...demoMonitorRunsStore], strategies }
+  const filteredRuns = statusFilter
+    ? demoMonitorRunsStore.filter((r) => r.status === statusFilter)
+    : [...demoMonitorRunsStore]
+  return { runs: filteredRuns, strategies }
 }
