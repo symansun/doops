@@ -145,6 +145,11 @@ bash scripts/deploy-gateway.sh \
   不要放在 `-enroll-token` 命令行参数里，参数会出现在进程列表和 Pod spec 中）。
   token 本身即可完成首次连接并确认该 target，之后该 target 的连接必须带它。
   不要使用 Gateway user token 或受管凭据。
+- 已有部署在没有 enrollment、且暂时不能批量登记时，可以在 Gateway 的 systemd
+  `EnvironmentFile`（通常 `/etc/doops-gateway.env`）设置
+  `DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1`，等价于
+  `-allow-open-agent-registration`；两者都只用于迁移。开放注册只恢复连接：
+  未登记会话仍然不会收到模型密钥或镜像仓库凭据，登记一个就关闭一个。
 - 带 token 的连接始终验证：token 无效、已吊销，或属于另一个 target 时返回 `401`
   （`code=agent_enrollment_auth_failed`），**不会**回退为开放注册。不带 token 且 target
   没有已确认的 enrollment 时同样返回 `401`。enrollment 存储不可用时返回 `503`。

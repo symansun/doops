@@ -63,7 +63,10 @@ func serve(args []string) {
 	edgeProxyProtocol := fs.Bool("edge-proxy-protocol", true, "Require PROXY protocol on Edge listener (must be true behind nginx stream)")
 	// Temporary migration escape hatch. Open agent registration is closed by
 	// default; an Agent needs the enrollment token issued for its target.
-	allowOpenAgentRegistration := fs.Bool("allow-open-agent-registration", false, "TEMPORARY: accept Agents without an enrollment token on targets that have no confirmed enrollment (insecure; migrate them to enrollment tokens)")
+	// The environment variable lets a deployment (for example a private
+	// Gateway without enrollments) open it without editing the service unit.
+	allowOpenDefault := envFlagEnabled("DOOPS_ALLOW_OPEN_AGENT_REGISTRATION")
+	allowOpenAgentRegistration := fs.Bool("allow-open-agent-registration", allowOpenDefault, "TEMPORARY: accept Agents without an enrollment token on targets that have no confirmed enrollment (insecure; migrate them to enrollment tokens); DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1 sets the same switch")
 	fs.Parse(args)
 
 	if *retiredGlobalLimit != 0 || *retiredUserLimit != 0 {
@@ -401,6 +404,17 @@ func mustStore(path string) *server.GatewayStore {
 }
 
 // agentEnrollmentPolicy is the one-line startup summary of agent registration.
+// envFlagEnabled accepts the conventional truthy spellings used by the
+// Gateway's other environment-only switches.
+func envFlagEnabled(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func agentEnrollmentPolicy(allowOpen bool) string {
 	if allowOpen {
 		return "open registration ENABLED for targets without a confirmed enrollment (temporary; migrate every Agent to an enrollment token)"
