@@ -270,6 +270,12 @@ so it keeps working with an air-gapped Gateway.
   `Sec-Fetch-Site` 为跨站的请求。同一可注册域下的兄弟站点也会被拒绝。
   默认根据 Next.js 接收到的 URL 和 Host 校验来源。TLS 在反向代理终止、公开地址与服务地址不同或有多个公开地址时，
   设置 `DOOPS_CONSOLE_ORIGIN=https://doops.example.com`（多个用英文逗号分隔）。设置后只接受这些 origin。使用正式部署脚本发布单一 HTTPS 入口时，传入 `--console-origin https://doops.example.com`。脚本会验证候选容器及切换后的容器接受该来源并拒绝跨源登录请求。
+- 控制台登录限流按真实浏览器地址计数：控制台从 `X-Forwarded-For` 取地址
+  （`DOOPS_CONSOLE_TRUSTED_PROXY_HOPS=0` 关闭转发，一层 Ingress 用 `1`，CDN + Ingress 用 `2`），
+  再用 `DOOPS_CONSOLE_FORWARD_SECRET` 对 `时间戳\n地址` 做 HMAC-SHA256，通过
+  `X-DoOps-Client-IP` / `X-DoOps-Client-IP-Signature` 转发。Gateway 用同一密钥验证签名
+  （误差不超过 2 分钟）后才采用该地址。两端都配置才生效；未配置时保持原行为：所有控制台
+  登录共享控制台主机的限流桶。密钥只从环境变量注入，不写命令行参数。
 - 控制台通过 `next.config.mjs` 为所有路由设置安全响应头：`frame-ancestors 'none'` 与
   `X-Frame-Options: DENY`（禁止被第三方页面嵌入）、`nosniff`、`Referrer-Policy: same-origin`
   和限制摄像头/麦克风/定位的 `Permissions-Policy`。`/blog/images/` 返回的 SVG 额外带

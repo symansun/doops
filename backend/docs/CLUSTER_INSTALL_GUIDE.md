@@ -247,6 +247,9 @@ Kubernetes `cluster-admin` 也不等于已取得其他节点或 hypervisor 的�
    Agent 身份，不覆盖现有实例；失败按本次清理方案仅处理本次创建的资源。
 4. 检查 Deployment 收敛、实际新 Pod Ready 和 imageID，登录 Gateway 并核对唯一
    `cluster/instance`、`release_commit`、`upgradeAudit v1`，再完成下文安装验收。
+   若控制台经服务端代理登录 Gateway，给控制台和 Gateway 配置同一个
+   `DOOPS_CONSOLE_FORWARD_SECRET`（Helm/Secret 注入），并按控制台前面的代理层数设置
+   `DOOPS_CONSOLE_TRUSTED_PROXY_HOPS`；否则所有控制台用户共享同一个登录限流桶。
    Gateway 默认要求提前签发 enrollment token（`values.gateway.enrollmentTokenSecret`）；
    只带 `cluster/instance` 的新 Agent 会被拒绝（`401`），`doops targets` 也不会出现它。
    未完成 Gateway 注册与验收前，不宣称 target 已可用。
