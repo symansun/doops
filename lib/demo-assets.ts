@@ -481,6 +481,7 @@ function buildDemoWeeklyInspections(query?: URLSearchParams) {
     { asset_id: "phy-gpu-01", cluster: "prod-cn", instance: "web-02", cluster_id: "k8s-prod-cn" },
     { asset_id: "vm-db-01", cluster: "staging", instance: "db-01", cluster_id: "k8s-staging" },
   ]
+  const nowSec = Math.floor(now() / 1000)
   const plans = [
     {
       plan_id: 1,
@@ -490,7 +491,7 @@ function buildDemoWeeklyInspections(query?: URLSearchParams) {
       active: 1,
       overdue: 0,
       executor_disabled: 0,
-      next_due: now() + 3 * 86_400_000,
+      next_due: nowSec + 3 * 86_400,
       timezone: "Asia/Shanghai",
       weekday: 1,
       clock: "09:00",
@@ -504,7 +505,7 @@ function buildDemoWeeklyInspections(query?: URLSearchParams) {
       active: 1,
       overdue: 0,
       executor_disabled: 0,
-      next_due: now() + 5 * 86_400_000,
+      next_due: nowSec + 5 * 86_400,
       timezone: "Asia/Shanghai",
       weekday: 3,
       clock: "10:00",
@@ -512,8 +513,8 @@ function buildDemoWeeklyInspections(query?: URLSearchParams) {
     },
   ]
   const runs = [
-    { run_id: 204, name: "生产核心节点合规周检", trigger_kind: "scheduled", due: now() - 2 * 86_400_000, checked: 10, planned: 10, gaps: 0 },
-    { run_id: 203, name: "数据库与归档主机基线复核", trigger_kind: "manual", due: now() - 5 * 86_400_000, checked: 7, planned: 8, gaps: 1 },
+    { run_id: 204, name: "生产核心节点合规周检", trigger_kind: "scheduled", due: nowSec - 2 * 86_400, checked: 10, planned: 10, gaps: 0 },
+    { run_id: 203, name: "数据库与归档主机基线复核", trigger_kind: "manual", due: nowSec - 5 * 86_400, checked: 7, planned: 8, gaps: 1 },
   ]
   if (view === "report" || view === "download") {
     const picked = runs.find((r) => r.run_id === runId) || runs[0]
@@ -534,7 +535,7 @@ function buildDemoWeeklyInspections(query?: URLSearchParams) {
           generation: 1,
           status: "pass",
           actor: "ops-zhang",
-          received: now() - 2 * 86_400_000,
+          received: nowSec - 2 * 86_400,
           evidence: { uptime_seconds: 864000, boot_id: "demo-boot-web01" },
           reason: "",
           digest: "sha256:7f4c9a12d8e301ab",
@@ -546,7 +547,7 @@ function buildDemoWeeklyInspections(query?: URLSearchParams) {
           generation: 1,
           status: "finding",
           actor: "ops-zhang",
-          received: now() - 2 * 86_400_000,
+          received: nowSec - 2 * 86_400,
           evidence: { deviated: ["kernel.kptr_restrict=0"] },
           reason: "sysctl_deviation",
           digest: "sha256:9b2e1140fc7a8821",
