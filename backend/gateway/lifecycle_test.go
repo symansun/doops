@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,6 +29,9 @@ func TestGatewayBinaryInstallUpgradeHealthAndEdgeDefaultOff(t *testing.T) {
 	}
 	if !strings.Contains(helpText, "empty disables") {
 		t.Fatalf("gateway help must say empty -edge-listen disables Edge\n%s", helpText)
+	}
+	if !strings.Contains(helpText, "-shutdown-drain-timeout") {
+		t.Fatalf("gateway help must document -shutdown-drain-timeout\n%s", helpText)
 	}
 
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
@@ -136,5 +140,41 @@ func assertEdgeTablesExist(t *testing.T, dbPath string) {
 		if count != 1 {
 			t.Fatalf("missing table %s after gateway start", table)
 		}
+	}
+}
+
+func TestGatewayGracefulShutdownOnSIGTERM(t *testing.T) {
+	bin := buildGatewayBinary(t)
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	port := freeTCPPort(t)
+
+	cmd := exec.Command(bin, "serve", "-db", dbPath, "-port", strconv.Itoa(port), "-shutdown-drain-timeout", "5s")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start gateway: %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}
+	})
+	waitGatewayHealth(t, port)
+
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("send SIGTERM: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("gateway did not exit cleanly on SIGTERM: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("gateway did not shut down within 3s on idle SIGTERM")
 	}
 }

@@ -138,7 +138,7 @@ def mount_bytes(mount):
         os.close(fd)
 
 
-def nginx_count(url):
+def nginx_stats(url):
     con = http.client.HTTPConnection(url.hostname, url.port, timeout=3)
     try:
         con.request('GET', url.path or '/')
@@ -146,15 +146,99 @@ def nginx_count(url):
         if response.status != 200:
             raise ValueError('stub_status unavailable')
         body = response.read(4097)
-        match = re.fullmatch(rb'\s*Active connections:\s*\d+\s+server accepts handled requests\s+\d+\s+\d+\s+(\d+)\s+Reading:\s*\d+\s+Writing:\s*\d+\s+Waiting:\s*\d+\s*', body)
+        match = re.fullmatch(rb'\s*Active connections:\s*(\d+)\s+server accepts handled requests\s+\d+\s+\d+\s+(\d+)\s+Reading:\s*\d+\s+Writing:\s*\d+\s+Waiting:\s*\d+\s*', body)
         if not match:
             raise ValueError('invalid stub_status')
-        return int(match[1])
+        return int(match[1]), int(match[2])
+    finally:
+        con.close()
+
+
+def http_probe(url):
+    cls = http.client.HTTPSConnection if url.scheme == 'https' else http.client.HTTPConnection
+    con = cls(url.hostname, url.port, timeout=5)
+    started = time.monotonic()
+    try:
+        con.request('GET', url.path or '/')
+        response = con.getresponse()
+        response.read(1024)
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        return elapsed_ms, (100.0 if response.status >= 400 else 0.0)
+    except (OSError, http.client.HTTPException):
+        return None, 100.0
     finally:
         con.close()
 
 
 GPU_UUID = re.compile(r'GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+CONTAINER_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,127}')
+BYTE_UNITS = (
+    ('TiB', 1099511627776), ('TB', 10**12),
+    ('GiB', 1073741824), ('GB', 10**9),
+    ('MiB', 1048576), ('MB', 10**6),
+    ('KiB', 1024), ('kB', 1000), ('KB', 1000),
+    ('B', 1),
+)
+
+
+def parse_byte_quantity(raw):
+    text = (raw or '').strip()
+    if not text or text in ('--', 'N/A'):
+        return None
+    for suffix, factor in BYTE_UNITS:
+        if text.endswith(suffix):
+            val = float(text[:-len(suffix)].strip())
+            return val * factor if val >= 0 else None
+    val = float(text)
+    return val if val >= 0 else None
+
+
+def container_samples(at_ms):
+    for runtime in ('docker', 'nerdctl', 'podman'):
+        try:
+            out = subprocess.check_output(
+                [runtime, 'stats', '--no-stream', '--no-trunc', '--format', '{{json .}}'],
+                stderr=subprocess.DEVNULL, timeout=15, text=True)
+            break
+        except (OSError, subprocess.SubprocessError):
+            out = None
+    if out is None:
+        raise ValueError('container runtime unavailable')
+    trimmed = out.strip()
+    records = json.loads(trimmed) if trimmed.startswith('[') else [
+        json.loads(line) for line in trimmed.splitlines() if line.strip()
+    ]
+    rows = []
+    seen = set()
+    for rec in records:
+        name = str(rec.get('Name') or rec.get('name') or rec.get('Names') or '').strip().lstrip('/')
+        if not CONTAINER_ID.fullmatch(name) or '..' in name:
+            cid = str(rec.get('ID') or rec.get('id') or rec.get('Container') or '').strip()[:12]
+            if not CONTAINER_ID.fullmatch(cid) or '..' in cid:
+                continue
+            name = cid
+        if name in seen or len(seen) >= 1024:
+            continue
+        seen.add(name)
+        cpu_raw = str(rec.get('CPUPerc') or rec.get('CPU') or rec.get('cpu_percent') or '').strip().rstrip('%')
+        try:
+            cpu_val = float(cpu_raw) / 100.0 if cpu_raw else None
+            if cpu_val is not None and cpu_val < 0:
+                cpu_val = None
+        except ValueError:
+            cpu_val = None
+        mem_raw = str(rec.get('MemUsage') or rec.get('mem_usage') or '')
+        if '/' in mem_raw:
+            used_part, limit_part = mem_raw.split('/', 1)
+            used_val = parse_byte_quantity(used_part)
+            limit_val = parse_byte_quantity(limit_part)
+        else:
+            used_val = parse_byte_quantity(mem_raw)
+            limit_val = None
+        for metric, unit, val in (('cpu', 'cores', cpu_val), ('memory', 'bytes', used_val), ('memory_limit', 'bytes', limit_val)):
+            rows.append(dict(type='container', asset_id=name, namespace='', metric=metric, unit=unit,
+                             at_ms=at_ms, status='ok' if val is not None else 'missing', value=val))
+    return rows
 
 
 def nvidia_fields(device, fields):
@@ -199,7 +283,8 @@ def collect(args):
         probes['cpu', ''] = ('cores', True, lambda: process_counts(args)[0])
         probes['memory', ''] = ('bytes', False, lambda: process_counts(args)[1])
     if args.nginx_status:
-        probes['requests', ''] = ('req/s', True, lambda: nginx_count(args.nginx_status))
+        probes['requests', ''] = ('req/s', True, lambda: nginx_stats(args.nginx_status)[1])
+        probes['active_connections', ''] = ('connections', False, lambda: nginx_stats(args.nginx_status)[0])
     for interface in args.interface:
         probes['network', interface] = ('bytes/s', True, partial(network_bytes, interface))
 
@@ -247,6 +332,16 @@ def collect(args):
     for uuid in args.gpu:
         value, _ = observed('gpu '+uuid, lambda: gpu_usage(uuid))
         append('gpu', uuid, '%', value, time.time_ns()//1000000)
+    if getattr(args, 'http_probe', None):
+        probe_res, _ = observed('http_probe', lambda: http_probe(args.http_probe))
+        at_ms = time.time_ns()//1000000
+        lat, err_pct = probe_res if probe_res is not None else (None, None)
+        append('response_time_ms', '', 'ms', lat, at_ms)
+        append('error_rate', '', '%', err_pct, at_ms)
+    if getattr(args, 'containers', False):
+        c_rows, _ = observed('containers', lambda: container_samples(time.time_ns()//1000000))
+        if c_rows:
+            samples.extend(c_rows)
     return dict(route, action='ingest', samples=samples)
 
 
@@ -256,9 +351,10 @@ def main():
         ap.add_argument('--'+name, required=True)
     ap.add_argument('--pod-namespace')
     ap.add_argument('--asset-id')
-    ap.add_argument('--type', choices=['machine','os','kernel','process','app','database'], default='machine')
+    ap.add_argument('--type', choices=['machine','os','kernel','process','container','app','database'], default='machine')
     ap.add_argument('--namespace', default='')
     ap.add_argument('--host', action='store_true', help='Linux host CPU and memory; kernel uses system/IRQ CPU and Slab bytes')
+    ap.add_argument('--containers', action='store_true', help='Running Docker/nerdctl/Podman container CPU, memory and memory limit')
     ap.add_argument('--pid', type=int)
     ap.add_argument('--start-ticks', type=int, help='Expected /proc/PID/stat field 22')
     ap.add_argument('--interface', action='append', default=[], help='Linux network interface; repeat per device')
@@ -266,6 +362,7 @@ def main():
     ap.add_argument('--mount', action='append', default=[], help='Absolute mount point; repeat per filesystem')
     ap.add_argument('--gpu', action='append', default=[], help='NVIDIA index or full GPU UUID; repeat for multiple cards')
     ap.add_argument('--nginx-status', type=urlsplit, help='Explicit HTTP loopback stub_status URL')
+    ap.add_argument('--http-probe', type=urlsplit, help='Explicit HTTP(S) endpoint URL for response_time_ms and error_rate')
     ap.add_argument('--gateway', type=urlsplit, help='Explicit HTTPS Gateway origin. Bearer supplied on stdin.')
     ap.add_argument('--interval-seconds', type=int, help='Run periodically, every 1–300 seconds')
     ap.add_argument('--count', type=int, help='Maximum number of observations in periodic mode')
@@ -274,9 +371,9 @@ def main():
         ap.error('interval must be 1–300 seconds')
     if args.count is not None and (not args.interval_seconds or args.count < 1):
         ap.error('--count requires periodic mode and a positive count')
-    probes = any((args.host,args.pid,args.interface,args.disk,args.mount,bool(args.gpu),args.nginx_status))
-    if args.pod_namespace and (args.asset_id or probes) or not args.pod_namespace and not (args.asset_id and probes):
-        ap.error('select --pod-namespace or --asset-id with at least one probe')
+    probes = any((args.host,args.pid,args.interface,args.disk,args.mount,bool(args.gpu),args.nginx_status,args.http_probe))
+    if args.pod_namespace and (args.asset_id or probes or args.containers) or not args.pod_namespace and not ((args.asset_id and probes) or (args.containers and (args.asset_id or not probes))):
+        ap.error('select --pod-namespace, --containers, or --asset-id with at least one probe')
     if args.host and args.type not in ('machine','os','kernel') or args.pid is not None and (args.type not in ('process','app','database') or args.pid < 1 or args.start_ticks is None):
         ap.error('use --host for machine/os/kernel, or --pid with --start-ticks for process/app/database')
     if any(not re.fullmatch('[a-zA-Z0-9][a-zA-Z0-9_.-]{0,14}', dev) for dev in args.interface):
@@ -293,11 +390,14 @@ def main():
             ap.error('mount must be a canonical absolute path')
     if len(set(args.mount)) != len(args.mount) or len(set(args.interface)) != len(args.interface):
         ap.error('duplicate mount or interface selected')
-    if not args.pod_namespace and args.type in ('machine', 'os', 'kernel'):
+    if not args.pod_namespace and probes and args.type in ('machine', 'os', 'kernel'):
         try:
             require_host()
         except (OSError, ValueError, subprocess.SubprocessError):
             ap.error('machine/os/kernel observations require a verified native host; check host namespaces and systemd-detect-virt')
+    probe_url = args.http_probe
+    if probe_url and (probe_url.scheme not in ('http', 'https') or not probe_url.hostname or probe_url.username or probe_url.password or probe_url.fragment):
+        ap.error('http-probe must be an explicit HTTP(S) URL without credentials or fragment')
     url = args.nginx_status
     if url and (url.scheme != 'http' or url.hostname not in ('127.0.0.1','::1') or url.username or url.password or url.query or url.fragment):
         ap.error('stub_status must be an explicit HTTP loopback address')

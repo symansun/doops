@@ -470,6 +470,10 @@ fi
 
 echo "[4/6] Restarting the systemd-owned gateway"
 "${SSH[@]}" "set -euo pipefail
+sudo -n mkdir -p /etc/systemd/system/doops-gateway.service.d
+printf '[Service]\nKillSignal=SIGTERM\nTimeoutStopSec=150\n' |
+  sudo -n tee /etc/systemd/system/doops-gateway.service.d/graceful-shutdown.conf >/dev/null
+sudo -n systemctl daemon-reload
 sudo -n systemctl restart doops-gateway
 sudo -n systemctl is-active --quiet doops-gateway
 sleep 2
