@@ -49,6 +49,11 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if h.IsDraining() {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		return
+	}
 	host, err := normalizeProxyHost(r.Host)
 	if err != nil {
 		http.Error(w, "proxy host is invalid", http.StatusBadRequest)
@@ -74,7 +79,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	agent := h.registry.Wait(r.Context(), route.Cluster, route.Instance, h.opts.TargetReconnectGrace)
 	if agent == nil {
-		http.Error(w, fmt.Sprintf("target offline: %s/%s", route.Cluster, route.Instance), http.StatusBadGateway)
+		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 		return
 	}
 	opCtx, cancel := context.WithCancel(r.Context())
@@ -83,10 +88,10 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	auditID, err := h.store.StartAudit(AuditEvent{
 		UserID:  "proxy",
 		Cluster: route.Cluster, Instance: route.Instance, Action: ActionProxy,
-		CommandSummary: r.Method + " " + r.URL.RequestURI(), StartedAt: time.Now().UTC(),
+		CommandSummary: "proxy " + route.ID, StartedAt: time.Now().UTC(),
 	})
 	if err != nil {
-		http.Error(w, "start audit: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	opID, holderID := h.client.registerActiveOperationForAgent(GatewayActiveOperation{
@@ -96,7 +101,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		Cluster:        route.Cluster,
 		Instance:       route.Instance,
 		Action:         ActionProxy,
-		CommandSummary: r.Method + " " + r.URL.RequestURI(),
+		CommandSummary: "proxy " + route.ID,
 		Kind:           "proxy",
 	}, cancel, agent)
 	defer h.client.finishActiveOperation(opID)
@@ -105,7 +110,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		_ = h.client.finishExecutionAudit(auditID, AuditFinish{
 			Status: "blocked", Error: errMsg, EndedAt: time.Now().UTC(),
 		})
-		http.Error(w, errMsg, http.StatusConflict)
+		http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
 		return
 	}
 	lease, err := agent.acquireActionLease(opCtx, ActionProxy, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
@@ -113,7 +118,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		_ = h.client.finishExecutionAudit(auditID, AuditFinish{
 			Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
 		})
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 		return
 	}
 	h.client.attachOperationLease(opID, lease)
@@ -123,7 +128,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 			_ = h.client.finishExecutionAudit(auditID, AuditFinish{
 				Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
 			})
-			http.Error(w, err.Error(), http.StatusConflict)
+			http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
 			return
 		}
 	}
@@ -142,7 +147,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 			status, errorText = "outcome_unknown", errExecutionOutcomeUnknown.Error()
 		}
 		if !response.committed {
-			http.Error(w, relayErr.Error(), http.StatusBadGateway)
+			http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 		}
 	}
 	_ = h.client.finishExecutionAudit(auditID, AuditFinish{
