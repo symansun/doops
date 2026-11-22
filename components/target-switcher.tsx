@@ -29,6 +29,7 @@ export function TargetSwitcher({
   loading,
   isAdmin,
   onViewAll,
+  needsTarget,
 }: {
   targets: Target[]
   selected: Target | null
@@ -38,6 +39,8 @@ export function TargetSwitcher({
   // 未传入时空状态用对两种角色都成立的说法。
   isAdmin?: boolean
   onViewAll?: () => void
+  // 用户点了需要在线目标的功能但没有目标时，在这里就地提示。
+  needsTarget?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -54,19 +57,26 @@ export function TargetSwitcher({
   if (targets.length === 0) {
     const empty = targetSwitcherEmptyCopy(isAdmin)
     return (
-      <div title={empty.hint} className="flex items-center gap-2 rounded-lg border bg-muted/40 px-2.5 py-1.5">
-        <ServerIcon width={14} height={14} className="text-muted-foreground" />
-        <span className="whitespace-nowrap text-xs text-muted-foreground">{empty.label}</span>
-        <Button
-          onClick={onRefresh}
-          disabled={loading}
-          variant="ghost"
-          size="sm"
-          icon
-          aria-label="刷新 Agent 目标列表"
-        >
-          <RefreshIcon width={13} height={13} className={loading ? "animate-spin" : ""} />
-        </Button>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div title={empty.hint} className="flex items-center gap-2 rounded-lg border bg-muted/40 px-2.5 py-1.5">
+          <ServerIcon width={14} height={14} className="text-muted-foreground" />
+          <span className="whitespace-nowrap text-xs text-muted-foreground">{empty.label}</span>
+          <Button
+            onClick={onRefresh}
+            disabled={loading}
+            variant="ghost"
+            size="sm"
+            icon
+            aria-label="刷新 Agent 目标列表"
+          >
+            <RefreshIcon width={13} height={13} className={loading ? "animate-spin" : ""} />
+          </Button>
+        </div>
+        {needsTarget && (
+          <span role="alert" className="basis-full text-xs text-warning">
+            当前没有可用的 Agent 目标，请选择在线目标
+          </span>
+        )}
       </div>
     )
   }
@@ -101,6 +111,12 @@ export function TargetSwitcher({
         )}
         <ChevronDownIcon width={13} height={13} className={`text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </Button>
+
+      {needsTarget && (
+        <span role="alert" className="basis-full text-xs text-warning">
+          当前没有可用的 Agent 目标，请选择在线目标
+        </span>
+      )}
 
       {open && (
         <div

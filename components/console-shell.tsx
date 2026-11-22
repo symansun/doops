@@ -144,6 +144,8 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   const [view, setView] = useState<ConsoleView>(CONSOLE_HOME)
   const pendingHomeTab = useRef<Tab | null>(null)
   const [deploySection, setDeploySection] = useState<DeploySection>("onboard")
+  // 没有可用的在线目标时点了资产台账，就在目标选择器上就地说明原因。
+  const [needsTarget, setNeedsTarget] = useState(false)
   const [catalogKind, setCatalogKind] = useState<CatalogKind>("database")
   const [catalogContext, setCatalogContext] = useState<{row: CatalogRow; targetKey: string; sessionId: string; scope:string} | null>(null)
   const [assetNamespace, setAssetNamespace] = useState("")
@@ -535,8 +537,17 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     setAssetPage(next)
   }
 
+  // 资产台账依赖目标数据；没有在线目标时不进入，避免显示一页空列表。
+  // 只拦这一条路径：部署向导、目录和控制台在无目标时仍有各自的空态。
+  function blockMissingTarget(next: ConsoleView): boolean {
+    if (next !== "assets" || onlineSelected) return false
+    setNeedsTarget(true)
+    return true
+  }
+
   // 态势感知、智能巡检、Skill 管理、MCP 管理、平台监控与台账各自独立；台账记忆上次打开的分节。
   function openAssetArea(area: AssetArea): void {
+    if (blockMissingTarget("assets")) return
     openView("assets")
     if (area === "situation") return openAssetPage({ section: "situation" })
     if (area === "inspection") return openAssetPage({ section: "inspection" })
@@ -553,6 +564,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   function navigateEntry(entry: ConsoleNavEntry) {
     const destination = entry.destination
     if (destination.view === CONSOLE_HOME) return openView(CONSOLE_HOME)
+    if (blockMissingTarget(destination.view)) return
     if (destination.view === "assets") {
       openAssetArea(destination.area)
       return
@@ -584,6 +596,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
 
   // Switching views clears the operation error, like a refresh the user asked for.
   function openView(next: typeof view) {
+    if (next !== view && blockMissingTarget(next)) return
     if (next !== view && blockTerminalSwitch()) return
     if (next !== view) {
       pendingHomeTab.current = null
@@ -594,6 +607,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     }
     if (next === "deploy" && view !== "deploy") setDeploySection(onlineSelected ? "workload" : "onboard")
     setError("")
+    setNeedsTarget(false)
     setView(next)
   }
 
@@ -642,6 +656,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     setSessionId(randomSession())
     // A terminal is scoped to one target and session. Review the new target before opening its terminal.
     setTab((cur) => cur === "terminal" ? "overview" : cur)
+    setNeedsTarget(false)
     return true
   }
 
@@ -714,6 +729,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
             onRefresh={() => refresh("user")}
             loading={loading}
             isAdmin={isAdmin}
+            needsTarget={needsTarget}
           />
           <span className="hidden text-xs text-muted-foreground sm:inline">{displayUserName(session)}</span>
           <Link
