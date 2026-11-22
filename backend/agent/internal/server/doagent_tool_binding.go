@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/user/doops/agent/api"
 	"github.com/user/doops/agent/internal/dispatcher"
 	"io"
 	"reflect"
@@ -58,6 +59,94 @@ type doagentToolTraceCollector struct {
 	finalMessage                    string
 	finalReport                     json.RawMessage
 	turnResult                      map[string]interface{}
+	defaultModel                    string
+	observedModel                   string
+	inputTokens                     uint64
+	outputTokens                    uint64
+	totalTokens                     uint64
+}
+
+func (c *doagentToolTraceCollector) setDefaultModel(model string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.defaultModel = strings.TrimSpace(model)
+}
+
+func (c *doagentToolTraceCollector) observeUsageLocked(update map[string]interface{}) {
+	if rawModel, ok := update["model"].(string); ok {
+		if m := strings.TrimSpace(rawModel); m != "" && validCredentialMetadataToken(m, 128) {
+			c.observedModel = m
+		}
+	}
+	readTokenUint := func(src map[string]interface{}, key string) (uint64, bool) {
+		val, exists := src[key]
+		if !exists || val == nil {
+			return 0, false
+		}
+		encoded, err := json.Marshal(val)
+		if err != nil {
+			return 0, false
+		}
+		var n uint64
+		if err := json.Unmarshal(encoded, &n); err != nil {
+			return 0, false
+		}
+		return n, true
+	}
+	apply := func(src map[string]interface{}) {
+		if inTok, ok := readTokenUint(src, "inputTokens"); ok && inTok > c.inputTokens {
+			c.inputTokens = inTok
+		}
+		if outTok, ok := readTokenUint(src, "outputTokens"); ok && outTok > c.outputTokens {
+			c.outputTokens = outTok
+		}
+		if totTok, ok := readTokenUint(src, "totalTokens"); ok && totTok > c.totalTokens {
+			c.totalTokens = totTok
+		}
+	}
+	if usage, ok := update["usage"].(map[string]interface{}); ok {
+		apply(usage)
+	}
+	apply(update)
+}
+
+func (c *doagentToolTraceCollector) attachUsageToResponse(v interface{}) interface{} {
+	resp, ok := v.(api.JSONRPCResponse)
+	if !ok || resp.Result == nil {
+		return v
+	}
+	resultMap, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		return v
+	}
+	c.mu.Lock()
+	model := c.observedModel
+	if model == "" {
+		model = c.defaultModel
+	}
+	inTok, outTok, totTok := c.inputTokens, c.outputTokens, c.totalTokens
+	c.mu.Unlock()
+	if totTok == 0 && (inTok > 0 || outTok > 0) {
+		totTok = inTok + outTok
+	}
+	if model == "" && inTok == 0 && outTok == 0 && totTok == 0 {
+		return v
+	}
+	const maxAuditInt = uint64(1<<63 - 1)
+	clamp := func(x uint64) int64 {
+		if x > maxAuditInt {
+			return int64(maxAuditInt)
+		}
+		return int64(x)
+	}
+	resultMap["_doops_usage"] = map[string]interface{}{
+		"model":         model,
+		"input_tokens":  clamp(inTok),
+		"output_tokens": clamp(outTok),
+		"total_tokens":  clamp(totTok),
+	}
+	resp.Result = resultMap
+	return resp
 }
 
 func newDoagentToolTraceCollector(collectAgentReport bool) *doagentToolTraceCollector {
@@ -83,6 +172,9 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	if update["replay"] == true {
 		return nil
 	}
+	c.mu.Lock()
+	c.observeUsageLocked(update)
+	c.mu.Unlock()
 	if update["sessionUpdate"] == "turn_finished" {
 		terminal, err := doagentUIStrings(update, []string{"turnId", "status", "stopReason", "failureClass", "failureReason", "error"})
 		if err != nil {

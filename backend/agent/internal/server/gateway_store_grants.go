@@ -41,7 +41,7 @@ func (s *GatewayStore) UserCanUseTarget(userID, cluster, instance string) bool {
 		return true
 	}
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(1) FROM grants g JOIN users u ON u.id = g.user_id
+	err := s.readDB().QueryRow(`SELECT COUNT(1) FROM grants g JOIN users u ON u.id = g.user_id
 		WHERE g.user_id = ? AND u.disabled = 0
 		  AND (g.cluster = '*' OR g.cluster = ?) AND (g.instance = '*' OR g.instance = ?)`,
 		userID, cluster, instance).Scan(&n)
@@ -54,7 +54,7 @@ func (s *GatewayStore) UserIsPlatformAdmin(userID string) bool {
 		return false
 	}
 	var admin int
-	err := s.db.QueryRow(`SELECT is_admin FROM users WHERE id = ? AND disabled = 0`, userID).Scan(&admin)
+	err := s.readDB().QueryRow(`SELECT is_admin FROM users WHERE id = ? AND disabled = 0`, userID).Scan(&admin)
 	return err == nil && admin == 1
 }
 

@@ -143,6 +143,36 @@ printf 'NAME CPU(cores) MEMORY(bytes)\norder-api 125m 37Mi\n'
 		t.Fatalf("unexpected native series: %s", data)
 	}
 	client.http(t, op, "POST", monitorPath, strings.Replace(body, "local", "private", 1), 403)
+
+	// Native container runtime collection (docker stats) + memory_limit threshold rule.
+	if err = os.WriteFile(filepath.Join(dir, "docker"), []byte(`#!/bin/sh
+[ "$1" = 'stats' ] || exit 12
+printf '{"Name":"/web-nginx","CPUPerc":"45.00%%","MemUsage":"128MiB / 512MiB"}\n{"Name":"redis-cache","CPUPerc":"5.00%%","MemUsage":"64MiB / 256MiB"}\n'
+`), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cRes := client.http(t, op, "POST", monitorPath, `{"action":"collect","mode":"containers","cluster":"dev","instance":"local"}`, 200)
+	if !strings.Contains(string(cRes), `"runtime":"docker"`) || !strings.Contains(string(cRes), `"accepted":6`) {
+		t.Fatalf("unexpected container collect response: %s", cRes)
+	}
+	cData := client.http(t, op, "GET", monitorPath+"?cluster=dev&instance=local&type=container&asset_id=web-nginx&origin=container_stats", "", 200)
+	var cDetail struct{ Series []monitorSeries }
+	if err = json.Unmarshal(cData, &cDetail); err != nil || len(cDetail.Series) != 3 {
+		t.Fatalf("unexpected container series: %s", cData)
+	}
+	client.http(t, f.admin, "POST", monitorPath, `{"action":"rule","cluster":"dev","instance":"local","type":"container","asset_id":"web-nginx","origin":"container_stats","metric":"memory_limit","threshold":1048576,"duration_seconds":60}`, 200)
+
+	// Native VM / host tunnel collection.
+	hRes := client.http(t, op, "POST", monitorPath, `{"action":"collect","mode":"host","cluster":"dev","instance":"local"}`, 200)
+	var hAccepted struct{ Accepted int }
+	if json.Unmarshal(hRes, &hAccepted) != nil || hAccepted.Accepted < 3 {
+		t.Fatalf("unexpected host collect response: %s", hRes)
+	}
+	hData := client.http(t, op, "GET", monitorPath+"?cluster=dev&instance=local&type=machine&asset_id=local&origin=agent_host", "", 200)
+	var hDetail struct{ Series []monitorSeries }
+	if json.Unmarshal(hData, &hDetail) != nil || len(hDetail.Series) < 3 {
+		t.Fatalf("unexpected host series: %s", hData)
+	}
 }
 
 func TestAssetMonitorScopeHistoryAndRecovery(t *testing.T) {
@@ -166,8 +196,8 @@ func TestAssetMonitorScopeHistoryAndRecovery(t *testing.T) {
 	}
 	for kind := range monitorKinds {
 		for metric, unit := range monitorUnits {
-			if strings.HasPrefix(metric, "disk_") {
-				continue // Disk I/O has its own machine-only HTTP coverage.
+			if strings.HasPrefix(metric, "disk_") || metric == "memory_limit" {
+				continue // Machine disk I/O and container memory_limit have dedicated HTTP coverage.
 			}
 			p := monitorInput{monitorAsset: monitorAsset{Type: kind, AssetID: "asset-1"}, Metric: metric, Unit: unit, monitorPoint: monitorPoint{At: start, Status: "ok", Value: &value}}
 			if metric == "storage_total" || metric == "storage_available" {
@@ -182,8 +212,8 @@ func TestAssetMonitorScopeHistoryAndRecovery(t *testing.T) {
 	base := monitorPath + "?cluster=dev&instance=local&cluster_id=C-1"
 	list := f.http(t, reader, "GET", base, "", 200)
 	var catalog struct{ Assets []monitorAsset }
-	if json.Unmarshal(list, &catalog) != nil || len(catalog.Assets) != 6 {
-		t.Fatalf("six types: %s", list)
+	if json.Unmarshal(list, &catalog) != nil || len(catalog.Assets) != len(monitorKinds) {
+		t.Fatalf("all monitor kinds: %s", list)
 	}
 	f.http(t, reader, "GET", strings.Replace(base, "C-1", "C-2", 1), "", 403)
 	path := base + "&type=machine&asset_id=asset-1&origin=exporter"

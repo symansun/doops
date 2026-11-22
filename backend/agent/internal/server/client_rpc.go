@@ -45,7 +45,11 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 		log.Printf("[gateway] client upgrade failed: %v", err)
 		return
 	}
-	defer conn.Close()
+	h.trackClientConn(conn)
+	defer func() {
+		h.untrackClientConn(conn)
+		_ = conn.Close()
+	}()
 
 	var connMu sync.Mutex
 	var dataWriteState websocketDataWriteState

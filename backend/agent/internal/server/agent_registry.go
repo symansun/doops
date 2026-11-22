@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,6 +34,41 @@ func ReconnectGraceOption(grace time.Duration) time.Duration {
 	return explicitNoReconnectGrace
 }
 
+// keyedMutex serializes work per target key without blocking unrelated targets.
+type keyedMutex struct {
+	mu    sync.Mutex
+	locks map[string]*keyedMutexEntry
+}
+
+type keyedMutexEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (k *keyedMutex) Lock(key string) (unlock func()) {
+	k.mu.Lock()
+	if k.locks == nil {
+		k.locks = make(map[string]*keyedMutexEntry)
+	}
+	e := k.locks[key]
+	if e == nil {
+		e = &keyedMutexEntry{}
+		k.locks[key] = e
+	}
+	e.refs++
+	k.mu.Unlock()
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		k.mu.Lock()
+		e.refs--
+		if e.refs == 0 {
+			delete(k.locks, key)
+		}
+		k.mu.Unlock()
+	}
+}
+
 // AgentRegistry is the single owner of live agent sessions and their persisted
 // connectivity state.
 type AgentRegistry struct {
@@ -41,11 +77,14 @@ type AgentRegistry struct {
 	allowOpenRegistration bool
 	store                 *GatewayStore
 
-	mu          sync.RWMutex
-	sessions    map[string]*GatewayAgent
-	generations map[string]uint64
-	changed     map[string]chan struct{}
-	retired     map[string][]string
+	registering keyedMutex
+
+	mu               sync.RWMutex
+	sessions         map[string]*GatewayAgent
+	generations      map[string]uint64
+	changed          map[string]chan struct{}
+	retired          map[string][]string
+	lastSampleAtUnix atomic.Int64
 }
 
 func NewAgentRegistry(store *GatewayStore) (*AgentRegistry, error) {
@@ -73,45 +112,66 @@ func NewAgentRegistry(store *GatewayStore) (*AgentRegistry, error) {
 }
 
 func (r *AgentRegistry) Register(agent *GatewayAgent) error {
-	r.mu.Lock()
+	return r.RegisterWithEnrollment(agent, "")
+}
+
+// RegisterWithEnrollment serializes registration per target key so database I/O
+// (enrollment check/confirmation and online persistence) never holds the global
+// registry lock r.mu. When enrollmentID is non-empty, ConfirmAgentEnrollment
+// runs inside the same per-target critical section so an unenrolled session for
+// the same target cannot slip between confirmation and session swap.
+func (r *AgentRegistry) RegisterWithEnrollment(agent *GatewayAgent, enrollmentID string) error {
 	key := agent.Key
-	if runtimeIDRetired(r.retired[key], agent.RuntimeID) {
-		if r.sessions[key] != nil {
-			r.mu.Unlock()
-			return fmt.Errorf("agent runtime %q was superseded for %s", agent.RuntimeID, key)
-		}
-		r.retired[key] = removeRetiredRuntimeID(r.retired[key], agent.RuntimeID)
+	unlock := r.registering.Lock(key)
+	defer unlock()
+
+	// 1. Memory-only precheck under read lock.
+	r.mu.RLock()
+	superseded := runtimeIDRetired(r.retired[key], agent.RuntimeID) && r.sessions[key] != nil
+	generation := r.generations[key] + 1
+	r.mu.RUnlock()
+	if superseded {
+		return fmt.Errorf("agent runtime %q was superseded for %s", agent.RuntimeID, key)
 	}
-	old := r.sessions[key]
-	if agent.TokenID == "" {
-		// Checked again under the registry lock: a session that passed the
+
+	// 2. Database access outside r.mu.
+	if enrollmentID != "" {
+		if err := r.store.ConfirmAgentEnrollment(enrollmentID); err != nil {
+			return fmt.Errorf("confirm agent enrollment: %w", err)
+		}
+	} else if agent.TokenID == "" {
+		// Checked again under the per-target lock: a session that passed the
 		// handler's open-registration check must not replace an Agent whose
 		// target confirmed its enrollment in the meantime, and no unenrolled
 		// session replaces a live one while open registration is closed.
 		locked, err := r.store.TargetHasActiveAgentEnrollment(agent.Cluster, agent.Instance)
 		if err != nil {
-			r.mu.Unlock()
 			return fmt.Errorf("check agent enrollment: %w", err)
 		}
 		if locked || !r.allowOpenRegistration {
-			r.mu.Unlock()
 			return fmt.Errorf("%w for %s", ErrAgentEnrollmentRequired, key)
 		}
 	}
-	generation := r.generations[key] + 1
 	agent.Generation = generation
 	if err := r.store.MarkAgentOnline(AgentStatus{
-		Cluster:     agent.Cluster,
-		Instance:    agent.Instance,
-		TokenID:     agent.TokenID,
-		Remote:      agent.Remote,
-		Generation:  agent.Generation,
-		ConnectedAt: agent.ConnectedAt,
-		LastSeen:    agent.LastSeen,
+		Cluster:       agent.Cluster,
+		Instance:      agent.Instance,
+		TokenID:       agent.TokenID,
+		Remote:        agent.Remote,
+		ReleaseCommit: agent.ReleaseCommit,
+		Generation:    agent.Generation,
+		ConnectedAt:   agent.ConnectedAt,
+		LastSeen:      agent.LastSeen,
 	}); err != nil {
-		r.mu.Unlock()
 		return fmt.Errorf("persist agent online: %w", err)
 	}
+
+	// 3. Memory swap only under write lock.
+	r.mu.Lock()
+	if runtimeIDRetired(r.retired[key], agent.RuntimeID) {
+		r.retired[key] = removeRetiredRuntimeID(r.retired[key], agent.RuntimeID)
+	}
+	old := r.sessions[key]
 	if old != nil && old.RuntimeID != "" && old.RuntimeID != agent.RuntimeID {
 		r.retired[key] = appendRetiredRuntimeID(r.retired[key], old.RuntimeID)
 	}
@@ -119,6 +179,7 @@ func (r *AgentRegistry) Register(agent *GatewayAgent) error {
 	r.sessions[key] = agent
 	r.notifyLocked(key)
 	r.mu.Unlock()
+	r.recordLoadSampleMinInterval(0)
 
 	if old != nil && old.conn != nil {
 		_ = old.conn.Close()
@@ -177,6 +238,7 @@ func (r *AgentRegistry) Unregister(agent *GatewayAgent) error {
 	if err := r.store.MarkAgentOffline(agent.Cluster, agent.Instance, agent.Generation, lastSeen); err != nil {
 		return fmt.Errorf("persist agent offline: %w", err)
 	}
+	r.recordLoadSampleMinInterval(0)
 	return nil
 }
 
@@ -197,13 +259,88 @@ func (r *AgentRegistry) TouchContext(ctx context.Context, agent *GatewayAgent, l
 	if err != nil {
 		return fmt.Errorf("persist agent heartbeat: %w", err)
 	}
+	r.recordLoadSampleMinInterval(60 * time.Second)
 	return nil
+}
+
+func (r *AgentRegistry) recordLoadSampleMinInterval(minInterval time.Duration) {
+	if r == nil || r.store == nil {
+		return
+	}
+	now := time.Now().UTC()
+	if minInterval > 0 {
+		nowSec := now.Unix()
+		prev := r.lastSampleAtUnix.Load()
+		if prev > 0 && nowSec-prev < int64(minInterval/time.Second) {
+			return
+		}
+		if !r.lastSampleAtUnix.CompareAndSwap(prev, nowSec) {
+			return
+		}
+	} else {
+		r.lastSampleAtUnix.Store(now.Unix())
+	}
+	targets := r.List()
+	sample := PlatformLoadSample{AtMs: now.UnixMilli(), OnlineAgents: len(targets)}
+	for _, t := range targets {
+		if t.Busy {
+			sample.BusyAgents++
+		}
+		sample.ActiveOps += t.ActiveOps
+		sample.QueuedOps += t.QueuedOps
+		sample.ActiveSessions += len(t.Sessions)
+		sample.ResourceLocks += len(t.Resources)
+	}
+	_ = r.store.RecordPlatformLoadSample(sample)
 }
 
 func (r *AgentRegistry) Get(cluster, instance string) *GatewayAgent {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.sessions[tunnelKey(cluster, instance)]
+}
+
+// FlushHeartbeatsContext persists the latest in-memory LastSeen for all live
+// sessions in a single batched write transaction.
+func (r *AgentRegistry) FlushHeartbeatsContext(ctx context.Context) error {
+	r.mu.RLock()
+	updates := make([]AgentHeartbeatUpdate, 0, len(r.sessions))
+	for _, agent := range r.sessions {
+		agent.stateMu.RLock()
+		lastSeen := agent.LastSeen
+		agent.stateMu.RUnlock()
+		updates = append(updates, AgentHeartbeatUpdate{
+			Cluster:    agent.Cluster,
+			Instance:   agent.Instance,
+			Generation: agent.Generation,
+			LastSeen:   lastSeen,
+		})
+	}
+	r.mu.RUnlock()
+	if len(updates) == 0 {
+		return nil
+	}
+	if err := r.store.TouchAgentsContext(ctx, updates); err != nil {
+		return fmt.Errorf("persist batched agent heartbeats: %w", err)
+	}
+	r.recordLoadSampleMinInterval(60 * time.Second)
+	return nil
+}
+
+// CloseAll closes every live Agent WebSocket connection (used during graceful
+// shutdown after draining).
+func (r *AgentRegistry) CloseAll() {
+	r.mu.RLock()
+	agents := make([]*GatewayAgent, 0, len(r.sessions))
+	for _, agent := range r.sessions {
+		agents = append(agents, agent)
+	}
+	r.mu.RUnlock()
+	for _, agent := range agents {
+		if agent.conn != nil {
+			_ = agent.conn.Close()
+		}
+	}
 }
 
 func (r *AgentRegistry) Wait(ctx context.Context, cluster, instance string, grace time.Duration) *GatewayAgent {
@@ -214,17 +351,25 @@ func (r *AgentRegistry) Wait(ctx context.Context, cluster, instance string, grac
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	for {
-		r.mu.Lock()
-		if agent := r.sessions[key]; agent != nil {
-			r.mu.Unlock()
+		r.mu.RLock()
+		agent := r.sessions[key]
+		ch := r.changed[key]
+		r.mu.RUnlock()
+		if agent != nil {
 			return agent
 		}
-		ch := r.changed[key]
 		if ch == nil {
-			ch = make(chan struct{})
-			r.changed[key] = ch
+			r.mu.Lock()
+			if agent = r.sessions[key]; agent != nil {
+				r.mu.Unlock()
+				return agent
+			}
+			if ch = r.changed[key]; ch == nil {
+				ch = make(chan struct{})
+				r.changed[key] = ch
+			}
+			r.mu.Unlock()
 		}
-		r.mu.Unlock()
 
 		select {
 		case <-ctx.Done():

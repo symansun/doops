@@ -3,6 +3,7 @@ package server
 import (
 	"github.com/gorilla/websocket"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -31,18 +32,27 @@ func dialFakeGatewayAgent(t *testing.T, serverURL, cluster, instance string) *we
 	return agentConn
 }
 
+// Credentials belong to this fixture's temporary store. Authenticate before the session is published.
+func dialEnrolledTestAgent(t *testing.T, f *executionLifecycleFixture, cluster, instance string) *websocket.Conn {
+	t.Helper()
+	enrollment, err := f.store.CreateAgentEnrollment(cluster, instance)
+	if err != nil {
+		t.Fatalf("create test enrollment: %v", err)
+	}
+	query := url.Values{"cluster": {cluster}, "instance": {instance}}
+	endpoint := "ws" + strings.TrimPrefix(f.server.URL, "http") + "/v1/agent/connect?" + query.Encode()
+	conn, _, err := websocket.DefaultDialer.Dial(endpoint, http.Header{"Authorization": {"Bearer " + enrollment.Plaintext}})
+	if err != nil {
+		t.Fatalf("connect enrolled test Agent: %v", err)
+	}
+	return conn
+}
+
 func waitForGatewayAgent(t *testing.T, hub *GatewayHub, cluster, instance string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if agent := hub.getAgent(cluster, instance); agent != nil {
-			// Tests model Agents that completed enrollment; token-less sessions
-			// are covered explicitly by the impersonation tests.
-			hub.registry.mu.Lock()
-			if agent.TokenID == "" {
-				agent.TokenID = "test-enrollment"
-			}
-			hub.registry.mu.Unlock()
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

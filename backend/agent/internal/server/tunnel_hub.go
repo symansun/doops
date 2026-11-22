@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -46,7 +48,11 @@ type GatewayHub struct {
 	client       *ClientService
 	edge         *EdgeRegistry
 
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+
 	credentialMutationLocks sync.Map
+	monitorRunning          sync.Map
 	loginFailures           *loginFailureLimiter
 }
 
@@ -91,10 +97,13 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if opts.DetachedTaskTimeout <= 0 {
 		opts.DetachedTaskTimeout = 24 * time.Hour
 	}
+	bgCtx, bgCancel := context.WithCancel(context.Background())
 	hub := &GatewayHub{
 		store:         store,
 		opts:          opts,
 		registry:      registry,
+		bgCtx:         bgCtx,
+		bgCancel:      bgCancel,
 		loginFailures: newLoginFailureLimiter(),
 	}
 	hub.registration = NewAgentRegistrationHandler(
@@ -127,6 +136,12 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/git/", h.HandleGitHTTP)
 	mux.HandleFunc("/", h.HandlePublicProxy)
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
+	mux.HandleFunc("/v1/platform-monitor", h.HandlePlatformMonitor)
+	mux.HandleFunc("/v1/monitor/overview", h.HandleMonitorOverview)
+	mux.HandleFunc("/v1/monitor/resources/history", h.HandleMonitorResourceHistory)
+	mux.HandleFunc("/v1/monitor/schedules", h.HandleMonitorSchedules)
+	mux.HandleFunc("/v1/monitor/runs", h.HandleMonitorRuns)
+	mux.HandleFunc("/v1/monitor/runs/", h.HandleMonitorRuns)
 	mux.HandleFunc("/v1/assets/records", h.HandlePersonalAssetRecords)
 	mux.HandleFunc("/v1/assets/catalog", h.HandleResourceCatalog)
 	mux.HandleFunc("/v1/assets/cluster-profiles", h.HandleClusterProfiles)
@@ -159,9 +174,116 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	admin("/v1/admin/instances/archive", h.HandleAdminInstanceArchive)
 	admin("/v1/admin/instances/unarchive", h.HandleAdminInstanceUnarchive)
 	admin("/v1/admin/proxy-routes", h.HandleAdminProxyRoutes)
+	mux.HandleFunc("/v1/admin/operations", h.HandleAdminOperations)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if h.IsDraining() {
+			http.Error(w, "draining", http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+}
+
+// StartHeartbeatFlusher periodically persists all live Agents' in-memory
+// LastSeen timestamps in one batched SQLite write transaction.
+func (h *GatewayHub) StartHeartbeatFlusher(interval time.Duration) {
+	if h == nil || h.registry == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = h.opts.AgentLease / 3
+		if interval <= 0 {
+			interval = 30 * time.Second
+		}
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-h.bgCtx.Done():
+				return
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(h.bgCtx, gatewayAgentTouchTimeout)
+				err := h.registry.FlushHeartbeatsContext(ctx)
+				cancel()
+				if err != nil && h.bgCtx.Err() == nil {
+					log.Printf("[gateway] batched agent heartbeat flush failed: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+// BeginDrain marks the Gateway as draining: /health returns 503 and new
+// operations (RPC, Git, Proxy, internal calls, Agent registrations) are rejected.
+func (h *GatewayHub) BeginDrain() {
+	if h == nil {
+		return
+	}
+	if h.client != nil {
+		h.client.beginDrain()
+	}
+	if h.registration != nil {
+		h.registration.draining.Store(true)
+	}
+}
+
+func (h *GatewayHub) IsDraining() bool {
+	return h != nil && h.client != nil && h.client.isDraining()
+}
+
+func (h *GatewayHub) ActiveOperationCount() int {
+	if h == nil || h.client == nil {
+		return 0
+	}
+	return h.client.activeOperationCount()
+}
+
+// WaitIdle waits until all in-flight operations complete or ctx expires.
+// Returns the number of operations still active (0 when cleanly drained).
+func (h *GatewayHub) WaitIdle(ctx context.Context) int {
+	if h == nil || h.client == nil {
+		return 0
+	}
+	return h.client.waitIdle(ctx)
+}
+
+// CloseTunnels stops background workers and closes live Agent and Client
+// WebSocket connections during graceful shutdown.
+func (h *GatewayHub) CloseTunnels() {
+	if h == nil {
+		return
+	}
+	if h.bgCancel != nil {
+		h.bgCancel()
+	}
+	if h.client != nil {
+		h.client.closeClientConns()
+	}
+	if h.registry != nil {
+		h.registry.CloseAll()
+	}
+}
+
+func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	auth, err := h.authenticateUser(r)
+	if err != nil {
+		h.writeUserAuthError(w, r, err)
+		return
+	}
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	writeJSONHTTP(w, map[string]interface{}{
+		"draining":   h.IsDraining(),
+		"operations": h.listActiveOperations(),
 	})
 }
 

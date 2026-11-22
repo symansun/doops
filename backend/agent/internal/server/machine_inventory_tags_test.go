@@ -16,9 +16,9 @@ func TestMachineInventoryTagLifecycleAndVisibility(t *testing.T) {
 	if err := f.store.GrantUser(f.userID, ScopeGrant{Cluster: "ops", Instance: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	m := machineInventoryInput{AssetID: "visible", Name: "test", Kind: "vm", Cluster: "ops", Instance: "test", Tags: []string{" QA ", "测试", "qa"}}
+	m := machineInventoryInput{AssetID: "visible", Name: "test", Kind: "vm", Cluster: "ops", Instance: "test", Tags: []string{" QA ", "测试", "qa", "院系=音乐工程", "Env=Prod"}}
 	saved := f.save(t, "create", m, 0, 200)
-	if !slices.Equal(saved.Tags, []string{"qa", "测试"}) {
+	if !slices.Equal(saved.Tags, []string{"env=prod", "qa", "测试", "院系=音乐工程"}) {
 		t.Fatal(saved.Tags)
 	}
 	f.save(t, "create", machineInventoryInput{AssetID: "unbound", Name: "hidden", Kind: "physical", Tags: []string{"qa"}}, 0, 200)
@@ -43,6 +43,11 @@ func TestMachineInventoryTagLifecycleAndVisibility(t *testing.T) {
 	check(f.admin, "?tag=qa", "unbound", "visible")
 	check(f.user, "?tag=QA", "visible")
 	check(f.admin, "?tag=qa&tag="+url.QueryEscape("测试"), "visible")
+	check(f.user, "?tag="+url.QueryEscape("院系=音乐工程"), "visible")
+	check(f.user, "?tag=env%3Dprod", "visible")
+	mSecret := m
+	mSecret.Tags = []string{"password=canary"}
+	f.save(t, "update", mSecret, 1, 400)
 	check(f.user, "?tag=q")
 	f.request(t, f.user, "POST", "", map[string]any{"action": "update", "machine": m, "expected_revision": 1}, 403)
 	m.Tags = nil

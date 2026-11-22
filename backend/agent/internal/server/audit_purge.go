@@ -49,10 +49,11 @@ func (s *GatewayStore) purgeAuditBefore(userID, tokenID string, before time.Time
 		return 0, err
 	}
 	defer tx.Rollback()
+	nowUTC := time.Now().UTC()
 	result, err := tx.Exec(`INSERT INTO audit_events
-		(user_id, token_id, action, session, command_summary, status, started_at)
-		VALUES (?, ?, 'audit:purge', 'audit-purge', ?, 'running', ?)`,
-		userID, tokenID, "audit:purge before="+formatTime(before.UTC()), formatTime(time.Now().UTC()))
+		(user_id, token_id, action, session, command_summary, status, started_at_ms, started_at)
+		VALUES (?, ?, 'audit:purge', 'audit-purge', ?, 'running', ?, ?)`,
+		userID, tokenID, "audit:purge before="+formatTime(before.UTC()), nowUTC.UnixMilli(), formatTime(nowUTC))
 	if err != nil {
 		return 0, err
 	}

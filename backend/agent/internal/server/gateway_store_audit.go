@@ -30,6 +30,10 @@ type AuditEvent struct {
 	Tail            string
 	BytesIn         int64
 	BytesOut        int64
+	Model           string
+	InputTokens     int64
+	OutputTokens    int64
+	TotalTokens     int64
 	StartedAt       time.Time
 	EndedAt         time.Time
 }
@@ -41,6 +45,10 @@ type AuditFinish struct {
 	CommandSummary  string
 	BytesIn         int64
 	BytesOut        int64
+	Model           string
+	InputTokens     int64
+	OutputTokens    int64
+	TotalTokens     int64
 	Cluster         string
 	Instance        string
 	VersionID       string
@@ -79,15 +87,17 @@ func (s *GatewayStore) StartAudit(event AuditEvent) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	startedUTC := event.StartedAt.UTC()
 	res, err := s.db.Exec(`INSERT INTO audit_events
 		(user_id, token_id, cluster, instance, credential_id, credential_version_id,
 		 credential_grant_id, scope_json, resource_version, digest, correlation_id, action,
-		 session, command_summary, status, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 session, command_summary, status, model, started_at_ms, started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.UserID, event.TokenID, event.Cluster, event.Instance, event.CredentialID,
 		event.VersionID, event.GrantID, scopeJSON, event.ResourceVersion, event.Digest,
 		event.CorrelationID, string(event.Action),
-		event.Session, event.CommandSummary, firstNonEmpty(event.Status, "running"), formatTime(event.StartedAt.UTC()))
+		event.Session, event.CommandSummary, firstNonEmpty(event.Status, "running"),
+		strings.TrimSpace(event.Model), startedUTC.UnixMilli(), formatTime(startedUTC))
 	if err != nil {
 		return 0, err
 	}
@@ -120,8 +130,17 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 	if err != nil {
 		return err
 	}
+	model := strings.TrimSpace(finish.Model)
+	totalTokens := finish.TotalTokens
+	if totalTokens == 0 && (finish.InputTokens > 0 || finish.OutputTokens > 0) {
+		totalTokens = finish.InputTokens + finish.OutputTokens
+	}
 	result, err := execer.Exec(`UPDATE audit_events
 		SET status = ?, error = ?, tail = ?, bytes_in = ?, bytes_out = ?,
+			model = CASE WHEN ? = '' THEN model ELSE ? END,
+			input_tokens = CASE WHEN ? > 0 THEN ? ELSE input_tokens END,
+			output_tokens = CASE WHEN ? > 0 THEN ? ELSE output_tokens END,
+			total_tokens = CASE WHEN ? > 0 THEN ? ELSE total_tokens END,
 			command_summary = CASE WHEN ? = '' THEN command_summary ELSE ? END,
 			cluster = CASE WHEN ? = '' THEN cluster ELSE ? END,
 			instance = CASE WHEN ? = '' THEN instance ELSE ? END,
@@ -133,6 +152,10 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 			ended_at = ?
 		WHERE id = ? AND status IN ('running', 'executing')`,
 		finish.Status, utf8Tail(redactSecretText(finish.Error), 1200), trimTail(finish.Tail, 8192), finish.BytesIn, finish.BytesOut,
+		model, model,
+		finish.InputTokens, finish.InputTokens,
+		finish.OutputTokens, finish.OutputTokens,
+		totalTokens, totalTokens,
 		finish.CommandSummary, finish.CommandSummary,
 		finish.Cluster, finish.Cluster, finish.Instance, finish.Instance,
 		finish.VersionID, finish.VersionID, finish.GrantID, finish.GrantID,
@@ -175,7 +198,7 @@ func (s *GatewayStore) ListAudit(limit int) ([]AuditEvent, error) {
 
 func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, error) {
 	query, args := auditFilterQuery(filter)
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.readDB().Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +211,8 @@ func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, erro
 			&ev.CredentialID, &ev.VersionID, &ev.GrantID, &scopeJSON,
 			&ev.ResourceVersion, &ev.Digest, &ev.CorrelationID,
 			&action, &ev.Session, &ev.CommandSummary, &ev.Status, &ev.Error, &ev.Tail,
-			&ev.BytesIn, &ev.BytesOut, &started, &ended); err != nil {
+			&ev.BytesIn, &ev.BytesOut, &ev.Model, &ev.InputTokens, &ev.OutputTokens, &ev.TotalTokens,
+			&started, &ended); err != nil {
 			return nil, err
 		}
 		if scopeJSON != "" {
@@ -225,12 +249,12 @@ func auditFilterQuery(filter AuditFilter) (string, []any) {
 		args = append(args, v)
 	}
 	if !filter.Since.IsZero() {
-		conditions = append(conditions, "julianday(started_at) >= julianday(?)")
-		args = append(args, formatTime(filter.Since.UTC()))
+		conditions = append(conditions, "started_at_ms >= ?")
+		args = append(args, filter.Since.UTC().UnixMilli())
 	}
 	if !filter.Until.IsZero() {
-		conditions = append(conditions, "julianday(started_at) < julianday(?)")
-		args = append(args, formatTime(filter.Until.UTC()))
+		conditions = append(conditions, "started_at_ms < ?")
+		args = append(args, filter.Until.UTC().UnixMilli())
 	}
 	if filter.HideUpgradeObserve {
 		conditions = append(conditions, "NOT (action = 'agent:upgrade' AND status = 'observing')")
@@ -266,7 +290,8 @@ func auditFilterQuery(filter AuditFilter) (string, []any) {
 	query := `SELECT id, user_id, token_id, cluster, instance, credential_id,
 			credential_version_id, credential_grant_id, scope_json,
 			resource_version, digest, correlation_id, action, session,
-			command_summary, status, error, tail, bytes_in, bytes_out, started_at, ended_at
+			command_summary, status, error, tail, bytes_in, bytes_out,
+			model, input_tokens, output_tokens, total_tokens, started_at, ended_at
 		FROM audit_events`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")

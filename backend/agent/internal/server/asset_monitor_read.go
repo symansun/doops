@@ -46,7 +46,7 @@ func (s *GatewayStore) readAssetMonitor(ctx context.Context, auth TokenAuth, q u
 		r = "1h"
 	}
 	window, ok := monitorRanges[r]
-	if !ok || (q.Has("device_id") && (req.Metric == "" || !validMonitorDevice(req.Metric, req.DeviceID))) || (req.Type != "" && !monitorKinds[req.Type]) || (req.Namespace != "" && !inventoryNamespacePattern.MatchString(req.Namespace)) || (req.Origin != "" && req.Origin != "k8s_top" && req.Origin != "exporter") || (req.Metric != "" && monitorUnits[req.Metric] == "") {
+	if !ok || (q.Has("device_id") && (req.Metric == "" || !validMonitorDevice(req.Metric, req.DeviceID))) || (req.Type != "" && !monitorKinds[req.Type]) || (req.Namespace != "" && !inventoryNamespacePattern.MatchString(req.Namespace)) || (req.Origin != "" && !monitorOrigins[req.Origin]) || (req.Metric != "" && monitorUnits[req.Metric] == "") {
 		return nil, monitorErr(400, "invalid_monitor_query")
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})

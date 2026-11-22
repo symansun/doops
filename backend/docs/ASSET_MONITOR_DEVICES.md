@@ -58,3 +58,12 @@ printf '%s' "$body" | curl --fail-with-body --silent --show-error --proto '=http
 设备不存在、身份变化或计数回退时返回缺测。没有读写活动时相应 IOPS 和吞吐为零，
 平均延迟缺测，不记为零。通过「资产 → 监控」选择已上报的机器查看按设备分离的曲线；
 管理员可沿用现有阈值规则。也可用 `metric=disk_read_iops&device_id=nvme0n1` 精确读取序列。
+
+## 虚拟机与容器原生隧道采集
+
+在线 Agent 支持由获授权用户经 `POST /v1/assets/monitor`（`action=collect`）直接发起只读采样，无需在目标上部署持 token 的外部脚本：
+
+- **虚拟机 / 主机（`mode=host`，`origin=agent_host`）**：自动关联已绑定机器编号（未登记时使用实例名），一次区间采样写入 `machine` 的 `cpu`、`memory`、物理/虚机网卡 `network`、本地挂载点 `storage_total`/`storage`/`storage_available`、整盘 `disk_*` 六项，以及 Linux `kernel` 的 `cpu` 与 `Slab` 内存。
+- **容器运行时（`mode=containers`，`origin=container_stats`）**：按 `docker`、`nerdctl`、`podman` 顺序自动探测本机容器，按容器名写入 `type=container` 的 `cpu`（`cores`）、`memory`（`bytes`）与 `memory_limit`（`bytes`）；宿主定时脚本亦支持 `--containers`。
+- **应用指标探测（`mode=apps`，`origin=app_probe`）**：读取该目标在网站台账登记的 HTTP(S) 端点探测 `response_time_ms`（`ms`）与 `error_rate`（`%`），并自动检测回环 nginx `stub_status` 采集 `active_connections`（`connections`）与 `requests`（`req/s`）；宿主定时脚本同步支持 `--http-probe` 与 `--nginx-status` 并发连接数采集。
+- **Kubernetes Pod（`mode=k8s_pods` 或省略 `mode`，`origin=k8s_top`）**：在指定命名空间读取 `kubectl top pods`。

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +21,7 @@ func startClusterAgent(t *testing.T, f *executionLifecycleFixture, cluster strin
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}
-	conn := dialFakeGatewayAgent(t, f.server.URL, url.QueryEscape(cluster), "local")
+	conn := dialEnrolledTestAgent(t, f, cluster, "local")
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -38,7 +37,6 @@ func startClusterAgent(t *testing.T, f *executionLifecycleFixture, cluster strin
 		requireEventually(t, 3*time.Second, func() bool { return f.hub.client.registry.Get(cluster, "local") == nil })
 	})
 	waitForGatewayAgent(t, f.hub, cluster, "local")
-	markTestAgentEnrolled(t, f.hub, cluster, "local")
 }
 
 // createAuditTargetCredential creates a platform credential with a staged
@@ -241,17 +239,5 @@ func TestCredentialApplyStartAuditFiltersRequestTextTarget(t *testing.T) {
 			}
 			assertAuditEventHasNoRequestText(t, event)
 		})
-	}
-}
-
-// markTestAgentEnrolled models an Agent that has completed enrollment. The
-// open-registration compatibility path deliberately leaves TokenID empty and
-// receives no credential payload; credential tests need the enrolled state.
-func markTestAgentEnrolled(t *testing.T, hub *GatewayHub, cluster, instance string) {
-	t.Helper()
-	hub.registry.mu.Lock()
-	defer hub.registry.mu.Unlock()
-	if agent := hub.registry.sessions[tunnelKey(cluster, instance)]; agent != nil {
-		agent.TokenID = "test-enrollment"
 	}
 }

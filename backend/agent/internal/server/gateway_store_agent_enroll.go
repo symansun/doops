@@ -77,7 +77,7 @@ func (s *GatewayStore) CreateAgentEnrollment(cluster, instance string) (CreatedA
 // stays open and an existing Agent keeps its current registration.
 func (s *GatewayStore) TargetHasActiveAgentEnrollment(cluster, instance string) (bool, error) {
 	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM agent_enrollments
+	err := s.readDB().QueryRow(`SELECT 1 FROM agent_enrollments
 		WHERE cluster = ? AND instance = ? AND revoked_at = '' AND confirmed_at != '' LIMIT 1`,
 		strings.TrimSpace(cluster), strings.TrimSpace(instance)).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -111,7 +111,7 @@ func (s *GatewayStore) VerifyAgentEnrollment(token, cluster, instance string) (A
 	}
 	var row AgentEnrollment
 	var hash, created, revoked string
-	err := s.db.QueryRow(`SELECT id, cluster, instance, prefix, hash, revoked_at, created_at
+	err := s.readDB().QueryRow(`SELECT id, cluster, instance, prefix, hash, revoked_at, created_at
 		FROM agent_enrollments WHERE id = ?`, id).Scan(&row.ID, &row.Cluster, &row.Instance, &row.Prefix, &hash, &revoked, &created)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -142,7 +142,7 @@ func (s *GatewayStore) RevokeAgentEnrollment(id string) error {
 }
 
 func (s *GatewayStore) ListAgentEnrollments() ([]AgentEnrollment, error) {
-	rows, err := s.db.Query(`SELECT id, cluster, instance, prefix, revoked_at, confirmed_at, created_at FROM agent_enrollments ORDER BY created_at`)
+	rows, err := s.readDB().Query(`SELECT id, cluster, instance, prefix, revoked_at, confirmed_at, created_at FROM agent_enrollments ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}

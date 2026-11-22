@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -338,17 +337,9 @@ func (a *GatewayAgent) pingLoop(registry *AgentRegistry, lease time.Duration) {
 			if !writeHeartbeatPing(a.conn, &a.dataWriteState, []byte("ping"), 10*time.Second) {
 				return
 			}
-			if registry != nil {
-				a.stateMu.RLock()
-				lastSeen := a.LastSeen
-				a.stateMu.RUnlock()
-				ctx, cancel := context.WithTimeout(context.Background(), gatewayAgentTouchTimeout)
-				err := registry.TouchContext(ctx, a, lastSeen)
-				cancel()
-				if err != nil {
-					log.Printf("[gateway] persist agent last-seen failed: %s generation=%d: %v", a.Key, a.Generation, err)
-				}
-			}
+			// Heartbeat persistence is batched across all live sessions by
+			// AgentRegistry.FlushHeartbeatsContext (started by GatewayHub).
+			_ = registry
 		case <-a.closed:
 			return
 		}

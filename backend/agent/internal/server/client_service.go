@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"errors"
+	"github.com/gorilla/websocket"
 	"log"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,8 +18,14 @@ type ClientService struct {
 	registry *AgentRegistry
 	opts     GatewayHubOptions
 
+	draining atomic.Bool
+
 	activeOpsMu sync.Mutex
 	activeOps   map[string]*gatewayActiveOperation
+	idle        chan struct{}
+
+	clientConnsMu sync.Mutex
+	clientConns   map[*websocket.Conn]struct{}
 
 	detached *detachedTaskRegistry
 }
@@ -28,11 +36,79 @@ func NewClientService(
 	opts GatewayHubOptions,
 ) *ClientService {
 	return &ClientService{
-		store:     store,
-		registry:  registry,
-		opts:      opts,
-		activeOps: make(map[string]*gatewayActiveOperation),
-		detached:  newDetachedTaskRegistry(),
+		store:       store,
+		registry:    registry,
+		opts:        opts,
+		activeOps:   make(map[string]*gatewayActiveOperation),
+		idle:        make(chan struct{}),
+		clientConns: make(map[*websocket.Conn]struct{}),
+		detached:    newDetachedTaskRegistry(store),
+	}
+}
+
+func (s *ClientService) beginDrain() {
+	s.draining.Store(true)
+}
+
+func (s *ClientService) isDraining() bool {
+	return s.draining.Load()
+}
+
+func (s *ClientService) activeOperationCount() int {
+	s.activeOpsMu.Lock()
+	defer s.activeOpsMu.Unlock()
+	return len(s.activeOps)
+}
+
+// waitIdle blocks until all active operations finish or ctx expires.
+// It returns the number of operations still active when it returns (0 when drained).
+func (s *ClientService) waitIdle(ctx context.Context) int {
+	for {
+		s.activeOpsMu.Lock()
+		n := len(s.activeOps)
+		ch := s.idle
+		s.activeOpsMu.Unlock()
+		if n == 0 {
+			return 0
+		}
+		select {
+		case <-ctx.Done():
+			s.activeOpsMu.Lock()
+			remaining := len(s.activeOps)
+			s.activeOpsMu.Unlock()
+			return remaining
+		case <-ch:
+		}
+	}
+}
+
+func (s *ClientService) trackClientConn(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+	s.clientConnsMu.Lock()
+	s.clientConns[conn] = struct{}{}
+	s.clientConnsMu.Unlock()
+}
+
+func (s *ClientService) untrackClientConn(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+	s.clientConnsMu.Lock()
+	delete(s.clientConns, conn)
+	s.clientConnsMu.Unlock()
+}
+
+func (s *ClientService) closeClientConns() {
+	s.clientConnsMu.Lock()
+	conns := make([]*websocket.Conn, 0, len(s.clientConns))
+	for conn := range s.clientConns {
+		conns = append(conns, conn)
+	}
+	s.clientConnsMu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
 	}
 }
 
@@ -177,6 +253,10 @@ func (s *ClientService) releaseFinishedOperation(id string, expected *gatewayAct
 		return
 	}
 	delete(s.activeOps, id)
+	if len(s.activeOps) == 0 && s.idle != nil {
+		close(s.idle)
+		s.idle = make(chan struct{})
+	}
 	s.activeOpsMu.Unlock()
 	expected.lease.Release()
 }
@@ -366,8 +446,8 @@ func (l *operationLease) Release() {
 // `doops targets remove` keep reporting an exact "target offline" answer.
 func (h *ClientService) targetReconnectGrace(tool string) time.Duration {
 	switch tool {
-	case "doops_node_info", "doops_task_status":
-		// Liveness probes must report the current state.
+	case "doops_node_info", "doops_task_status", monitorInspectTool:
+		// Liveness probes and monitor dispatch must report current target state promptly.
 		return 0
 	case "doops_credential_materialize", "doops_credential_cleanup", "doops_credential_import":
 		// Credential delivery and cleanup bind to one target and must fail (or

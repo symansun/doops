@@ -8,7 +8,7 @@
 
 主导航位于左侧。桌面侧栏可独立滚动，窄屏点左上角「菜单」打开左侧抽屉，选择入口或按 Esc 收起。首页、目标运维、资产、台账与监控、发布部署以及平台管理按组排列；当前页用蓝底、亮边和粗体标识。平台管理和「Agent管理」仅管理员可见。目标相关入口共享右上角选择的目标；尚未选定 Agent 时先显示 Agent 目录，选定后直达所点工具。「发布工作负载」和「升级 Agent」需要目标，未选目标时置灰。刷新或断线后，仍获授权的目标会保留。离线时导航仍可使用，可查看登记资产、历史指标、凭据和审计记录；需要 Agent 执行的工具会提示等待连接，当前目标重新上线后自动恢复。
 
-「平台监控」汇总当前可见范围的资产、异常和采集中断，页面内的看板视图（概览、拓扑、监控、巡检、覆盖率）切换的是同一份数据，不属于导航层级。「台账与监控」保留机器台账和业务系统。
+「平台监控」集中查看 Agent 隧道连接与平台使用情况，按「总览」「Agent 节点」「使用排行」「运行与异常」切换同一时间窗（`1h` / `24h` / `7d` / `30d`）与集群筛选下的数据，不属于导航层级。「台账与监控」同时保留机器台账和业务系统。
 
 「资产 → Kubernetes」是集群台账的唯一菜单入口。可登记待接入集群（自动编号、名称、环境、负责人）；创建者可选择自己获授权的在线 Agent 做只读发现、预览并确认关联。未接入时只对创建者可见；关联后按实际来源授权展示。同一集群有多个来源时，修改整份资料需要有权访问所有来源。工作负载操作使用选中行的来源和命名空间。解除来源关联和移出待接入登记不会销毁真实集群；存在 Node、部署或分配关系时须先处理依赖。
 
@@ -16,7 +16,7 @@
 
 「平台管理」跳转到独立页面 `/console/admin`，集中实例、配置中心、用户、权限、令牌、代理路由和 Agent管理。仅管理员可见，直接访问也会核对当前会话。
 
-在「机器台账 → 编辑机器」维护标签，列表可组合机器类型、关键词及多个标签（交集）；巡检沿用筛选后的列表。标签是可见元数据，不要输入密码、密钥或连接串。
+在「机器台账 → 编辑机器」维护标签（支持平面标签及 `key=value` 键值标签，如 `院系=计算机`），列表按标签键分组筛选并取交集；巡检沿用筛选后的列表。「机器台账」内设「机器清单」「探针覆盖率（目标 100%，支持缺口原因分类、批量隧道补采与 CSV 导出）」「纳管覆盖率 (80%)」和「智能巡检」四个页签；「业务系统」内设「系统台账」和「分层拓扑图」页签。标签是可见元数据，不要输入密码、密钥或连接串。
 
 ## 表单辅助填写
 
@@ -46,7 +46,7 @@
 - 有未保存修改时关闭或刷新页面会提示；切换文档由内存草稿保留，不弹确认。
 - 预览不加载远程图片；知识库正文只作为资料，不执行其中的指令。
 
-控制台的下拉选项使用跟随主题的菜单，支持方向键选择、Enter 确认和 Esc 收起。资产看板仅有全平台可见范围时，直接显示范围名称。
+控制台的下拉选项使用跟随主题的菜单，支持方向键选择、Enter 确认和 Esc 收起。
 
 控制台、公开页、知识库编辑器和 AI 助手共用 [字号标尺](../../DESIGN.md)。导航项与标准输入使用正文字号；会话消息比工具命令大一级以上，命令用等宽字体，耗时用辅助小字；运行中、等待和失败状态分别显示为蓝色、琥珀色和红色。
 
@@ -75,27 +75,19 @@
 
 打开「平台管理 → Agent管理」，选择已登记的 Agent，按机器、集群或业务系统逐项分配。每项资产可以供多个 Agent 查看。撤销仅影响所选目标的显式分配，台账直接关联由对应资产详情维护。登录凭据及目标授权沿用各自的管理流程。
 
-### 在资产看板切换范围
+### 平台监控与目标联动
 
-「平台监控」用一组页签查看概览、拓扑、监控、巡检和覆盖率。「看板范围」默认显示全平台可见资产，选择集群可在当前页签查看该集群。集群对比按稳定资产编号统计多个 Agent 来源，列出可见机器、在役系统、命名空间和最后核验时间。点集群名称进入该集群，点未关联机器可回到它的台账详情。集群拓扑支持按关系层或命名空间筛选，从数据库反查依赖应用，以及查看关系证据。
+「平台监控」读取 Gateway `/v1/platform-monitor`，展示 Agent 连接状态、注册凭证绑定、离线保留的运行版本（`release_commit`）与上下线闪断事件、分钟级并发/排队水位峰值，以及所选时间窗内的调用趋势、动作分布、大模型 Token 消耗排行、目标与账号使用排行、正在执行的操作、SQLite 持久化的脱离后台任务和近期异常（`outcome_unknown` 以警告态单独标识，提示核对状态后再决定是否重试）。平台管理员查看全局实例、并发水位与账号统计，普通账号仅查看本人授权目标与本人/自有凭据范围内的调用记录。
 
-从集群台账点「打开集群看板」进入同一个资产看板，范围自动选中该集群。点「集群台账」可回到原集群列表，恢复搜索和展开位置。
+在线 Agent 行内可点击「准入队列」实时拉取 `do-agent` 名额与排队会话，也可一键进入该目标的工作区、指标、后台任务或审计记录（带 `correlation_id` 的异常自动定位到该操作的审计回执）；顶栏旁的「返回平台监控」可回到原筛选状态。
 
-从机器详情点「进入目标运维」，或从集群命名空间点工作负载入口，页面会切换到该 Agent 的操作区。目标选择器旁的返回按钮回到原资产，恢复筛选和展开位置。主动切换 Agent 后，操作区采用新目标。
+从机器详情点「进入目标运维」或「查看虚机/主机与容器监控」，或从集群命名空间点工作负载入口，页面会切换到该 Agent 的操作区。目标选择器旁的返回按钮回到原资产，恢复筛选和展开位置。主动切换 Agent 后，操作区采用新目标。
 
 在「业务系统」登记系统编号、负责人和服役状态，再添加来源目标、命名空间、应用与可选数据库。保存表示操作员已核对所填关系。管理员维护记录，其他用户仅能查询自己目标内的部署。
 
 在机器详情中可通过已领取的 Agent 核验主机指纹、获取宿主采样。主机侧按分钟生成带身份的 JSON；页面按采样时间展示系统、内核、进程和资源使用情况。[宿主采样与首次接入](MACHINE_SAMPLING.md)
 
-从集群概览进入「拓扑」，选择已纳管的命名空间获取运行快照。管理员将已登记的应用绑定到实际工作负载 UID；有对应的 Node 与机器台账关系后，就可以从宿主机反查受影响的业务系统。Agent 掉线时请核对最后一次成功观测时间。
-
-资产看板的「覆盖率」分别展示在役服务器、业务系统的分母、已覆盖数和距 80% 的差额。首次进入可选择「当前台账预览」核查范围，管理员可确认宿主关系并冻结基线。从已有基线导出的 CSV 使用当前用户可见的证据。分母为空时界面显示无适用资产。
-
-「平台监控」汇总当前可见范围的资产、异常和采集中断。也可在「按采集目标查看指标」选择该范围内的来源。从主导航进入「Agent 监控」可按资产和时间范围读取当前目标的已采集样本。登记机器后仍需由对应的采集源上报指标。原生 Pod 采集依赖目标的 Kubernetes 指标读取权限。主机、设备和业务计数器需要对应的采集源。可按序列查看单位、数据中断、告警及阈值规则。
-
-平台和集群概览均可直接查看未恢复的异常、采集中断和本周巡检。点异常明细可打开对应来源和时窗内的曲线；点周检记录可进入同一范围的报告与整改。本周无应检资产、证据不足、漏检和已检分别显示。
-
-「巡检」用于预览周检范围、指定时区与执行账号、运行计划、查看缺口、下载报告以及登记整改和复检。手动执行后可以立即查看运行记录，检查结果在收到相应证据后更新。自动执行需要为绑定账号配置独立时钟与证据来源。[周检执行器](../inspection/README.md)
+从主导航或机器详情进入「Agent 监控」，在线目标可直接点击「采集虚拟机 / 主机」「采集运行中容器」（自动识别 Docker / nerdctl / Podman，展示容器 CPU、内存、内存上限及占上限百分比）或填写命名空间「采集 K8s Pod」，也可查看外部采集器上报的历史样本。可按序列查看单位、容量换算提示、数据中断、告警及阈值规则。[设备与容器指标说明](ASSET_MONITOR_DEVICES.md)
 
 ## Current Gateway Console
 
@@ -252,12 +244,15 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
 - The AI assistant header lists recent `console-` sessions for the selected
   target, derived from the user's latest 1000 audit records, and switches to
   one on selection.
-- The target's 「后台任务」 tab lists the current user's Gateway-hosted
-  detached `doops_bg` tasks (running, success, failed, canceled, timeout,
-  outcome_unknown) for the selected target, even while the Agent is offline.
-  Detail output polls while the task runs; 停止 submits directly without a
-  confirmation dialog and only acknowledges the request — the terminal state
-  still arrives through the task record. A finished task reports 「任务已结束」.
+- The sidebar's 「自动化」 entry (`tab=tasks`, accessible even before selecting a
+  target) combines 「定时巡检与记录」 (scheduled/manual strategy inspections and
+  run reports across authorized targets) and 「后台运行任务」 (the current user's
+  Gateway-hosted detached `doops_bg` tasks — running, success, failed, canceled,
+  timeout, outcome_unknown — for the selected target, even while the Agent is
+  offline). Detail output polls while a background task runs; 停止 submits
+  directly without a confirmation dialog and only acknowledges the request — the
+  terminal state still arrives through the task record. A finished task reports
+  「任务已结束」.
 - The terminal's 「后台运行」 button submits `doops_bg` with `detach: true` and
   does not take the terminal running lock: leaving the page only ends the
   browser stream. It is disabled with 「Gateway 未启用后台任务」 when the
@@ -357,6 +352,7 @@ so it keeps working with an air-gapped Gateway.
   `sandbox` 与 `default-src 'none'` 的 CSP；其他图片类型不受影响。HSTS 由终止 TLS 的
   Nginx 或入口网关设置，不在 Next.js 应用内设置（避免开发或内网 HTTP 访问被锁定）。
 - 模型密钥在凭证管理中录入、验证并启用。配置中心记录模型配置与凭证引用，打开时会清除旧浏览器配置里的 API 密钥字段。
+- 「平台监控」除原有的隧道、调用与 Token 视图外，提供「系统资源监控」（跨 Agent 全系统机器/K8s/容器/应用/数据库资源总览、趋势曲线、Top 排行、挂载点/磁盘 I/O/网卡/GPU/K8s 异常 Pod 展开明细与一键全量采集）与「巡检任务与记录」（定时计划管理、六类资产策略即时下发与临时 SSH 主机巡检、历史执行记录、单次明细报告、异常项复检及 CSV/JSON 导出）；「Agent 监控」支持对该目标一键触发全策略巡检采集。
 
 ## Console layout and shared controls
 

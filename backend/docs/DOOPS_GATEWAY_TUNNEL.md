@@ -26,6 +26,8 @@ gateway 是统一公网控制面：
 
 ## 公网网站代理关键节点
 
+Proxy 的审计摘要和活动操作只标识路由，Git 隧道只标识操作；不采集 URL 路径或查询串。上游仍收到原请求。公网 Proxy 保留错误状态码，不向访客返回内部错误详情。旧记录和备份不会自动清洗。
+
 第一阶段的网站代理只承载 HTTP/HTTPS 请求和流式响应，链路是：
 
 ```mermaid
@@ -206,7 +208,7 @@ bash scripts/deploy-gateway.sh \
 用户接口（user token）：
 
 - `POST /v1/auth/login`、`GET /v1/auth/me`
-- `GET /health`
+- `GET /health`（排空停机期间返回 `503 draining`）
 - `GET /v1/targets`
 - `GET/DELETE /v1/audit`（DELETE 是平台管理员的审计清理）
 - `/v1/credentials`、`/v1/credentials/<id>/...`、`/v1/credential-bundles`（凭据语义见 [CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md)）
@@ -220,6 +222,13 @@ bash scripts/deploy-gateway.sh \
 - `GET /v1/admin/instances`、`POST /v1/admin/instances/archive`、`POST /v1/admin/instances/unarchive`
 - `GET/POST/DELETE /v1/admin/tokens`
 - `GET/POST/DELETE /v1/admin/proxy-routes`
+- `GET /v1/admin/operations`（返回当前 `draining` 状态与在途活动操作列表，供发布前检查排空）
+
+优雅停机与重连退避：
+
+- Gateway `serve` 收到 `SIGTERM`/`SIGINT` 后进入排空（`-shutdown-drain-timeout`，默认 `2m`，设为 `0` 立即退出）：`/health` 返回 `503`，新 RPC 返回 `-32010`（`gateway_draining`）且不写审计，新 Git / Proxy / Agent 注册返回 `503` + `Retry-After: 5`；等待所有在途操作结束后再关闭 HTTP 服务与隧道并执行存储清理。再次收到终止信号时立即退出。
+- Agent 反向隧道在普通断线或非 401/403 拨号失败后按指数退避并叠加 `[0.5x, 1.5x)` 抖动（上限 `30s`），稳定在线超过 1 分钟后重置为初始间隔；401/403 鉴权失败维持独立退避（上限 `60s`）。
+- Gateway 存储使用独立只读 SQLite 连接池承接热点读查询，Agent 注册按目标串行且在全局注册表锁外访问数据库，心跳落库按 30 秒周期单事务批量持久化。
 
 隧道与代理接口：
 

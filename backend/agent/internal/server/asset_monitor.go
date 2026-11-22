@@ -18,13 +18,15 @@ import (
 const monitorGap = 5 * time.Minute
 
 var monitorUnits = map[string]string{
-	"cpu": "cores", "memory": "bytes", "gpu": "%", "network": "bytes/s", "requests": "req/s",
+	"cpu": "cores", "memory": "bytes", "memory_limit": "bytes", "gpu": "%", "network": "bytes/s",
+	"requests": "req/s", "response_time_ms": "ms", "active_connections": "connections", "error_rate": "%",
 	"storage": "bytes", "storage_total": "bytes", "storage_available": "bytes",
 	"disk_read_iops": "ops/s", "disk_write_iops": "ops/s",
 	"disk_read_bytes_per_second": "bytes/s", "disk_write_bytes_per_second": "bytes/s",
 	"disk_read_latency_ms": "ms", "disk_write_latency_ms": "ms",
 }
-var monitorKinds = map[string]bool{"machine": true, "os": true, "kernel": true, "process": true, "app": true, "database": true}
+var monitorKinds = map[string]bool{"machine": true, "os": true, "kernel": true, "process": true, "container": true, "app": true, "database": true}
+var monitorOrigins = map[string]bool{"k8s_top": true, "agent_host": true, "container_stats": true, "app_probe": true, "exporter": true}
 var monitorRanges = map[string]time.Duration{"1h": time.Hour, "6h": 6 * time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour}
 
 type monitorAsset struct {
@@ -77,6 +79,7 @@ type monitorRule struct {
 type monitorRequest struct {
 	DeviceID  string `json:"device_id,omitempty"`
 	Action    string `json:"action"`
+	Mode      string `json:"mode,omitempty"`
 	Cluster   string `json:"cluster"`
 	Instance  string `json:"instance"`
 	ClusterID string `json:"cluster_id,omitempty"`
@@ -92,13 +95,16 @@ func monitorValidAsset(a monitorAsset) bool {
 	return monitorKinds[a.Type] && monitorID(a.AssetID) && (a.Namespace == "" || inventoryNamespacePattern.MatchString(a.Namespace))
 }
 func monitorValidValue(metric string, v float64) bool {
-	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && (metric != "gpu" || v <= 100)
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && ((metric != "gpu" && metric != "error_rate") || v <= 100)
 }
 func (p monitorInput) valid(now time.Time) bool {
 	if !validMonitorDevice(p.Metric, p.DeviceID) || !monitorValidAsset(p.monitorAsset) || monitorUnits[p.Metric] == "" || p.Unit != monitorUnits[p.Metric] || p.At <= 0 || p.At > now.UnixMilli() {
 		return false
 	}
 	if strings.HasPrefix(p.Metric, "disk_") && (p.Type != "machine" || p.Namespace != "") {
+		return false
+	}
+	if p.Metric == "memory_limit" && p.Type != "container" {
 		return false
 	}
 	switch p.Status {
@@ -209,10 +215,31 @@ func (h *GatewayHub) applyAssetMonitor(ctx context.Context, auth TokenAuth, req 
 	native := req.Action == "collect"
 	samples := req.Samples
 	origin := "exporter"
+	runtimeName := ""
 	var generation uint64
 	switch req.Action {
 	case "collect":
-		if !inventoryNamespacePattern.MatchString(req.Namespace) || samples != nil || req.Type != "" || req.AssetID != "" || req.Origin != "" || req.Metric != "" || req.DeviceID != "" || req.Threshold != nil || req.Duration != 0 {
+		mode := req.Mode
+		if mode == "" {
+			mode = "k8s_pods"
+		}
+		if samples != nil || req.Type != "" || req.Origin != "" || req.Metric != "" || req.DeviceID != "" || req.Threshold != nil || req.Duration != 0 {
+			return nil, monitorErr(400, "invalid_monitor_collection")
+		}
+		switch mode {
+		case "k8s_pods":
+			if !inventoryNamespacePattern.MatchString(req.Namespace) || req.AssetID != "" {
+				return nil, monitorErr(400, "invalid_monitor_collection")
+			}
+		case "host":
+			if req.Namespace != "" || (req.AssetID != "" && !monitorID(req.AssetID)) {
+				return nil, monitorErr(400, "invalid_monitor_collection")
+			}
+		case "containers", "apps":
+			if req.Namespace != "" || req.AssetID != "" {
+				return nil, monitorErr(400, "invalid_monitor_collection")
+			}
+		default:
 			return nil, monitorErr(400, "invalid_monitor_collection")
 		}
 		agent := h.getAgent(req.Cluster, req.Instance)
@@ -221,17 +248,29 @@ func (h *GatewayHub) applyAssetMonitor(ctx context.Context, auth TokenAuth, req 
 		}
 		generation = agent.Generation
 		var err error
-		samples, err = h.collectMonitorPods(ctx, auth, req, session)
+		switch mode {
+		case "k8s_pods":
+			samples, err = h.collectMonitorPods(ctx, auth, req, session)
+			origin = "k8s_top"
+		case "host":
+			samples, err = h.collectMonitorHost(ctx, auth, req, session)
+			origin = "agent_host"
+		case "containers":
+			samples, runtimeName, err = h.collectMonitorContainers(ctx, auth, req, session)
+			origin = "container_stats"
+		case "apps":
+			samples, err = h.collectMonitorApps(ctx, auth, req, session)
+			origin = "app_probe"
+		}
 		if err != nil {
 			return nil, err
 		}
-		origin = "k8s_top"
 	case "ingest":
-		if len(samples) == 0 || len(samples) > 4096 || req.monitorAsset != (monitorAsset{}) || req.Metric != "" || req.DeviceID != "" || req.Threshold != nil || req.Duration != 0 {
+		if req.Mode != "" || len(samples) == 0 || len(samples) > 4096 || req.monitorAsset != (monitorAsset{}) || req.Metric != "" || req.DeviceID != "" || req.Threshold != nil || req.Duration != 0 {
 			return nil, monitorErr(400, "invalid_monitor_batch")
 		}
 	case "rule":
-		if samples != nil || !validMonitorDevice(req.Metric, req.DeviceID) || !monitorValidAsset(req.monitorAsset) || (req.Origin != "exporter" && req.Origin != "k8s_top") || monitorUnits[req.Metric] == "" || req.Threshold == nil || !monitorValidValue(req.Metric, *req.Threshold) || req.Duration < 1 || req.Duration > 604800 {
+		if req.Mode != "" || samples != nil || !validMonitorDevice(req.Metric, req.DeviceID) || !monitorValidAsset(req.monitorAsset) || !monitorOrigins[req.Origin] || monitorUnits[req.Metric] == "" || req.Threshold == nil || !monitorValidValue(req.Metric, *req.Threshold) || req.Duration < 1 || req.Duration > 604800 {
 			return nil, monitorErr(400, "invalid_monitor_rule")
 		}
 	}
@@ -276,5 +315,9 @@ func (h *GatewayHub) applyAssetMonitor(ctx context.Context, auth TokenAuth, req 
 	if err = finishAuditWith(tx, audit, AuditFinish{Status: "success"}); err != nil {
 		return nil, err
 	}
-	return map[string]any{"action": req.Action, "accepted": len(samples)}, tx.Commit()
+	out := map[string]any{"action": req.Action, "accepted": len(samples)}
+	if runtimeName != "" {
+		out["runtime"] = runtimeName
+	}
+	return out, tx.Commit()
 }

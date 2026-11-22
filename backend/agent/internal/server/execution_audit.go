@@ -93,13 +93,15 @@ func (s *GatewayStore) RecoverInterruptedExecutions() error {
 		interruptedExecutionError, interruptedExecutionError, formatTime(time.Now().UTC())); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`UPDATE audit_events
+	if _, err := s.db.Exec(`UPDATE audit_events
 		SET status = 'error',
 			error = CASE WHEN error = '' THEN ? ELSE error || '; ' || ? END,
 			ended_at = ?
 		WHERE status = 'running'`,
-		interruptedAdmissionError, interruptedAdmissionError, formatTime(time.Now().UTC()))
-	return err
+		interruptedAdmissionError, interruptedAdmissionError, formatTime(time.Now().UTC())); err != nil {
+		return err
+	}
+	return s.recoverAndPruneDetachedTasks(time.Now().UTC())
 }
 
 // UnresolvedExecutions includes dispatched executions without terminal evidence

@@ -131,7 +131,7 @@ func (s *GatewayStore) verifyToken(token string, kind TokenKind) (TokenAuth, err
 func (s *GatewayStore) verifyTokenByID(token string, kind TokenKind, tokenID string) (TokenAuth, error) {
 	var id, userID, hash, cluster, instance, expires, revoked string
 	var disabled int
-	err := s.db.QueryRow(`SELECT t.id, t.user_id, t.hash, t.cluster, t.instance, t.expires_at, t.revoked_at, u.disabled
+	err := s.readDB().QueryRow(`SELECT t.id, t.user_id, t.hash, t.cluster, t.instance, t.expires_at, t.revoked_at, u.disabled
 		FROM tokens t JOIN users u ON u.id = t.user_id
 		WHERE t.id = ? AND t.kind = ?`, tokenID, string(kind)).
 		Scan(&id, &userID, &hash, &cluster, &instance, &expires, &revoked, &disabled)
@@ -173,7 +173,7 @@ func (s *GatewayStore) validateUserTokenAuth(auth TokenAuth) error {
 	}
 	var userID, expires, revoked string
 	var disabled int
-	err := s.db.QueryRow(`SELECT t.user_id, t.expires_at, t.revoked_at, u.disabled
+	err := s.readDB().QueryRow(`SELECT t.user_id, t.expires_at, t.revoked_at, u.disabled
 		FROM tokens t JOIN users u ON u.id = t.user_id
 		WHERE t.id = ? AND t.kind = ?`, auth.TokenID, string(auth.Kind)).Scan(&userID, &expires, &revoked, &disabled)
 	if errors.Is(err, sql.ErrNoRows) {

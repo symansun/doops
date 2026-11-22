@@ -12,6 +12,9 @@ import (
 )
 
 func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
+	if h.isDraining() {
+		return writeJSON(buildErrorResponse(req.ID, -32010, "gateway_draining: the Gateway is restarting; retry in a moment"))
+	}
 	if err := h.store.validateUserTokenAuth(auth); err != nil {
 		if errors.Is(err, ErrUnauthorized) {
 			return writeJSON(buildErrorResponse(req.ID, -32001, authFailureCode(err)))
@@ -31,6 +34,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	if cosToolName(params.Name) {
 		return h.handleCOSToolCall(ctx, auth, cluster, instance, req, params, writeJSON)
+	}
+	if params.Name == "doops_node_info" && extractStringArg(params.Arguments, "section") == "app_metrics" {
+		writeJSON(buildErrorResponse(req.ID, -32003, "app_metrics_internal_only"))
+		return nil
 	}
 	var promptArgs api.AgentPromptParams
 	if params.Name == "doops_agent_prompt" {
@@ -107,11 +114,16 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	if params.Name == "doops_file_write" || action == ActionAgentUpgrade {
 		startAudit = h.store.startMutationAudit
 	}
-	correlationID, digest := "", ""
+	correlationID, digest, initialModel := "", "", ""
 	if action == ActionAgentUpgrade {
 		correlationID = extractStringArg(params.Arguments, "upgrade_operation_id")
 		_, digest, _ = strings.Cut(extractStringArg(params.Arguments, "image"), "@")
 	}
+	if params.Name == "doops_agent_prompt" && validCredentialMetadataToken(strings.TrimSpace(promptArgs.Model), 128) {
+		initialModel = strings.TrimSpace(promptArgs.Model)
+	}
+	var observedModel = initialModel
+	var observedInputTokens, observedOutputTokens, observedTotalTokens int64
 	auditID, auditErr := startAudit(AuditEvent{
 		UserID:         auth.UserID,
 		TokenID:        auth.TokenID,
@@ -122,6 +134,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		CommandSummary: summarizeToolCall(params.Name, params.Arguments),
 		CorrelationID:  correlationID,
 		Digest:         digest,
+		Model:          initialModel,
 		StartedAt:      time.Now().UTC(),
 	})
 	if auditErr != nil {
@@ -156,12 +169,16 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			tail = sanitizeSecretText(tail)
 		}
 		finish := AuditFinish{
-			Status:   status,
-			Error:    errMsg,
-			Tail:     tail,
-			BytesIn:  int64(len(params.Arguments)),
-			BytesOut: bytesOut,
-			EndedAt:  time.Now().UTC(),
+			Status:       status,
+			Error:        errMsg,
+			Tail:         tail,
+			BytesIn:      int64(len(params.Arguments)),
+			BytesOut:     bytesOut,
+			Model:        observedModel,
+			InputTokens:  observedInputTokens,
+			OutputTokens: observedOutputTokens,
+			TotalTokens:  observedTotalTokens,
+			EndedAt:      time.Now().UTC(),
 		}
 		if err := h.finishExecutionAudit(auditID, finish); err != nil {
 			pendingFinish = &finish
@@ -318,6 +335,9 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	guarded := requiresExecutionOutcomeGuard(action, params.Name, params.Arguments, resourceKey)
 	h.markOperationRunning(opID)
+	if h.registry != nil {
+		h.registry.recordLoadSampleMinInterval(15 * time.Second)
+	}
 	opCtx = h.withExecutionOwner(opCtx, agent, resourceKey, opID)
 	if guarded {
 		if err := h.beginExecution(agent, opID, auditID); err != nil {
@@ -429,6 +449,9 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			if p, ok := msg.Parsed["params"].(map[string]interface{}); ok {
 				if chunk, ok := p["data"].(string); ok {
 					bytesOut += int64(len(chunk))
+					if kind, _ := p["kind"].(string); kind == "acp_update" {
+						observePromptACPUpdateUsage(chunk, &observedModel, &observedInputTokens, &observedOutputTokens, &observedTotalTokens)
+					}
 					if detached {
 						h.detached.appendOutput(auditID, chunk)
 					}
@@ -450,6 +473,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		if id, ok := msg.Parsed["id"]; ok {
 			msg.Parsed["id"] = req.ID
 			if result, ok := msg.Parsed["result"].(map[string]interface{}); ok {
+				extractAndStripPromptUsage(result, &observedModel, &observedInputTokens, &observedOutputTokens, &observedTotalTokens)
 				if action == ActionAgentUpgrade {
 					finalStatus, finalErr, upgradeEvidence = upgradeAuditResult(result, params.Arguments)
 					bytesOut += int64(len(resultContentText(result)))
@@ -647,4 +671,75 @@ func agentPromptAuditCategory(errMsg string) string {
 func internalCredentialTool(tool string) bool {
 	return tool == "doops_credential_import" || tool == "doops_credential_materialize" ||
 		tool == "doops_credential_cleanup"
+}
+
+func parsePositiveAuditTokenCount(raw interface{}) (int64, bool) {
+	if raw == nil {
+		return 0, false
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return 0, false
+	}
+	var count uint64
+	if err := json.Unmarshal(encoded, &count); err != nil {
+		return 0, false
+	}
+	const maxAuditInt = uint64(1<<63 - 1)
+	if count > maxAuditInt {
+		return int64(maxAuditInt), true
+	}
+	return int64(count), true
+}
+
+func observePromptACPUpdateUsage(raw string, model *string, inTok, outTok, totTok *int64) {
+	var parsed map[string]interface{}
+	if json.Unmarshal([]byte(raw), &parsed) != nil {
+		return
+	}
+	if parsed["replay"] == true {
+		return
+	}
+	if m, _ := parsed["model"].(string); strings.TrimSpace(m) != "" && validCredentialMetadataToken(strings.TrimSpace(m), 128) {
+		*model = strings.TrimSpace(m)
+	}
+	apply := func(src map[string]interface{}) {
+		if n, ok := parsePositiveAuditTokenCount(src["inputTokens"]); ok && n > *inTok {
+			*inTok = n
+		}
+		if n, ok := parsePositiveAuditTokenCount(src["outputTokens"]); ok && n > *outTok {
+			*outTok = n
+		}
+		if n, ok := parsePositiveAuditTokenCount(src["totalTokens"]); ok && n > *totTok {
+			*totTok = n
+		}
+	}
+	if usage, ok := parsed["usage"].(map[string]interface{}); ok {
+		apply(usage)
+	}
+	apply(parsed)
+}
+
+func extractAndStripPromptUsage(result map[string]interface{}, model *string, inTok, outTok, totTok *int64) {
+	raw, exists := result["_doops_usage"]
+	if !exists {
+		return
+	}
+	delete(result, "_doops_usage")
+	usage, ok := raw.(map[string]interface{})
+	if !ok {
+		return
+	}
+	if m, _ := usage["model"].(string); strings.TrimSpace(m) != "" && validCredentialMetadataToken(strings.TrimSpace(m), 128) {
+		*model = strings.TrimSpace(m)
+	}
+	if n, ok := parsePositiveAuditTokenCount(usage["input_tokens"]); ok && n > *inTok {
+		*inTok = n
+	}
+	if n, ok := parsePositiveAuditTokenCount(usage["output_tokens"]); ok && n > *outTok {
+		*outTok = n
+	}
+	if n, ok := parsePositiveAuditTokenCount(usage["total_tokens"]); ok && n > *totTok {
+		*totTok = n
+	}
 }

@@ -290,7 +290,7 @@ func (s *ClientService) unresolvedExecutionsLocked(cluster, instance string) ([]
 	return unresolved, nil
 }
 
-func (s *ClientService) beginExecution(agent *GatewayAgent, operationID string, auditID int64) error {
+func (s *ClientService) admitExecutionCheck(agent *GatewayAgent, operationID string, bind bool) error {
 	s.registry.mu.RLock()
 	defer s.registry.mu.RUnlock()
 	if s.registry.sessions[agent.Key] != agent {
@@ -315,9 +315,22 @@ func (s *ClientService) beginExecution(agent *GatewayAgent, operationID string, 
 			return fmt.Errorf("target busy: cancellation pending")
 		}
 	}
+	if bind {
+		op.agent = agent
+	}
+	return nil
+}
+
+func (s *ClientService) beginExecution(agent *GatewayAgent, operationID string, auditID int64) error {
+	if err := s.admitExecutionCheck(agent, operationID, false); err != nil {
+		return err
+	}
+	// Persist the dispatch state outside both registry.mu and activeOpsMu so a
+	// slow SQLite write never stalls unrelated targets or active-op lookups.
 	if err := s.store.MarkExecutionDispatched(auditID); err != nil {
 		return fmt.Errorf("execution_audit_unavailable: %w", err)
 	}
-	op.agent = agent
-	return nil
+	// Re-verify under locks in case the Agent was replaced or the operation was
+	// canceled while waiting on SQLite. Callers finish the audit record on error.
+	return s.admitExecutionCheck(agent, operationID, true)
 }

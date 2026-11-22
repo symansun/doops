@@ -30,6 +30,11 @@ func (h *GatewayHub) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.isDraining() {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "gateway_draining: the Gateway is restarting; retry in a moment", http.StatusServiceUnavailable)
+		return
+	}
 	cluster, instance, session, rest, ok := parseGatewayGitPath(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
@@ -65,11 +70,11 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		Instance:       instance,
 		Action:         action,
 		Session:        session,
-		CommandSummary: r.Method + " " + r.URL.RequestURI(),
+		CommandSummary: string(action),
 		StartedAt:      time.Now().UTC(),
 	})
 	if err != nil {
-		http.Error(w, "start audit: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "audit_unavailable", http.StatusInternalServerError)
 		return
 	}
 	opID, holderID := h.registerActiveOperationForAgent(GatewayActiveOperation{
@@ -81,7 +86,7 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		Instance:       instance,
 		Action:         action,
 		Session:        session,
-		CommandSummary: r.Method + " " + r.URL.RequestURI(),
+		CommandSummary: string(action),
 		Kind:           "git",
 	}, cancelOp, agent)
 	defer h.finishActiveOperation(opID)
@@ -126,7 +131,7 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	}, h.opts.OperationTimeout)
 	if relayErr != nil {
 		status = "error"
-		errMsg = relayErr.Error()
+		errMsg = "git_relay_failed"
 		if errors.Is(relayErr, context.Canceled) {
 			status = "canceled"
 			errMsg = "operation canceled"
@@ -135,7 +140,7 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 			status = "outcome_unknown"
 		}
 		if !response.committed {
-			http.Error(w, relayErr.Error(), http.StatusBadGateway)
+			http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 		}
 	}
 	if err := h.finishExecutionAudit(auditID, AuditFinish{

@@ -33,8 +33,12 @@ func TestProxyResourceKeyClassifiesOnlySafeMethodsAsQueries(t *testing.T) {
 }
 
 func TestGatewayHTTPProxyUsesAgentReverseTunnelAndStreamsResponse(t *testing.T) {
+	const query = "token=synthetic-proxy-query"
 	var upstreamHost, forwardedHost string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != query {
+			t.Errorf("upstream query was not preserved")
+		}
 		upstreamHost = r.Host
 		forwardedHost = r.Header.Get("X-Forwarded-Host")
 		w.Header().Set("X-Upstream", "agent-local")
@@ -74,7 +78,7 @@ func TestGatewayHTTPProxyUsesAgentReverseTunnelAndStreamsResponse(t *testing.T) 
 	defer agentConn.Close()
 	requireEventually(t, time.Second, func() bool { return hub.getAgent("dev", "local") != nil })
 
-	req := httptest.NewRequest(http.MethodGet, gatewayServer.URL+"/stream?x=1", nil)
+	req := httptest.NewRequest(http.MethodGet, gatewayServer.URL+"/stream?"+query, nil)
 	req.Host = "app.example.test"
 	req.Header.Set("Forwarded", "host=app.example.test")
 	req.Header.Set("X-Forwarded-Host", "app.example.test")
@@ -89,6 +93,10 @@ func TestGatewayHTTPProxyUsesAgentReverseTunnelAndStreamsResponse(t *testing.T) 
 	}
 	if got := recorder.Body.String(); got != "first-second" {
 		t.Fatalf("proxy body = %q", got)
+	}
+	events, err := store.ListAuditFiltered(AuditFilter{Action: ActionProxy, Limit: 1})
+	if err != nil || len(events) != 1 || !strings.HasPrefix(events[0].CommandSummary, "proxy ") || strings.Contains(events[0].CommandSummary, "/stream") || strings.Contains(events[0].CommandSummary, query) {
+		t.Fatal("proxy audit must identify only the configured route")
 	}
 	wantUpstreamHost := strings.TrimPrefix(upstream.URL, "http://")
 	if upstreamHost != wantUpstreamHost {
@@ -130,6 +138,9 @@ func TestGatewayHTTPProxyRejectsMissingRouteAndOfflineTarget(t *testing.T) {
 			req.Host = test.host
 			recorder := httptest.NewRecorder()
 			hub.HandlePublicProxy(recorder, req)
+			if test.want == http.StatusBadGateway && strings.TrimSpace(recorder.Body.String()) != http.StatusText(test.want) {
+				t.Fatal("offline response disclosed internal details")
+			}
 			if recorder.Code != test.want {
 				t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
 			}

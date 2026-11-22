@@ -435,6 +435,17 @@ workspace/resource 正在执行，但其他 session 仍可使用同一 Agent。`
 取消和审计收尾复用同一冲突规则，不阻塞其它 session；普通 mutation 缺少有效 session
 时直接拒绝，不回退到 target 独占。历史 `outcome_unknown` 只保留事实，不参与新任务准入。
 
+### 平台监控汇总
+
+```http
+GET /v1/platform-monitor?range=24h&cluster=doops-oilan
+Authorization: Bearer <USER_TOKEN>
+```
+
+- `range`：`1h`、`24h`（默认）、`7d`、`30d`；其它值返回 `400 invalid_platform_monitor_range`。
+- `cluster`：可选集群名筛选；非法标识符返回 `400 invalid_platform_monitor_cluster`。
+- 响应包含 `scope`（管理员为 `global`，普通用户为 `self`）、`clusters`、`agent_summary`、`agents`（含离线持久 `release_commit` 与时窗重连计数）、`connection_events`、`load_trend`（仅全局管理员返回分钟级并发/排队水位）、`usage_summary`（含大模型 `input_tokens`/`output_tokens`/`total_tokens`）、`trend`、`by_action`、`by_model`、`by_target`、`by_user`、`running_ops`、`detached_tasks` 和 `recent_issues`。常规 `agent:upgrade` 的 `observing` 轮询不计入调用统计；接口不返回 enrollment token ID、用户令牌秘钥或后台任务输出正文。
+
 ## Git 工作区同步
 
 `push/pull --storage gateway` 通过 Git HTTP 同步所选会话的当前工作区。默认 `cos` 模式保存或读取已上传的快照。Git HTTP 端点如下。
@@ -1218,6 +1229,15 @@ Job 的后续成功或失败终态证据才可删除。未知结果的保留规�
   "deleted": 42
 }
 ```
+
+## 统一资源监控与策略巡检引擎（`/v1/monitor/*`）
+
+由 Gateway 统一调度并经内部只读工具 `doops_monitor_inspect` 下发到对应 Agent 执行，数据持久化至 `monitor_schedules`、`monitor_runs`、`monitor_run_items` 与 `monitor_resource_snapshots`，并在 `asset_monitor_series` 表存在时自动桥接写入监控时序与阈值告警。
+
+- `GET /v1/monitor/overview?range=1h|6h|24h|7d&cluster=<c>&kind=<k>&tag=<t>`：返回授权范围内的全系统资源概览（汇总 KPI、探针覆盖率、Top 资源消耗节点、分桶趋势、各资产最新快照与近期巡检运行记录）。
+- `GET /v1/monitor/resources/history?cluster=<c>&instance=<i>&asset_kind=<k>&asset_id=<a>&range=1h|6h|24h|7d`：返回单个资产的时序监控点及最新设备/K8s/容器结构化明细。
+- `GET /v1/monitor/schedules` / `POST /v1/monitor/schedules`：查询或维护定时采集与巡检计划（`action`: `create` / `update` / `toggle` / `delete`，写操作仅平台管理员可用；Gateway 进程通过 `-monitor-tick` 默认每 15 秒认领到期计划并推进 `next_run_at_ms`）。
+- `GET /v1/monitor/runs` / `GET /v1/monitor/runs/<run_id>` / `POST /v1/monitor/runs`：查看按目标授权过滤的巡检执行历史与明细，或立即触发手动巡检（`schedule_id`、指定 `targets`/`strategies`/`ssh_hosts` 或 `retest_run_id` 仅复检异常/离线项）。离线目标记录为 `status=offline`（`reason=target_offline`）并使整次运行标为 `partial` 或 `failed`。
 
 ## 错误码
 

@@ -94,6 +94,11 @@ func (s *GatewayStore) PruneOfflineAgentStatus(now time.Time) (int64, error) {
 		}
 		deleted += n
 	}
+	_, _ = s.db.Exec(`DELETE FROM agent_connection_events WHERE occurred_at_ms < ?`,
+		now.UTC().Add(-OfflineInstanceRetention).UnixMilli())
+	_, _ = s.db.Exec(`DELETE FROM platform_load_samples WHERE at_ms < ?`,
+		now.UTC().Add(-30*24*time.Hour).UnixMilli())
+	s.PruneMonitorEngineHistory(now)
 	return deleted, nil
 }
 

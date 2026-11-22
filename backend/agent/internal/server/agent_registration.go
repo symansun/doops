@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type AgentRegistrationHandler struct {
 	// target that has no confirmed enrollment. It is a temporary migration
 	// escape hatch; closed is the default.
 	allowOpenRegistration bool
+	draining              atomic.Bool
 	acknowledge           func(*GatewayAgent) error
 	// onRegistered runs after an Agent is registered, outside the read loop.
 	onRegistered func(*GatewayAgent)
@@ -44,6 +46,11 @@ func NewAgentRegistrationHandler(
 }
 
 func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.draining.Load() {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "gateway_draining: the Gateway is restarting; retry in a moment", http.StatusServiceUnavailable)
+		return
+	}
 	cluster := strings.TrimSpace(r.URL.Query().Get("cluster"))
 	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
 	if cluster == "" || instance == "" {
@@ -112,26 +119,15 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		<-session.closed
 		return
 	}
-	if enrollmentID == "" {
-		// Recheck after the handshake with the same rule as above: a target
-		// enrolled while connecting, or open registration that was never
-		// enabled, still ends here.
-		locked, err = h.registry.store.TargetHasActiveAgentEnrollment(cluster, instance)
-		if err != nil || locked || !h.allowOpenRegistration {
-			log.Printf("[gateway] agent registration closed while connecting: %s", session.Key)
-			_ = conn.Close()
-			<-session.closed
-			return
-		}
-	} else if err := h.registry.store.ConfirmAgentEnrollment(enrollmentID); err != nil {
-		log.Printf("[gateway] agent enrollment confirm failed: %s: %v", session.Key, err)
+	if h.draining.Load() {
+		log.Printf("[gateway] agent registration rejected while draining: %s", session.Key)
 		_ = conn.Close()
 		<-session.closed
 		return
 	}
-	if err := h.registry.Register(session); err != nil {
+	if err := h.registry.RegisterWithEnrollment(session, enrollmentID); err != nil {
 		if errors.Is(err, ErrAgentEnrollmentRequired) {
-			writeAgentEnrollmentRequired(w)
+			log.Printf("[gateway] agent registration closed while connecting: %s", session.Key)
 			_ = conn.Close()
 			<-session.closed
 			return

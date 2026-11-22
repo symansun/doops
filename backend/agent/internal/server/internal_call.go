@@ -55,6 +55,9 @@ func withoutReconnectWait(ctx context.Context) context.Context {
 }
 
 func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instance, tool string, args map[string]interface{}) (output string, finalErr error) {
+	if h.isDraining() {
+		return "", fmt.Errorf("gateway_draining: the Gateway is restarting")
+	}
 	// Internal calls follow the same reconnect grace as client RPCs, bounded by
 	// the caller's context: a canceled caller never waits for a reconnecting Agent.
 	grace := h.targetReconnectGrace(tool)

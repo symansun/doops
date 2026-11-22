@@ -32,6 +32,10 @@ type auditRecord struct {
 	Tail            string                `json:"tail,omitempty"`
 	BytesIn         int64                 `json:"bytes_in"`
 	BytesOut        int64                 `json:"bytes_out"`
+	Model           string                `json:"model,omitempty"`
+	InputTokens     int64                 `json:"input_tokens,omitempty"`
+	OutputTokens    int64                 `json:"output_tokens,omitempty"`
+	TotalTokens     int64                 `json:"total_tokens,omitempty"`
 	StartedAt       string                `json:"started_at"`
 	EndedAt         string                `json:"ended_at,omitempty"`
 }
@@ -84,6 +88,10 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 				Tail:            event.Tail,
 				BytesIn:         event.BytesIn,
 				BytesOut:        event.BytesOut,
+				Model:           event.Model,
+				InputTokens:     event.InputTokens,
+				OutputTokens:    event.OutputTokens,
+				TotalTokens:     event.TotalTokens,
 				StartedAt:       event.StartedAt.UTC().Format(time.RFC3339),
 			}
 			if !event.EndedAt.IsZero() {

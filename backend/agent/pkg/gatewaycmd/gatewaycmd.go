@@ -1,13 +1,16 @@
 package gatewaycmd
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/user/doops/agent/internal/server"
@@ -58,8 +61,10 @@ func serve(args []string) {
 	targetQueueTimeout := fs.Duration("target-queue-timeout", 10*time.Minute, "How long an operation waits for a busy target")
 	maxQueuedPerTarget := fs.Int("max-queued-per-target", 10, "Maximum queued operations per target; negative disables queueing")
 	targetReconnectGrace := fs.Duration("target-reconnect-grace", 10*time.Second, "How long an RPC or internal call waits for a reconnecting Agent; 0 fails immediately, negative uses the default")
+	shutdownDrainTimeout := fs.Duration("shutdown-drain-timeout", 2*time.Minute, "On SIGTERM/SIGINT, how long to wait for running operations before closing connections; 0 exits immediately")
 	// The issue scheduler was removed; the flag stays accepted so existing service units keep starting.
 	_ = fs.Duration("scheduler-tick", 0, "Removed; accepted and ignored")
+	monitorTick := fs.Duration("monitor-tick", 15*time.Second, "Interval to check due periodic monitor/inspection schedules; 0 disables")
 	edgeListen := fs.String("edge-listen", "", "TCP listen address for Edge public traffic; empty disables it")
 	edgeProxyProtocol := fs.Bool("edge-proxy-protocol", true, "Require PROXY protocol on Edge listener (must be true behind nginx stream)")
 	// Temporary migration escape hatch. Open agent registration is closed by
@@ -124,7 +129,9 @@ func serve(args []string) {
 		ConsoleForwardSecret:              []byte(consoleForwardSecret),
 		AllowUnenrolledCredentialDelivery: *allowUnenrolledCredentialDelivery,
 	})
+	hub.StartHeartbeatFlusher(30 * time.Second)
 	hub.StartOfflineInstanceReaper(time.Hour)
+	hub.StartMonitorRunner(*monitorTick)
 
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
@@ -157,9 +164,50 @@ func serve(args []string) {
 	// ReadTimeout and WriteTimeout stay unset. They would apply to hijacked
 	// agent, client, and edge tunnels. Slow header reads and idle keep-alives
 	// are bounded separately.
-	if err := gatewayHTTPServer(":"+*port, mux).ListenAndServe(); err != nil {
-		log.Fatal(err)
+	srv := gatewayHTTPServer(":"+*port, mux)
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- srv.ListenAndServe()
+	}()
+
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-serveErr:
+		hub.CloseTunnels()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("[gateway] http server stopped: %v", err)
+			_ = store.Close()
+			_ = dbLock.Close()
+			os.Exit(1)
+		}
+		return
+	case <-sigCtx.Done():
 	}
+	// Restore default signal handling so a second SIGTERM/SIGINT exits immediately.
+	stop()
+
+	drainWait := *shutdownDrainTimeout
+	if drainWait < 0 {
+		drainWait = 0
+	}
+	log.Printf("[gateway] draining: refusing new operations, waiting up to %s for %d active", drainWait, hub.ActiveOperationCount())
+	hub.BeginDrain()
+	if drainWait > 0 {
+		drainCtx, cancelDrain := context.WithTimeout(context.Background(), drainWait)
+		remaining := hub.WaitIdle(drainCtx)
+		cancelDrain()
+		if remaining > 0 {
+			log.Printf("[gateway] drain timed out with %d operations still running; they will be recorded as interrupted on next start", remaining)
+		}
+	}
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	_ = srv.Shutdown(shutdownCtx)
+	cancelShutdown()
+	hub.CloseTunnels()
+	log.Printf("[gateway] shutdown complete")
 }
 
 // secretKeyStartupMessage turns a startup key-check error into operator

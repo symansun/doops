@@ -36,7 +36,7 @@ var doagentUIPrivateScalarPatterns = []*regexp.Regexp{
 func publicDoagentUINotification(update map[string]interface{}) notificationEvent {
 	public, err := doagentUIStrings(update, []string{
 		"sessionUpdate", "turnId", "toolCallId", "toolName", "status", "title", "text",
-		"stopReason", "failureClass", "failureReason", "error", "message", "reason",
+		"stopReason", "failureClass", "failureReason", "error", "message", "reason", "model",
 	})
 	if err != nil {
 		return errorNotification(err.Error())

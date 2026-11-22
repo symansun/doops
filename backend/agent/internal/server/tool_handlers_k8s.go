@@ -18,11 +18,23 @@ func (gw *Gateway) handleToolNodeInfo(call toolInvocation) {
 	var args api.NodeInfoParams
 	json.Unmarshal(argBytes, &args)
 	if args.Section != "" {
-		if args.Section != "admission" {
+		var (
+			result string
+			err    error
+		)
+		switch args.Section {
+		case "admission":
+			result, err = readDoagentAdmission(ctx, configuredDoagentURL())
+		case "vm_metrics":
+			result, err = collectAgentVMMetricsJSON(ctx)
+		case "container_metrics":
+			result, err = collectAgentContainerMetricsJSON(ctx)
+		case "app_metrics":
+			result, err = collectAgentAppMetricsJSON(ctx, args.Targets)
+		default:
 			writeJSON(buildErrorResponse(reqID, -32602, "unsupported node info section"))
 			return
 		}
-		result, err := readDoagentAdmission(ctx, configuredDoagentURL())
 		if err != nil {
 			writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
 		} else {

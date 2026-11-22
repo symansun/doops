@@ -21,7 +21,7 @@ it: `backend/gateway` (via `pkg/gatewaycmd`) and `backend/agent/cmd/agent`.
 | `agent_registration.go`, `agent_registry.go`, `agent_session.go`, `agent_relay.go`, `agent_message_queue.go` | Gateway | Register an Agent, maintain its connection, forward calls and buffer replies |
 | `agent_leases.go`, `tool_resource_keys.go`, `gateway_actions.go` | Gateway | Concurrency admission, resource keys and action vocabulary |
 | `execution_*` | Gateway | Execution lifecycle, terminal evidence, `outcome_unknown` |
-| `gateway_store*`, `audit_*`, `admin_*`, `secret_box.go` | Gateway | Persistence, audit, admin API, encryption at rest |
+| `gateway_store*`, `audit_*`, `admin_*`, `platform_monitor_*`, `secret_box.go` | Gateway | Persistence, audit, admin API, platform monitoring, encryption at rest |
 | `credential_store*`, `credential_types.go`, `credential_validation.go`, `credential_http.go`, `credential_runtime.go`, `credential_lock.go`, `credential_import.go`, `credential_bundle_http.go`, `credential_materialization_store.go` | Gateway | Credential lifecycle, grants, verify/promote, materialization dispatch |
 | `credential_resolve.go`, `credential_verify_http.go`, `credential_cleanup.go`, `credential_errors.go`, `credential_http_audit.go` | Gateway | Credential resolution, verification, cleanup and HTTP outcomes |
 | `credential_materializer*.go`, `credential_tools.go`, `credential_scope.go` | Agent | Target-side credential materialization, Secret operations and verification probes |

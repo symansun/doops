@@ -183,7 +183,7 @@ func (f *executionLifecycleFixture) agentWithInitialize(t *testing.T, initialize
 	t.Helper()
 	previous := f.hub.getAgent("dev", "local")
 	agent := &executionLifecycleAgent{
-		conn:    dialFakeGatewayAgent(t, f.server.URL, "dev", "local"),
+		conn:    dialEnrolledTestAgent(t, f, "dev", "local"),
 		calls:   make(chan executionLifecycleCall, 16),
 		cancels: make(chan int64, 16),
 	}
@@ -244,16 +244,6 @@ func (f *executionLifecycleFixture) agentWithInitialize(t *testing.T, initialize
 		current := f.hub.getAgent("dev", "local")
 		return current != nil && current != previous
 	})
-	// This fixture models an Agent that completed enrollment. The open-
-	// registration compatibility path intentionally leaves TokenID empty and
-	// receives no credential payload; tests that exercise credentials need the
-	// enrolled state explicitly.
-	requireEventually(t, 3*time.Second, func() bool { return f.hub.getAgent("dev", "local") != nil })
-	f.hub.registry.mu.Lock()
-	if current := f.hub.registry.sessions[tunnelKey("dev", "local")]; current != nil {
-		current.TokenID = "test-enrollment"
-	}
-	f.hub.registry.mu.Unlock()
 	return agent
 }
 

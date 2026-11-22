@@ -359,8 +359,134 @@ type TaskInfo struct {
 	LogTail  string `json:"log_tail"` // 最后 N 行日志
 }
 
+type AppProbeTarget struct {
+	AssetID string `json:"asset_id"`
+	URL     string `json:"url"`
+}
+
 // NodeInfoParams 用于 doops_node_info 查看节点信息
 type NodeInfoParams struct {
-	SessionID string `json:"session_id,omitempty"`
-	Section   string `json:"section,omitempty"`
+	SessionID string           `json:"session_id,omitempty"`
+	Section   string           `json:"section,omitempty"`
+	Targets   []AppProbeTarget `json:"targets,omitempty"`
+}
+
+// MonitorInspectAsset describes one asset dispatched by Gateway to an Agent for
+// read-only metric extraction and strategy-based inspection. Never carries secret payloads.
+type MonitorInspectAsset struct {
+	AssetID   string   `json:"asset_id"`
+	AssetName string   `json:"asset_name,omitempty"`
+	AssetKind string   `json:"asset_kind"` // vm | physical | k8s | container | app | database
+	Strategy  string   `json:"strategy"`   // vm_host | ssh_host | k8s_cluster | container_runtime | app_service | database_service
+	Address   string   `json:"address,omitempty"`
+	Port      int      `json:"port,omitempty"`
+	SSHUser   string   `json:"ssh_user,omitempty"`
+	URL       string   `json:"url,omitempty"`
+	Engine    string   `json:"engine,omitempty"`
+	Database  string   `json:"database,omitempty"`
+	Namespace string   `json:"namespace,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+}
+
+// MonitorInspectThresholds defines numeric thresholds applied during an inspection run.
+type MonitorInspectThresholds struct {
+	CPUWarnPercent    float64  `json:"cpu_warn_percent,omitempty"`
+	CPUCritPercent    float64  `json:"cpu_crit_percent,omitempty"`
+	MemWarnPercent    float64  `json:"mem_warn_percent,omitempty"`
+	MemCritPercent    float64  `json:"mem_crit_percent,omitempty"`
+	DiskWarnPercent   float64  `json:"disk_warn_percent,omitempty"`
+	DiskCritPercent   float64  `json:"disk_crit_percent,omitempty"`
+	DiskLatencyWarnMs float64  `json:"disk_latency_warn_ms,omitempty"`
+	LatencyWarnMs     float64  `json:"latency_warn_ms,omitempty"`
+	ErrorRateWarnPct  float64  `json:"error_rate_warn_pct,omitempty"`
+	CertWarnDays      int      `json:"cert_warn_days,omitempty"`
+	MinUptimeSeconds  int64    `json:"min_uptime_seconds,omitempty"`
+	DeniedProcesses   []string `json:"denied_processes,omitempty"`
+}
+
+// MonitorInspectParams is the Gateway -> Agent RPC payload for doops_monitor_inspect.
+type MonitorInspectParams struct {
+	SessionID  string                   `json:"session_id"`
+	RunID      string                   `json:"run_id"`
+	Strategies []string                 `json:"strategies,omitempty"`
+	Assets     []MonitorInspectAsset    `json:"assets"`
+	Thresholds MonitorInspectThresholds `json:"thresholds,omitempty"`
+}
+
+// MonitorInspectCheck records one structured inspection verdict.
+type MonitorInspectCheck struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Category  string `json:"category"` // availability | resource | security | compliance | runtime | database | k8s
+	Status    string `json:"status"`   // pass | warning | critical | skipped
+	Value     string `json:"value,omitempty"`
+	Threshold string `json:"threshold,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+}
+
+// MonitorInspectMetrics holds normalized scalar metrics extracted for one asset.
+type MonitorInspectMetrics struct {
+	CPUCores          *float64 `json:"cpu_cores,omitempty"`
+	CPUTotalCores     *float64 `json:"cpu_total_cores,omitempty"`
+	CPUPercent        *float64 `json:"cpu_percent,omitempty"`
+	KernelCPUCores    *float64 `json:"kernel_cpu_cores,omitempty"`
+	MemoryUsedBytes   *float64 `json:"memory_used_bytes,omitempty"`
+	MemoryTotalBytes  *float64 `json:"memory_total_bytes,omitempty"`
+	MemoryPercent     *float64 `json:"memory_percent,omitempty"`
+	KernelSlabBytes   *float64 `json:"kernel_slab_bytes,omitempty"`
+	DiskUsedBytes     *float64 `json:"disk_used_bytes,omitempty"`
+	DiskTotalBytes    *float64 `json:"disk_total_bytes,omitempty"`
+	DiskPercent       *float64 `json:"disk_percent,omitempty"`
+	NetBytesPerSec    *float64 `json:"net_bytes_per_sec,omitempty"`
+	DiskIOPS          *float64 `json:"disk_iops,omitempty"`
+	DiskLatencyMs     *float64 `json:"disk_latency_ms,omitempty"`
+	GPUPercent        *float64 `json:"gpu_percent,omitempty"`
+	ResponseTimeMs    *float64 `json:"response_time_ms,omitempty"`
+	ErrorRate         *float64 `json:"error_rate,omitempty"`
+	ActiveConnections *float64 `json:"active_connections,omitempty"`
+	RequestsPerSec    *float64 `json:"requests_per_sec,omitempty"`
+	UptimeSeconds     *float64 `json:"uptime_seconds,omitempty"`
+	Load1m            *float64 `json:"load_1m,omitempty"`
+	OSInfo            string   `json:"os_info,omitempty"`
+	KernelInfo        string   `json:"kernel_info,omitempty"`
+}
+
+// MonitorInspectSeriesPoint represents a granular metric point to bridge into asset_monitor_series.
+type MonitorInspectSeriesPoint struct {
+	Type      string   `json:"type"`
+	AssetID   string   `json:"asset_id"`
+	Namespace string   `json:"namespace,omitempty"`
+	Origin    string   `json:"origin"`
+	Metric    string   `json:"metric"`
+	DeviceID  string   `json:"device_id,omitempty"`
+	Unit      string   `json:"unit"`
+	AtMs      int64    `json:"at_ms"`
+	Status    string   `json:"status"` // ok | missing | not_applicable
+	Value     *float64 `json:"value"`
+}
+
+// MonitorInspectAssetResult is the Agent result for one asset + strategy execution.
+type MonitorInspectAssetResult struct {
+	AssetID         string                      `json:"asset_id"`
+	AssetName       string                      `json:"asset_name,omitempty"`
+	AssetKind       string                      `json:"asset_kind"`
+	Strategy        string                      `json:"strategy"`
+	CollectorMethod string                      `json:"collector_method"` // agent_local | ssh | k8s_api | http_probe | dosql | tcp_probe
+	Status          string                      `json:"status"`           // pass | warning | critical | error | skipped
+	Reason          string                      `json:"reason,omitempty"`
+	CollectedAtMs   int64                       `json:"collected_at_ms"`
+	DurationMs      int64                       `json:"duration_ms"`
+	Tags            []string                    `json:"tags,omitempty"`
+	Metrics         MonitorInspectMetrics       `json:"metrics"`
+	Checks          []MonitorInspectCheck       `json:"checks"`
+	Details         map[string]any              `json:"details,omitempty"`
+	Evidence        map[string]any              `json:"evidence,omitempty"`
+	SeriesPoints    []MonitorInspectSeriesPoint `json:"series_points,omitempty"`
+}
+
+// MonitorInspectResponse is the JSON payload returned by the Agent from doops_monitor_inspect.
+type MonitorInspectResponse struct {
+	RunID         string                      `json:"run_id"`
+	CollectedAtMs int64                       `json:"collected_at_ms"`
+	Results       []MonitorInspectAssetResult `json:"results"`
 }

@@ -88,7 +88,7 @@ fi
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}
-	conn := dialFakeGatewayAgent(t, f.server.URL, "dev", "local")
+	conn := dialEnrolledTestAgent(t, f, "dev", "local")
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -104,7 +104,6 @@ fi
 		requireEventually(t, 3*time.Second, func() bool { return f.hub.client.registry.Get("dev", "local") == nil })
 	})
 	waitForGatewayAgent(t, f.hub, "dev", "local")
-	markTestAgentEnrolled(t, f.hub, "dev", "local")
 	return f, argsLog
 }
 

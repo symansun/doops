@@ -33,6 +33,7 @@ type inventoryMachine struct {
 	Revision      int64           `json:"revision"`
 	TargetStatus  string          `json:"target_status"`
 	LastSeen      string          `json:"last_seen,omitempty"`
+	LastSampleMs  *int64          `json:"last_sample_ms,omitempty"`
 	LoginAccounts json.RawMessage `json:"login_accounts,omitempty"`
 }
 
@@ -73,13 +74,14 @@ func (m machineInventoryInput) validate() *machineInventoryProblem {
 
 // Tags have no authorization meaning. Constrain their shape so they are safe
 // metadata in a model-facing list, not connection strings or instructions.
-var machineTagPattern = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{M}\p{N}._-]*$`)
+// Supports flat labels ("qa") and single key=value pairs ("院系=计算机", "env=prod").
+var machineTagPattern = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{M}\p{N}._-]*(?:=[\p{L}\p{N}][\p{L}\p{M}\p{N}._-]*)?$`)
 
 func normalizeMachineTags(raw []string) ([]string, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	invalid := machineBadRequest("invalid_tags", "最多 20 个标签，每个限 32 字，使用文字、数字、点、横线或下划线，不含凭据")
+	invalid := machineBadRequest("invalid_tags", "最多 20 个标签，每个限 32 字，支持标签或 key=value，使用文字、数字、点、横线或下划线，不含凭据")
 	if len(raw) > 20 {
 		return nil, invalid
 	}

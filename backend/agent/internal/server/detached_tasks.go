@@ -134,16 +134,27 @@ func (t *detachedTask) view(withOutput bool) detachedTaskView {
 	return v
 }
 
-// The registry is in-memory: a Gateway restart drops every entry, and an Agent
-// tunnel loss still ends the task under the existing outcome rules. Finished
-// entries are evicted lazily after detachedTaskRetention.
+// The registry mirrors metadata and bounded output to SQLite so finished entries
+// survive Gateway restarts for detachedTaskRetention; running entries interrupted
+// by a Gateway restart recover deterministically as outcome_unknown.
 type detachedTaskRegistry struct {
+	store *GatewayStore
 	mu    sync.Mutex
 	tasks map[int64]*detachedTask
 }
 
-func newDetachedTaskRegistry() *detachedTaskRegistry {
-	return &detachedTaskRegistry{tasks: make(map[int64]*detachedTask)}
+func newDetachedTaskRegistry(store *GatewayStore) *detachedTaskRegistry {
+	r := &detachedTaskRegistry{store: store, tasks: make(map[int64]*detachedTask)}
+	if store != nil {
+		_ = store.recoverAndPruneDetachedTasks(time.Now().UTC())
+		if loaded, err := store.loadDetachedTasks(); err == nil {
+			for i := range loaded {
+				cp := loaded[i]
+				r.tasks[cp.AuditID] = &cp
+			}
+		}
+	}
+	return r
 }
 
 var detachedTaskIDLine = regexp.MustCompile(`(?m)^TaskID: (\S+)`)
@@ -151,14 +162,18 @@ var detachedTaskIDLine = regexp.MustCompile(`(?m)^TaskID: (\S+)`)
 func (r *detachedTaskRegistry) register(task *detachedTask) {
 	r.mu.Lock()
 	r.tasks[task.AuditID] = task
+	snapshot := *task
 	r.mu.Unlock()
+	if r.store != nil {
+		_ = r.store.upsertDetachedTask(snapshot)
+	}
 }
 
 func (r *detachedTaskRegistry) appendOutput(auditID int64, chunk string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	task := r.tasks[auditID]
 	if task == nil {
+		r.mu.Unlock()
 		return
 	}
 	if task.TaskID == "" {
@@ -170,21 +185,40 @@ func (r *detachedTaskRegistry) appendOutput(auditID int64, chunk string) {
 	if len(task.output) > detachedOutputLimit {
 		task.output = task.output[len(task.output)-detachedOutputLimit:]
 	}
+	taskID, out := task.TaskID, task.output
+	r.mu.Unlock()
+	if r.store != nil {
+		_ = r.store.updateDetachedTaskOutput(auditID, taskID, out)
+	}
 }
 
 func (r *detachedTaskRegistry) finish(auditID int64, status string) {
+	var finished time.Time
+	updated := false
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if task := r.tasks[auditID]; task != nil && task.Status == "running" {
 		task.Status = status
 		task.FinishedAt = time.Now().UTC()
+		finished = task.FinishedAt
+		updated = true
+	}
+	r.mu.Unlock()
+	if updated && r.store != nil {
+		_ = r.store.finishDetachedTask(auditID, status, finished)
 	}
 }
 
 func (r *detachedTaskRegistry) evictLocked(now time.Time) {
+	var evicted []int64
 	for id, task := range r.tasks {
 		if task.Status != "running" && now.Sub(task.FinishedAt) > detachedTaskRetention {
 			delete(r.tasks, id)
+			evicted = append(evicted, id)
+		}
+	}
+	if r.store != nil && len(evicted) > 0 {
+		for _, id := range evicted {
+			_, _ = r.store.db.Exec(`DELETE FROM detached_tasks WHERE audit_id = ?`, id)
 		}
 	}
 }
@@ -224,15 +258,115 @@ func (r *detachedTaskRegistry) list(userID, cluster, instance string) []detached
 
 func (r *detachedTaskRegistry) requestCancel(task *detachedTask) bool {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if task.Status != "running" {
+		r.mu.Unlock()
 		return false
 	}
 	task.CancelRequested = true
-	if task.cancel != nil {
-		task.cancel()
+	cancelFn := task.cancel
+	auditID := task.AuditID
+	r.mu.Unlock()
+	if r.store != nil {
+		_, _ = r.store.db.Exec(`UPDATE detached_tasks SET cancel_requested = 1 WHERE audit_id = ?`, auditID)
+	}
+	if cancelFn != nil {
+		cancelFn()
 	}
 	return true
+}
+
+func (s *GatewayStore) upsertDetachedTask(task detachedTask) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	finishedRaw := ""
+	var finishedMs int64
+	if !task.FinishedAt.IsZero() {
+		finishedRaw = formatTime(task.FinishedAt.UTC())
+		finishedMs = task.FinishedAt.UTC().UnixMilli()
+	}
+	cancelInt := 0
+	if task.CancelRequested {
+		cancelInt = 1
+	}
+	_, err := s.db.Exec(`INSERT INTO detached_tasks
+		(audit_id, operation_id, user_id, cluster, instance, session, command_summary, status,
+		 started_at, finished_at, finished_at_ms, task_id, cancel_requested, output)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(audit_id) DO UPDATE SET
+			status = excluded.status,
+			finished_at = excluded.finished_at,
+			finished_at_ms = excluded.finished_at_ms,
+			task_id = excluded.task_id,
+			cancel_requested = excluded.cancel_requested,
+			output = excluded.output`,
+		task.AuditID, task.OperationID, task.UserID, task.Cluster, task.Instance, task.Session,
+		task.CommandSummary, task.Status, formatTime(task.StartedAt.UTC()),
+		finishedRaw, finishedMs, task.TaskID, cancelInt, sanitizeSecretText(task.output))
+	return err
+}
+
+func (s *GatewayStore) updateDetachedTaskOutput(auditID int64, taskID, output string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE detached_tasks SET task_id = ?, output = ? WHERE audit_id = ?`,
+		taskID, output, auditID)
+	return err
+}
+
+func (s *GatewayStore) finishDetachedTask(auditID int64, status string, finishedAt time.Time) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	utc := finishedAt.UTC()
+	_, err := s.db.Exec(`UPDATE detached_tasks SET status = ?, finished_at = ?, finished_at_ms = ?
+		WHERE audit_id = ? AND status = 'running'`,
+		status, formatTime(utc), utc.UnixMilli(), auditID)
+	return err
+}
+
+func (s *GatewayStore) recoverAndPruneDetachedTasks(now time.Time) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	utc := now.UTC()
+	if _, err := s.db.Exec(`UPDATE detached_tasks
+		SET status = 'outcome_unknown', finished_at = ?, finished_at_ms = ?
+		WHERE status = 'running'`,
+		formatTime(utc), utc.UnixMilli()); err != nil {
+		return err
+	}
+	cutoffMs := utc.Add(-detachedTaskRetention).UnixMilli()
+	_, err := s.db.Exec(`DELETE FROM detached_tasks WHERE status != 'running' AND finished_at_ms > 0 AND finished_at_ms < ?`, cutoffMs)
+	return err
+}
+
+func (s *GatewayStore) loadDetachedTasks() ([]detachedTask, error) {
+	rows, err := s.db.Query(`SELECT audit_id, operation_id, user_id, cluster, instance, session,
+		command_summary, status, started_at, finished_at, task_id, cancel_requested, output
+		FROM detached_tasks`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []detachedTask
+	for rows.Next() {
+		var t detachedTask
+		var startedRaw, finishedRaw string
+		var cancelInt int
+		if err := rows.Scan(&t.AuditID, &t.OperationID, &t.UserID, &t.Cluster, &t.Instance, &t.Session,
+			&t.CommandSummary, &t.Status, &startedRaw, &finishedRaw, &t.TaskID, &cancelInt, &t.output); err != nil {
+			return nil, err
+		}
+		t.StartedAt, _ = parseTime(startedRaw)
+		if finishedRaw != "" {
+			t.FinishedAt, _ = parseTime(finishedRaw)
+		}
+		t.CancelRequested = cancelInt != 0
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // visibleTask applies the owner + still-granted rule without revealing

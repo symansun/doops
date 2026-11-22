@@ -48,6 +48,7 @@ func (s *GatewayStore) migrate() error {
 			instance TEXT NOT NULL,
 			token_id TEXT NOT NULL DEFAULT '',
 			remote TEXT NOT NULL DEFAULT '',
+			release_commit TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'offline',
 			generation INTEGER NOT NULL DEFAULT 0,
 			connected_at TEXT NOT NULL DEFAULT '',
@@ -57,6 +58,46 @@ func (s *GatewayStore) migrate() error {
 			archived_by TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(cluster, instance)
 		)`,
+		`CREATE TABLE IF NOT EXISTS agent_connection_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			cluster TEXT NOT NULL,
+			instance TEXT NOT NULL,
+			generation INTEGER NOT NULL DEFAULT 0,
+			event TEXT NOT NULL,
+			release_commit TEXT NOT NULL DEFAULT '',
+			remote TEXT NOT NULL DEFAULT '',
+			enrolled INTEGER NOT NULL DEFAULT 0,
+			occurred_at_ms INTEGER NOT NULL,
+			occurred_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_conn_events_time ON agent_connection_events(occurred_at_ms DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_conn_events_target ON agent_connection_events(cluster, instance, occurred_at_ms DESC)`,
+		`CREATE TABLE IF NOT EXISTS platform_load_samples (
+			at_ms INTEGER PRIMARY KEY,
+			online_agents INTEGER NOT NULL DEFAULT 0,
+			busy_agents INTEGER NOT NULL DEFAULT 0,
+			active_ops INTEGER NOT NULL DEFAULT 0,
+			queued_ops INTEGER NOT NULL DEFAULT 0,
+			active_sessions INTEGER NOT NULL DEFAULT 0,
+			resource_locks INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS detached_tasks (
+			audit_id INTEGER PRIMARY KEY,
+			operation_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			cluster TEXT NOT NULL,
+			instance TEXT NOT NULL,
+			session TEXT NOT NULL,
+			command_summary TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			finished_at TEXT NOT NULL DEFAULT '',
+			finished_at_ms INTEGER NOT NULL DEFAULT 0,
+			task_id TEXT NOT NULL DEFAULT '',
+			cancel_requested INTEGER NOT NULL DEFAULT 0,
+			output TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_detached_tasks_user ON detached_tasks(user_id, audit_id DESC)`,
 		`CREATE TABLE IF NOT EXISTS audit_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id TEXT NOT NULL DEFAULT '',
@@ -78,6 +119,11 @@ func (s *GatewayStore) migrate() error {
 			tail TEXT NOT NULL DEFAULT '',
 			bytes_in INTEGER NOT NULL DEFAULT 0,
 			bytes_out INTEGER NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			total_tokens INTEGER NOT NULL DEFAULT 0,
+			started_at_ms INTEGER NOT NULL DEFAULT 0,
 			started_at TEXT NOT NULL,
 			ended_at TEXT NOT NULL DEFAULT ''
 		)`,
@@ -206,6 +252,106 @@ func (s *GatewayStore) migrate() error {
 			FOREIGN KEY(credential_id) REFERENCES credentials(id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_credential_bundle_items_resource ON credential_bundle_items(credential_id)`,
+		`CREATE TABLE IF NOT EXISTS monitor_schedules (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			scope_mode TEXT NOT NULL DEFAULT 'all_online',
+			targets_json TEXT NOT NULL DEFAULT '[]',
+			tags_json TEXT NOT NULL DEFAULT '[]',
+			strategies_json TEXT NOT NULL DEFAULT '["vm_host","k8s_cluster","container_runtime","app_service","database_service"]',
+			thresholds_json TEXT NOT NULL DEFAULT '{}',
+			interval_seconds INTEGER NOT NULL DEFAULT 300,
+			next_run_at_ms INTEGER NOT NULL DEFAULT 0,
+			last_run_at_ms INTEGER NOT NULL DEFAULT 0,
+			last_run_id TEXT NOT NULL DEFAULT '',
+			last_status TEXT NOT NULL DEFAULT '',
+			created_by TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_monitor_schedules_due ON monitor_schedules(enabled, next_run_at_ms)`,
+		`CREATE TABLE IF NOT EXISTS monitor_runs (
+			id TEXT PRIMARY KEY,
+			schedule_id TEXT NOT NULL DEFAULT '',
+			schedule_name TEXT NOT NULL DEFAULT '',
+			trigger_kind TEXT NOT NULL,
+			triggered_by TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			total_targets INTEGER NOT NULL DEFAULT 0,
+			total_assets INTEGER NOT NULL DEFAULT 0,
+			passed_checks INTEGER NOT NULL DEFAULT 0,
+			warning_checks INTEGER NOT NULL DEFAULT 0,
+			failed_checks INTEGER NOT NULL DEFAULT 0,
+			skipped_checks INTEGER NOT NULL DEFAULT 0,
+			offline_targets INTEGER NOT NULL DEFAULT 0,
+			metrics_written INTEGER NOT NULL DEFAULT 0,
+			started_at_ms INTEGER NOT NULL,
+			finished_at_ms INTEGER NOT NULL DEFAULT 0,
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			summary TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_monitor_runs_started ON monitor_runs(started_at_ms DESC, id DESC)`,
+		`CREATE TABLE IF NOT EXISTS monitor_run_items (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id TEXT NOT NULL,
+			cluster TEXT NOT NULL,
+			instance TEXT NOT NULL,
+			asset_id TEXT NOT NULL,
+			asset_name TEXT NOT NULL DEFAULT '',
+			asset_kind TEXT NOT NULL,
+			strategy TEXT NOT NULL,
+			collector_method TEXT NOT NULL,
+			status TEXT NOT NULL,
+			reason TEXT NOT NULL DEFAULT '',
+			started_at_ms INTEGER NOT NULL,
+			finished_at_ms INTEGER NOT NULL DEFAULT 0,
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			metrics_json TEXT NOT NULL DEFAULT '{}',
+			checks_json TEXT NOT NULL DEFAULT '[]',
+			evidence_json TEXT NOT NULL DEFAULT '{}'
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_monitor_run_items_run ON monitor_run_items(run_id, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_monitor_run_items_target ON monitor_run_items(cluster, instance, started_at_ms DESC)`,
+		`CREATE TABLE IF NOT EXISTS monitor_resource_snapshots (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			cluster TEXT NOT NULL,
+			instance TEXT NOT NULL,
+			asset_id TEXT NOT NULL,
+			asset_name TEXT NOT NULL DEFAULT '',
+			asset_kind TEXT NOT NULL,
+			strategy TEXT NOT NULL,
+			collector_method TEXT NOT NULL,
+			collected_at_ms INTEGER NOT NULL,
+			run_id TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'ok',
+			cpu_cores REAL,
+			cpu_total_cores REAL,
+			cpu_percent REAL,
+			memory_used_bytes REAL,
+			memory_total_bytes REAL,
+			memory_percent REAL,
+			disk_used_bytes REAL,
+			disk_total_bytes REAL,
+			disk_percent REAL,
+			net_bytes_per_sec REAL,
+			disk_iops REAL,
+			disk_latency_ms REAL,
+			gpu_percent REAL,
+			response_time_ms REAL,
+			error_rate REAL,
+			active_connections REAL,
+			requests_per_sec REAL,
+			uptime_seconds REAL,
+			load_1m REAL,
+			os_info TEXT NOT NULL DEFAULT '',
+			kernel_info TEXT NOT NULL DEFAULT '',
+			tags_json TEXT NOT NULL DEFAULT '[]',
+			details_json TEXT NOT NULL DEFAULT '{}'
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_monitor_snapshots_latest ON monitor_resource_snapshots(cluster, instance, asset_kind, asset_id, collected_at_ms DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_monitor_snapshots_time ON monitor_resource_snapshots(collected_at_ms DESC)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -251,6 +397,9 @@ func (s *GatewayStore) migrate() error {
 	if err := s.ensureColumn("agent_status", "archived_by", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("agent_status", "release_commit", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	for _, column := range []struct {
 		name       string
 		definition string
@@ -262,10 +411,23 @@ func (s *GatewayStore) migrate() error {
 		{"resource_version", "TEXT NOT NULL DEFAULT ''"},
 		{"digest", "TEXT NOT NULL DEFAULT ''"},
 		{"correlation_id", "TEXT NOT NULL DEFAULT ''"},
+		{"model", "TEXT NOT NULL DEFAULT ''"},
+		{"input_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"output_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"total_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"started_at_ms", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.ensureColumn("audit_events", column.name, column.definition); err != nil {
 			return err
 		}
+	}
+	if _, err := s.db.Exec(`UPDATE audit_events
+		SET started_at_ms = CAST(ROUND((julianday(started_at) - 2440587.5) * 86400000.0) AS INTEGER)
+		WHERE started_at_ms = 0 AND started_at != ''`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_started_ms ON audit_events(started_at_ms DESC, id DESC)`); err != nil {
+		return err
 	}
 	for _, column := range []struct {
 		table      string

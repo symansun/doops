@@ -283,6 +283,20 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	toolTraces := newDoagentToolTraceCollector(false)
 	toolTraces.ordinaryAsk = !execution.RequireToolEvidence
 	toolTraces.bindSession(doopsSessionID)
+	effectiveModel := strings.TrimSpace(model)
+	if effectiveModel != "" && !strings.Contains(effectiveModel, "/") {
+		effectiveModel = "openai/" + effectiveModel
+	}
+	if effectiveModel == "" {
+		effectiveModel = strings.TrimSpace(inspectDoagentModelChannels().model)
+	}
+	if validCredentialMetadataToken(effectiveModel, 128) {
+		toolTraces.setDefaultModel(effectiveModel)
+	}
+	origWriteJSON := writeJSON
+	writeJSON = func(v interface{}) {
+		origWriteJSON(toolTraces.attachUsageToResponse(v))
+	}
 	go func() {
 		defer close(sseDone)
 		sseErr = subscribeDoagentSSEWithCollectorReady(

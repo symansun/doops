@@ -152,7 +152,50 @@ func (s *GatewayStore) readMachineInventory(r *http.Request, auth TokenAuth) (an
 	if err != nil {
 		return nil, err
 	}
+	populateMachineSampleTimestamps(tx, machines)
 	return map[string]any{"machines": machines}, nil
+}
+
+func populateMachineSampleTimestamps(tx *sql.Tx, machines []inventoryMachine) {
+	if len(machines) == 0 {
+		return
+	}
+	var hasMonitor, hasSnapshots bool
+	_ = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_monitor_samples')`).Scan(&hasMonitor)
+	_ = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_resource_snapshots')`).Scan(&hasSnapshots)
+	if !hasMonitor && !hasSnapshots {
+		return
+	}
+	for i := range machines {
+		m := &machines[i]
+		if m.Cluster == "" || m.Instance == "" {
+			continue
+		}
+		var best int64
+		if hasMonitor {
+			var latest sql.NullInt64
+			if tx.QueryRow(`SELECT MAX(p.at_ms) FROM asset_monitor_series s
+				JOIN asset_monitor_samples p ON p.series_id = s.id
+				WHERE s.cluster = ? AND s.instance = ? AND s.type IN ('machine', 'os', 'kernel')
+					AND s.asset_id IN (?, ?) AND p.status = 'ok'`,
+				m.Cluster, m.Instance, m.AssetID, m.Instance).Scan(&latest) == nil && latest.Valid && latest.Int64 > best {
+				best = latest.Int64
+			}
+		}
+		if hasSnapshots {
+			var latestSnap sql.NullInt64
+			if tx.QueryRow(`SELECT MAX(collected_at_ms) FROM monitor_resource_snapshots
+				WHERE cluster = ? AND instance = ? AND asset_kind IN ('vm', 'physical')
+					AND asset_id IN (?, ?) AND status IN ('ok', 'warning', 'critical')`,
+				m.Cluster, m.Instance, m.AssetID, m.Instance).Scan(&latestSnap) == nil && latestSnap.Valid && latestSnap.Int64 > best {
+				best = latestSnap.Int64
+			}
+		}
+		if best > 0 {
+			v := best
+			m.LastSampleMs = &v
+		}
+	}
 }
 
 func (s *GatewayStore) postMachineInventory(ctx context.Context, auth TokenAuth, req machineInventoryRequest, parseErr error) (any, error) {

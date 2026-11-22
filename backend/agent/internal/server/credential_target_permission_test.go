@@ -32,7 +32,7 @@ type credentialTargetPermissionAgent struct {
 func newCredentialTargetPermissionAgent(t *testing.T, f *executionLifecycleFixture) *credentialTargetPermissionAgent {
 	t.Helper()
 	agent := &credentialTargetPermissionAgent{
-		executionLifecycleAgent: &executionLifecycleAgent{conn: dialFakeGatewayAgent(t, f.server.URL, "dev", "local")},
+		executionLifecycleAgent: &executionLifecycleAgent{conn: dialEnrolledTestAgent(t, f, "dev", "local")},
 		fixture:                 f,
 		calls:                   make(chan credentialTargetPermissionCall, 16),
 	}

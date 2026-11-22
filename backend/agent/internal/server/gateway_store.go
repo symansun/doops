@@ -15,7 +15,17 @@ import (
 )
 
 type GatewayStore struct {
-	db *sql.DB
+	db  *sql.DB
+	rdb *sql.DB
+}
+
+// readDB returns the read-only SQLite connection pool when open, falling back
+// to the write handle if a test constructed GatewayStore directly.
+func (s *GatewayStore) readDB() *sql.DB {
+	if s.rdb != nil {
+		return s.rdb
+	}
+	return s.db
 }
 
 func OpenGatewayStore(path string) (*GatewayStore, error) {
@@ -66,6 +76,21 @@ func OpenGatewayStore(path string) (*GatewayStore, error) {
 			return nil, err
 		}
 	}
+	// Separate read-only pool in WAL mode so hot reads (auth, grants, audit
+	// listing, enrollment checks) do not queue behind a slow write statement on
+	// the single writer connection.
+	readDSN := (&url.URL{
+		Scheme:   "file",
+		Path:     path,
+		RawQuery: "mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)",
+	}).String()
+	rdb, err := sql.Open("sqlite", readDSN)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	rdb.SetMaxOpenConns(8)
+	store.rdb = rdb
 	return store, nil
 }
 
@@ -77,10 +102,21 @@ func chmodIfExists(path string, mode os.FileMode) error {
 }
 
 func (s *GatewayStore) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil {
 		return nil
 	}
-	return s.db.Close()
+	var firstErr error
+	if s.rdb != nil {
+		if err := s.rdb.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if s.db != nil {
+		if err := s.db.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func firstNonEmpty(values ...string) string {
