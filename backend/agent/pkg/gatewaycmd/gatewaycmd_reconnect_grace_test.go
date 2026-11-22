@@ -47,7 +47,7 @@ func TestGatewayServeTargetReconnectGraceFlag(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			port := freeGatewayLockTestPort(t)
 			child := startGatewayLockHelper(t,
-				append(gatewayServeTestArgs(dbPath, port), "-target-reconnect-grace", tc.grace)...)
+				append(gatewayServeTestArgs(dbPath, port), "-target-reconnect-grace", tc.grace, "-allow-open-agent-registration")...)
 			waitGatewayLockTestHealth(t, child, port)
 
 			conn, _, err := websocket.DefaultDialer.Dial(
@@ -69,9 +69,7 @@ func TestGatewayServeTargetReconnectGraceFlag(t *testing.T) {
 				"params": map[string]interface{}{"name": "doops_web", "arguments": map[string]interface{}{"session_id": "flag", "operation": "site-list"}},
 			})
 			// The Agent registers only after the call is already waiting.
-			agentDone := make(chan struct{})
 			go func() {
-				defer close(agentDone)
 				select {
 				case <-time.After(2 * time.Second):
 				case <-t.Context().Done():
@@ -79,7 +77,6 @@ func TestGatewayServeTargetReconnectGraceFlag(t *testing.T) {
 				}
 				dialFlagTestAgent(t, fmt.Sprintf("ws://127.0.0.1:%d/v1/agent/connect?cluster=dev&instance=local", port))
 			}()
-			defer func() { <-agentDone }()
 			_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 			var response map[string]interface{}
 			if err := conn.ReadJSON(&response); err != nil {
