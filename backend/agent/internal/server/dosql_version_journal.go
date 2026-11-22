@@ -50,10 +50,11 @@ type doSQLVersionEntry struct {
 }
 
 type doSQLVersionSummary struct {
-	Version     int64
-	OperationID string
-	Status      string // outcome status, or "unfinished" when no end was recorded
-	Committed   bool
+	Version         int64
+	OperationID     string
+	Status          string // outcome status, or "unfinished" when no end was recorded
+	Committed       bool
+	ImplicitCommits int
 }
 
 func doSQLVersionJournalPath(target doSQLTarget) (string, error) {
@@ -307,13 +308,22 @@ func beginDoSQLVersion(path, operationID, credential, fingerprint string, statem
 	return version, err
 }
 
+// A failed batch is not an atomic failure when the executor confirmed implicit commits.
+// Older end records retain that evidence even though their stored status is "failed".
+func (entry doSQLVersionEntry) outcomeStatus(status string) string {
+	if status == "failed" && entry.Committed && entry.ImplicitCommits > 0 {
+		return "partially_committed"
+	}
+	return status
+}
+
 func endDoSQLVersion(path string, version int64, operationID, credential, fingerprint string, result doSQLDirectResult, execErr error) error {
 	entry := doSQLVersionEntry{
 		Version: version, Event: doSQLJournalEnd, OperationID: operationID, Credential: credential,
 		Fingerprint: fingerprint, Status: result.Status, Committed: result.Committed, ImplicitCommits: result.ImplicitCommits,
 	}
 	if execErr != nil {
-		entry.Status = "failed"
+		entry.Status = entry.outcomeStatus("failed")
 		entry.Error = sanitizeSecretText(execErr.Error())
 		if len(entry.Error) > doSQLJournalStmtLimit {
 			entry.Error = entry.Error[:doSQLJournalStmtLimit]
@@ -337,8 +347,9 @@ func listDoSQLVersions(path string) ([]doSQLVersionSummary, error) {
 				position = index[entry.Version]
 			}
 			if entry.Event == doSQLJournalEnd {
-				summaries[position].Status = entry.Status
+				summaries[position].Status = entry.outcomeStatus(entry.Status)
 				summaries[position].Committed = entry.Committed
+				summaries[position].ImplicitCommits = entry.ImplicitCommits
 			}
 		}
 		return nil

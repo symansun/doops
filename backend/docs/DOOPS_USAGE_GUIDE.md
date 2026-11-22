@@ -143,7 +143,8 @@ doops -session db-schema sql --target <t> --mode query --database orders \
 - Postgres 和 SQL Server 的 DDL 与 DML 一起回滚。MySQL 和 Oracle 的 DDL 会隐式提交：`--dry-run` 含 DDL
   返回 `dosql_dry_run_ddl_unsupported`，DDL 与 DML 混批返回 `dosql_mixed_ddl_dml_unsupported`；
   全部执行及验证成功时返回 `status=verified`、`committed=true` 和 `implicit_commits`；
-  已有 DDL 提交、后续语句或验证/提交失败时返回 `status=partially_committed`，不报成已回滚。
+  若已有 DDL 提交、后续语句或验证/提交失败，整批调用仍然失败；错误中的 `dosql_ddl_already_committed` 表示已确认的隐式提交数。不要据此整批重试，须先回读实际结构。
+  执行证据的状态为 `partially_committed`。版本摘要仅在结束记录同时有 `committed=true` 和正数 `implicit_commits` 时将旧的 `failed` 解释为 `partially_committed`；不重写历史日志或哈希链。
   此类 DDL 按已有明确授权独立执行，事先准备恢复方案，执行后回读结构并核对结果；
   验证查询失败也不能撤销已提交 DDL。不要为满足向导而更换数据库或绕过执行器保护。
 - 真实 apply 在 Agent 上按库写带哈希链的版本日志（`.doops-dosql-versions/<db>.jsonl`），

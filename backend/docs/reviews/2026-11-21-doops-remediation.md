@@ -11,7 +11,7 @@
 | DoSQL 直接查询与验证 | 收紧只读语句准入并保留引号中的字面量 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，采用词法规则 |
 | MySQL 查询模式 | 拒绝 INTO 和可执行注释 | [Skill 查询准入](../../agent/skills/dosql/Server/lib/database-operation-executor.mjs#L477-L483) · [执行器回归套件](../../agent/skills/dosql/Server/lib/database-operation-executor.test.mjs) | 已发布；v0.3.21 执行器套件 19 项通过。另用合成适配器定向验证：普通只读查询调用适配器一次，含 INTO 和含可执行注释的两种输入均在调用前被拒绝（各零次）。未连接数据库。 |
 | MongoDB 文档校验 | 在解码后区分键和字面值 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
-| DoSQL 部分提交 | 结果未知时保留已知的部分提交证据 | [handler_ws.go](../../agent/internal/server/handler_ws.go) | 已发布，Agent CI 通过 |
+| DoSQL 部分提交 | 结果未知时保留已知提交证据；版本日志区分普通失败与已确认的部分提交 | [直连执行结果](../../agent/internal/server/dosql_direct_prompt.go) · [版本日志回归](../../agent/internal/server/dosql_version_journal_test.go) | RPC 错误证据已发布。版本日志修复尚未发布：已复现执行器报告部分提交而结束记录写为 `failed`，并验证新记录保留状态与计数、旧记录只读兼容且原字节不变。 |
 | Helm 补偿回滚 | 等待回滚并回读 live release 状态 | [helm_interrupt_test.go](../../agent/internal/server/helm_interrupt_test.go) | 已发布 |
 | Helm 原生回滚和卸载中断 | 保留结果未知，补充有界的只读状态观测 | [Helm 中断测试](../../agent/internal/server/helm_interrupt_test.go) | 已随 v0.3.20 发布，macOS 和 Linux 非 root 定向通过 |
 | Agent 回滚候选 | 要求匹配的成功持久化回执 | [self_upgrade_test.go](../../agent/internal/server/self_upgrade_test.go) | 已发布 |
