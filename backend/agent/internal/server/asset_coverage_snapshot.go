@@ -256,11 +256,10 @@ func setCoverageMachineActive(tx *sql.Tx, req coverageRequest) (string, error) {
 	if active == *req.Active {
 		return "", machineInventoryProblem{409, "lifecycle_unchanged", "机器已处于所选状态，请刷新后核对"}
 	}
-	var next int64
-	err = tx.QueryRow(`UPDATE inventory_machines SET active=?,revision=revision+1 WHERE asset_id=? AND revision=? RETURNING revision`, *req.Active, req.MachineID, revision).Scan(&next)
-	if err != nil {
+	if err := gatewayExecExactlyOne(tx, `UPDATE inventory_machines SET active=?,revision=revision+1 WHERE asset_id=? AND revision=?`, *req.Active, req.MachineID, revision); err != nil {
 		return "", err
 	}
+	next := revision + 1
 	return fmt.Sprintf("machine_id=%s active=%t->%t revision=%d->%d", req.MachineID, active, *req.Active, revision, next), nil
 }
 

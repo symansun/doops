@@ -61,7 +61,7 @@ func inspectionPlan(tx *sql.Tx, q inspectionRequest, now time.Time) (any, error)
 	}
 	var id int64
 	if q.Action == "create" {
-		err = tx.QueryRow(`INSERT INTO inspection_plans(name,owner,executor,timezone,weekday,clock,next_due) VALUES(?,?,?,?,?,?,?) RETURNING id`, q.Name, q.Owner, q.Executor, q.Zone, q.Weekday, q.Clock, slot.Unix()).Scan(&id)
+		id, err = gatewayInsertID(tx, `INSERT INTO inspection_plans(name,owner,executor,timezone,weekday,clock,next_due) VALUES(?,?,?,?,?,?,?)`, q.Name, q.Owner, q.Executor, q.Zone, q.Weekday, q.Clock, slot.Unix())
 		if err != nil {
 			return nil, err
 		}
@@ -109,7 +109,7 @@ func inspectionFreeze(tx *sql.Tx, plan int64, due, now time.Time, mode string) (
 	if err != sql.ErrNoRows {
 		return 0, err
 	}
-	err = tx.QueryRow(`INSERT INTO inspection_runs(plan_id,due,frozen,trigger_kind) VALUES(?,?,?,?) RETURNING id`, plan, due.Unix(), now.Unix(), mode).Scan(&id)
+	id, err = gatewayInsertID(tx, `INSERT INTO inspection_runs(plan_id,due,frozen,trigger_kind) VALUES(?,?,?,?)`, plan, due.Unix(), now.Unix(), mode)
 	if err != nil {
 		return 0, err
 	}

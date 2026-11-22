@@ -139,7 +139,7 @@ func (s *GatewayStore) applyNodeLink(ctx context.Context, auth TokenAuth, req no
 	}
 	defer tx.Rollback()
 	// Reserve the writer before reading the current role and the exact parents.
-	if err := tx.QueryRow(`UPDATE audit_events SET status='executing' WHERE id=? AND session=? AND status='running' RETURNING id`, auditID, session).Scan(&auditID); err != nil {
+	if err := gatewayExecExactlyOne(tx, `UPDATE audit_events SET status='executing' WHERE id=? AND session=? AND status='running'`, auditID, session); err != nil {
 		return err
 	}
 	if err := requireInventoryAdmin(tx, auth); err != nil {

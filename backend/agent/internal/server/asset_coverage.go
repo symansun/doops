@@ -203,7 +203,7 @@ func (s *GatewayStore) coverageTransaction(r *http.Request, auth TokenAuth, q ur
 	}
 	defer tx.Rollback()
 	if audit != 0 {
-		if err := tx.QueryRow(`UPDATE audit_events SET status='executing' WHERE id=? AND status='running' RETURNING id`, audit).Scan(&audit); err != nil {
+		if err := gatewayExecExactlyOne(tx, `UPDATE audit_events SET status='executing' WHERE id=? AND status='running'`, audit); err != nil {
 			return report, err
 		}
 	}

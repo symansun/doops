@@ -86,7 +86,7 @@ func TestMachineDiagnosticsHTTP(t *testing.T) {
 	if !strings.Contains(app, "orders-db") || !strings.Contains(app, `"value":500`) || strings.Contains(app, `"value":999`) || strings.Contains(app, "host_sha256") {
 		t.Fatalf("application not scoped to exact window: %s", app)
 	}
-	get(strings.Replace(detail, "350", "351", 1), 404)
+	get(strings.Replace(detail, "start_ticks=350", "start_ticks=351", 1), 404)
 	get(strings.Replace(detail, "pid=22", "pid=1", 1), 404)
 	get(strings.Replace(url, "instance=a", "instance=b", 1), 403)
 	get(strings.Replace(url, "host1", "host3", 1), 404)
