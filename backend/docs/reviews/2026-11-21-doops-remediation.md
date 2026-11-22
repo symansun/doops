@@ -57,6 +57,12 @@
 | 撤销时部分目标尚未清理 | 撤销、恢复目标后重试 | 在清理通过前保留撤销中状态。[撤销回归](../../agent/internal/server/credential_resource_revocation_test.go#L113) |
 | 写入合成载荷 | 读取 HTTP 响应和审计 | 可读元数据不含载荷。[脱敏回归](../../agent/internal/server/credential_http_test.go#L13) |
 
+## 未发布的集成候选
+
+本地候选 `93352ff8` 同时包含 Gateway 多路由核验（`b120e928`）与 DoSQL 部分提交日志（`265ae9a3`）。两者的实现与各自原分支一致；后续修正只调整测试夹具的初始文件权限和诊断请求中的 `start_ticks` 字段，不改变产品逻辑。
+
+在隔离 HOME 中，Gateway 与 CLI 模块测试通过，后端合同测试 494 项及 8 个子测试通过。为 Python 子进程提供 CI 要求的 PyYAML 后，Agent 全量仍未通过：`TestGatewayGitCancellationStopsRealReceiveHook` 在等待测试钩子启动时超时，未进入取消后的进程退出断言。该用例单独重复 5 次，3 次通过、2 次在同一启动阶段超时。尚未查明原因，不能将集成候选标为验证通过或发布；此结果也不是现场验收。
+
 ## 实际服务验收
 
 2026-11-22 10:21（Asia/Shanghai）只读回读：`gw-test` 指向 `doops-zyj/zyj-test`，Agent 报告 `e1d2ba7c24b4283efe7a1d2c0c1fa19bba960358`，与 v0.3.21 发布提交不符。当时有 1 个活动 Gateway 操作，排队为 0。本次未变更共享服务。部署及在线合成凭证验收仍待确认维护范围或指定隔离目标。
