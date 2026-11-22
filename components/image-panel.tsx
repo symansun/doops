@@ -2,7 +2,7 @@
 
 import { Boxes, Send, Square } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { Button, Input, Select, SegmentedControl } from "./ui"
+import { Button, Checkbox, Input, Select, SegmentedControl, StatusBanner } from "./ui"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import {
   appendImageOutput,
@@ -45,16 +45,17 @@ export function ImagePanel({
   session,
   target,
   sessionId,
-  onRunningChange,
+  onRunningChange, initialImage,
 }: {
+  initialImage?: string
   session: Session
   target: Target
   sessionId: string
   onRunningChange: (running: boolean) => void
 }) {
-  const [mode, setMode] = useState<ImageMode>("build")
+  const [mode, setMode] = useState<ImageMode>(initialImage ? "copy" : "build")
   const [build, setBuild] = useState<ImageBuildInput>({ context: "", dockerfile: "", platform: "linux/amd64", output: "oci", outputPath: "", image: "", push: false })
-  const [copy, setCopy] = useState<ImageCopyInput>({ source: "", destination: "", sourceAuthfile: "", destinationAuthfile: "", all: true, verify: true, timeout: 600 })
+  const [copy, setCopy] = useState<ImageCopyInput>({ source: initialImage ? "docker://" + initialImage : "", destination: "", sourceAuthfile: "", destinationAuthfile: "", all: true, verify: true, timeout: 600 })
   const [sync, setSync] = useState<RegistrySyncInput>({ sourceRegistry: "", targetRegistry: "", tag: "", images: "", sourceAuthfile: "", targetAuthfile: "", timeout: 600 })
   const [header, setHeader] = useState("")
   const [outputText, setOutputText] = useState("")
@@ -267,7 +268,7 @@ export function ImagePanel({
                       <Input aria-label="镜像引用" required value={build.image} onChange={(e) => updateBuild("image", e.target.value)} placeholder="registry.example.com/team/app:v1.2.3" />
                     </label>
                     <label className="flex items-center gap-2 self-end pb-2 text-xs text-muted-foreground">
-                      <input type="checkbox" checked={build.push} onChange={(e) => updateBuild("push", e.target.checked)} />
+                      <Checkbox checked={build.push} onChange={(e) => updateBuild("push", e.target.checked)} />
                       构建后经 BuildKit 推送到 Registry
                     </label>
                   </>
@@ -293,8 +294,8 @@ export function ImagePanel({
                   <Input aria-label="超时" type="number" min={1} max={86400} step={1} value={copy.timeout} onChange={(e) => updateCopy("timeout", Number(e.target.value))} />
                 </label>
                 <div className="flex flex-col justify-end gap-1 pb-1 text-xs text-muted-foreground">
-                  <label className="flex items-center gap-2"><input type="checkbox" checked={copy.all} onChange={(e) => updateCopy("all", e.target.checked)} />复制全部平台 manifest（--all）</label>
-                  <label className="flex items-center gap-2"><input type="checkbox" checked={copy.verify} onChange={(e) => updateCopy("verify", e.target.checked)} />复制后比对源和目标 manifest digest</label>
+                  <label className="flex items-center gap-2"><Checkbox checked={copy.all} onChange={(e) => updateCopy("all", e.target.checked)} />复制全部平台 manifest（--all）</label>
+                  <label className="flex items-center gap-2"><Checkbox checked={copy.verify} onChange={(e) => updateCopy("verify", e.target.checked)} />复制后比对源和目标 manifest digest</label>
                 </div>
               </>
             )}
@@ -326,8 +327,8 @@ export function ImagePanel({
             )}
           </fieldset>
 
-          {warning && <p role="status" className="text-xs text-amber-600">{warning}</p>}
-          {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+          {warning && <StatusBanner tone="warning" compact>{warning}</StatusBanner>}
+          {error && <StatusBanner tone="error" compact>{error}</StatusBanner>}
           <div className="flex flex-wrap items-center gap-2">
             <Button type="submit" disabled={running || stopPending} variant="primary">
               <Send aria-hidden="true" className="size-4" />执行{current.label}

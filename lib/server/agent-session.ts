@@ -44,6 +44,10 @@ export async function authorizedAgentSession(context: AgentGatewayContext, signa
       hosted.touchedAt = Date.now()
       return hosted
     }
+    if (error instanceof AgentGatewayError && error.status === 502 && error.message === "credential_operation_failed") {
+      // Older gateways also use this category for unclassified prompt errors.
+      throw new AgentGatewayError("无法读取 AI 会话状态。请在「目标运维 → 审计记录」查看该目标的请求记录，再重新检查连接。", error.status, error.outcome)
+    }
     throw error
   }
   let metadata: Record<string, unknown>
@@ -51,6 +55,19 @@ export async function authorizedAgentSession(context: AgentGatewayContext, signa
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) throw new AgentGatewayError("DoAgent metadata 无效")
   if (metadata.event_schema !== "doops.sh/acp-events/v1" || !Array.isArray(metadata.event_formats) || !metadata.event_formats.includes("acp")) {
     throw new AgentGatewayError("目标 Agent 不支持结构化 ACP 事件协议，必须升级 Agent", 412)
+  }
+  // v0.3.19 can qualify ACP's startup sentinel as <provider>/unconfigured
+  // even after modelProvider delivery. Its models list is read from live settings.
+  if (metadata.status === "connected" && typeof metadata.provider === "string" && metadata.provider &&
+      metadata.model === metadata.provider + "/unconfigured" &&
+      (metadata.metadata as { model?: unknown } | null)?.model === "unconfigured") {
+    const channels = metadata.channel_status as Record<string, { status?: string }> | undefined
+    const ready = ["settings", "api_key", "acp"].every(name => channels?.[name]?.status === "ok")
+    const [candidate] = Array.isArray(metadata.models) && metadata.models.length === 1 ? metadata.models : []
+    if (!ready || typeof candidate !== "string" || !candidate.trim() || candidate === "unconfigured" || candidate === metadata.model) {
+      throw new AgentGatewayError("无法确认该 Agent 当前使用的模型，请检查目标的模型凭据", 503)
+    }
+    metadata.model = candidate
   }
   if (metadata.status === "awaiting_model_provider" || metadata.status === "unconfigured" || metadata.model === "unconfigured") {
     throw new AgentGatewayError("Gateway 还没有可下发到该节点的模型", 503)

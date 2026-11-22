@@ -1,6 +1,6 @@
 "use client"
 
-import { Button, Select, Input, PageTabs } from "./ui"
+import { Badge, Button, Checkbox, Input, PageTabs, Select, StatusBanner } from "./ui"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
 import {
@@ -43,40 +43,16 @@ import {
   type AdminToken,
   type AdminInstance,
 } from "@/lib/admin"
+import { ADMIN_TABS, type AdminTab } from "@/lib/console-views"
+import { buildAdminSearch, parseAdminTab } from "@/lib/console-url"
+import { PlatformAssetScope } from "./agent-asset-scope"
+import { assetRequest } from "@/lib/assets"
+import type { TargetRef } from "@/lib/console-refresh"
 import { AdminConfigDispatch } from "./admin-config-dispatch"
 import { ProxyRoutesPanel } from "./proxy-routes-panel"
 import { useAppDialog } from "./app-dialog"
-import {
-  ServerIcon,
-  UsersIcon,
-  ShieldIcon,
-  KeyIcon,
-  RefreshIcon,
-  PlusIcon,
-  TrashIcon,
-  BanIcon,
-  CheckIcon,
-  CopyIcon,
-  LayersIcon,
-  PlugIcon,
-} from "./icons"
+import { RefreshIcon, PlusIcon, TrashIcon, BanIcon, CheckIcon, CopyIcon } from "./icons"
 
-type AdminTab =
-  | "instances"
-  | "config"
-  | "users"
-  | "grants"
-  | "tokens"
-  | "proxy"
-
-const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof ServerIcon }[] = [
-  { id: "instances", label: "实例", icon: ServerIcon },
-  { id: "config", label: "配置中心", icon: LayersIcon },
-  { id: "users", label: "用户", icon: UsersIcon },
-  { id: "grants", label: "权限", icon: ShieldIcon },
-  { id: "tokens", label: "令牌", icon: KeyIcon },
-  { id: "proxy", label: "代理路由", icon: PlugIcon },
-]
 
 function fmtTime(v?: string): string {
   if (!v) return "—"
@@ -92,25 +68,35 @@ export function AdminConsole({
   session: Session
   defaultTab?: AdminTab
 }) {
-  const [tab, setTab] = useState<AdminTab>(defaultTab)
+  const [tab, setTab] = useState<AdminTab>(() => {
+    const search = typeof window !== "undefined" ? window.location?.search ?? "" : ""
+    return search ? parseAdminTab(search) : defaultTab
+  })
+
+  // 用户切页签时把状态写入 ?tab=；前进/后退只恢复，不再入栈。
+  const changeTab = useCallback((next: AdminTab) => {
+    setTab(next)
+    if (typeof window === "undefined" || !window.location || !window.history) return
+    const search = buildAdminSearch(window.location.search, next)
+    if (search !== window.location.search) {
+      window.history.pushState(null, "", `${window.location.pathname}${search}`)
+    }
+  }, [])
 
   useEffect(() => {
-    setTab(defaultTab)
-  }, [defaultTab])
+    if (typeof window === "undefined" || !window.addEventListener) return
+    function onPopState() {
+      setTab(parseAdminTab(window.location?.search ?? ""))
+    }
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageTabs
-        ariaLabel="管理"
-        value={tab}
-        onChange={setTab}
-        items={ADMIN_TABS.map(({ id, label, icon: Icon }) => ({
-          id,
-          label,
-          icon: <Icon width={16} height={16} />,
-        }))}
-      />
+      <PageTabs ariaLabel="平台管理功能" items={ADMIN_TABS} value={tab} onChange={changeTab} />
       <div className="min-h-0 flex-1 overflow-auto">
+        {tab === "scope" && <AdminAssetScope />}
         {tab === "instances" && <InstancesView session={session} />}
         {tab === "config" && <AdminConfigDispatch session={session} />}
         {tab === "users" && <UsersView session={session} />}
@@ -120,6 +106,21 @@ export function AdminConsole({
       </div>
     </div>
   )
+}
+
+function AdminAssetScope() {
+  const [targets, setTargets] = useState<TargetRef[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  useEffect(() => {
+    let active = true
+    assetRequest<{targets: TargetRef[]}>("workspace", undefined, new URLSearchParams({view: "targets"}))
+      .then(data => { if (active) setTargets(data.targets) })
+      .catch(err => { if (active) setError(err.message) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [])
+  return <section className="p-4"><PlatformAssetScope targets={targets} loading={loading} error={error} /></section>
 }
 
 function Toolbar({
@@ -158,9 +159,9 @@ function Toolbar({
 function ErrorBar({ msg }: { msg: string }) {
   if (!msg) return null
   return (
-    <div className="mx-4 mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+    <StatusBanner tone="error" compact className="mx-4 mt-3">
       {msg}
-    </div>
+    </StatusBanner>
   )
 }
 
@@ -296,14 +297,14 @@ function InstancesView({ session }: { session: Session }) {
                 <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(r.last_seen)}</td>
                 <td className="px-3 py-2.5 text-right">
                   {r.status !== "online" && (
-                    <button
+                    <Button
                       type="button"
+                      size="sm"
                       onClick={() => changeArchive(r)}
                       disabled={!!busyKey}
-                      className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
                     >
                       {busyKey === `${r.cluster}/${r.instance}` ? "处理中…" : r.archived ? "取消归档" : "归档"}
-                    </button>
+                    </Button>
                   )}
                 </td>
               </tr>
@@ -323,29 +324,31 @@ function InstancesView({ session }: { session: Session }) {
         </table>
         <div className="mt-2 flex flex-wrap gap-1">
           {groups.history.length > 0 && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               aria-expanded={showHistory}
               onClick={() => setShowHistory((v) => !v)}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <span aria-hidden>{showHistory ? "▾" : "▸"}</span>
               {showHistory ? "收起" : "展开"}历史实例（{groups.history.length}）
               <span className="text-muted-foreground/70">
                 · 离线超过 {ACTIVE_INSTANCE_WINDOW_DAYS} 天或没有心跳记录
               </span>
-            </button>
+            </Button>
           )}
           {groups.archived.length > 0 && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               aria-expanded={showArchived}
               onClick={() => setShowArchived((v) => !v)}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <span aria-hidden>{showArchived ? "▾" : "▸"}</span>
               {showArchived ? "收起" : "显示"}已归档实例（{groups.archived.length}）
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -470,7 +473,7 @@ function UsersView({ session }: { session: Session }) {
             />
           </label>
           <label className="flex items-center gap-1.5 py-2 text-xs text-foreground">
-            <input type="checkbox" checked={admin} onChange={(e) => setAdmin(e.target.checked)} />
+            <Checkbox checked={admin} onChange={(e) => setAdmin(e.target.checked)} />
             授予 admin
           </label>
           <Button
@@ -501,20 +504,16 @@ function UsersView({ session }: { session: Session }) {
                 <td className="px-3 py-2.5 font-medium text-foreground">{u.name}</td>
                 <td className="px-3 py-2.5">
                   {u.is_admin ? (
-                    <span className="rounded bg-primary/15 px-1.5 py-0.5 text-xs font-medium text-primary">
-                      admin
-                    </span>
+                    <Badge variant="primary">admin</Badge>
                   ) : (
                     <span className="text-xs text-muted-foreground">user</span>
                   )}
                 </td>
                 <td className="px-3 py-2.5 text-xs text-muted-foreground">{u.grant_count}</td>
                 <td className="px-3 py-2.5">
-                  <span
-                    className={`text-xs ${u.disabled ? "text-destructive" : "text-success"}`}
-                  >
+                  <Badge variant={u.disabled ? "danger" : "success"}>
                     {u.disabled ? "已停用" : "正常"}
-                  </span>
+                  </Badge>
                 </td>
                 <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(u.created_at)}</td>
                 <td className="px-3 py-2.5">
@@ -525,11 +524,11 @@ function UsersView({ session }: { session: Session }) {
                     >
                       改密码
                     </Button>
-                    <button
+                    <Button
                       onClick={() => toggleDisabled(u)}
-                      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors hover:bg-muted ${
-                        u.disabled ? "text-success" : "text-destructive"
-                      }`}
+                      size="sm"
+                      variant={u.disabled ? "default" : "danger-outline"}
+                      className={u.disabled ? "text-success" : undefined}
                     >
                       {u.disabled ? (
                         <>
@@ -540,7 +539,7 @@ function UsersView({ session }: { session: Session }) {
                           <BanIcon width={12} height={12} /> 停用
                         </>
                       )}
-                    </button>
+                    </Button>
                   </div>
                 </td>
               </tr>
@@ -885,7 +884,7 @@ function TokensView({ session }: { session: Session }) {
         loading={loading}
       >
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
+          <Checkbox checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
           显示已撤销（{revokedTotal}）
         </label>
         <Button

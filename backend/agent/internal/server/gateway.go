@@ -50,9 +50,6 @@ type Gateway struct {
 	sessionMap   map[string]*sessionEntry
 	sessionMapMu sync.RWMutex
 
-	// 容器运行时 (启动时自动检测: nerdctl > docker > podman)
-	containerRuntime string
-
 	// Git HTTP handler is invoked only through the authorized reverse tunnel.
 	gitHandler http.Handler
 
@@ -65,7 +62,6 @@ func NewGateway() *Gateway {
 		sessionMap:      make(map[string]*sessionEntry),
 		proxyAllowHosts: proxyAllowlistFromEnv(),
 	}
-	gw.detectContainerRuntime()
 	gw.startSessionReaper()
 	gw.startTaskReaper()
 	return gw
@@ -145,19 +141,6 @@ func (gw *Gateway) startTaskReaper() {
 		}
 	}()
 	log.Printf("[task-reaper] started (interval=%s)", interval)
-}
-
-// detectContainerRuntime 启动时自动探测容器运行时: nerdctl > docker > podman
-func (gw *Gateway) detectContainerRuntime() {
-	for _, rt := range []string{"nerdctl", "docker", "podman"} {
-		if _, err := exec.LookPath(rt); err == nil {
-			gw.containerRuntime = rt
-			log.Printf("[gateway] 检测到容器运行时: %s", rt)
-			return
-		}
-	}
-	gw.containerRuntime = "docker" // 兜底默认
-	log.Println("[gateway] ⚠️ 未检测到任何容器运行时，默认使用 docker")
 }
 
 // SetupGitHandler 配置原生的 Git HTTP 代理，并在每次收到 push 后通过钩子自动向 /root/ws/{sessionID} 释放代码

@@ -318,6 +318,10 @@ doops admin token revoke --target <gateway-target> --id <token-id>
   session 不是 OS 或远端资源沙箱，不同 session 不得同时修改同一 Helm release 或数据库。
 - 独立 session 的 push/write/clean/pull 按实际 workspace 互斥；清理其它 workspace
   时锁定被清理的 workspace，不是调用者的 session。排队超时返回 `target queue timeout`。
+- Agent 自升级独占 target。升级在队列中等待时，target 立即停止准入新的 read 和 mutation
+  （升级自身除外，返回 `target busy`），让已有操作自然结束；升级获准后继续阻止新操作，
+  直到该次调用释放；等待超时、取消或断连后恢复准入。等待本身仍受
+  `target-queue-timeout` 约束。
 - 结构化文件和工作区 read 使用共享只读通道，可并发读取，也可查看正在执行的 session；
   目标 read 权限和会话路径边界仍逐次校验，Agent 自升级期间仍禁止读取。
 - 结构化 K8s 的 `get/describe/logs/top/events/rollout-status/configmap-keys`、任务状态和节点信息
@@ -344,7 +348,17 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 终止，`ask` 发起 doagent `session/cancel` 并等待匹配的 `turn_finished`。
 `executionLifecycle` 能力只在后台 `doops_bg` 的派发前校验，要求完整终态、受控任务寿命
 和取消能力。普通前台执行不要求此声明；超时/取消仍等待原始终态，不能因为缺少声明
-而宣告停止或跳过未知结果保护。后台任务在断连时取消，不作为可脱离连接运行的任务队列。
+而宣告停止或跳过未知结果保护。
+
+`doops_bg` 调用携带 `arguments.detach: true` 时由 Gateway 托管为脱离连接的后台任务：
+派发方在 `initialize` 的 `capabilities.gatewayProtocols.detachedBackground` 中宣告
+`schemaVersion=doops.sh/detached-background/v1` 与 `maxDuration`（默认 `24h0m0s`，由
+`-detached-task-timeout` 配置，必须为正）。Gateway 在审计建立后向发起连接发送
+`notifications/doops/background_task`（`request_id`、`audit_id`、`operation_id`），随后把
+Agent RPC、资源 lease 和审计一直持有到真实终态；发起方断连只结束本地流，不再触发
+`tools/cancel`。脱离任务保留最后 64 KiB 脱敏输出，发起者本人可通过
+`/v1/background-tasks` HTTP 接口查询/停止（无平台管理员旁路）；注册表在内存中，
+Gateway 重启后任务记录丢失，Agent 隧道断开仍按既有未知结果/终态规则结束任务。
 本地进程退出不证明远端控制器或脱离进程组的工作停止。Shell/SSH/bg、apply、K8s
 写操作等被中断时，即使收到本地取消终态也记录 `outcome_unknown`；缺失终态同样
 保留未知结果。历史记录在 Gateway 重启和 Agent 重连后仍可读取，但不阻止后续目标 mutation。

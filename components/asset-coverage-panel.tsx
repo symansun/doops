@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
 import { consoleFetch } from "@/lib/network-error"
-import { Button, Input, Select, Textarea } from "./ui"
+import { Button, Checkbox, Input, Select, Textarea } from "./ui"
 
 type Kind = "machines" | "systems"
 type Metric = { total: number; covered: number; shortfall: number; percent: number | null; passed: boolean | null }
@@ -106,7 +106,7 @@ function FreezeForm({ rows, busy, freeze }: { rows: Line[]; busy: boolean; freez
     <h3 className="font-semibold">冻结当前台账</h3>
     <p className="text-xs text-muted-foreground">勾选已人工核验的宿主关系。冻结后保留当时的资产与证据。</p>
     {rows.flatMap(row => row.evidence.filter(e => e.type === "host").map(e => <label key={row.asset_id} className="flex min-h-9 items-center gap-2 text-sm">
-      <input type="checkbox" disabled={busy} onChange={event => setSelected(previous => event.target.checked
+      <Checkbox disabled={busy} onChange={event => setSelected(previous => event.target.checked
         ? [...previous, { machine_id: row.asset_id, host_id: e.reference, revision: e.revision! }]
         : previous.filter(h => h.machine_id !== row.asset_id))} />{row.asset_id} 的宿主为 {e.reference}
     </label>))}

@@ -1,7 +1,8 @@
 "use client"
 
-import { Button } from "./ui"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Button, Input, StatusBanner, Textarea } from "./ui"
+import { SessionInput } from "./session-input"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 import {
@@ -10,6 +11,27 @@ import {
   workspaceRootPath,
 } from "@/lib/workspace-path"
 import { listDirectoryCommand, parseDirectoryListing } from "@/lib/files-listing"
+import {
+  assembleReadChunkCommand,
+  assembleStatCommand,
+  assembleUploadCommand,
+  decodeBase64,
+  encodeBase64Chunk,
+  MAX_TRANSFER_BYTES,
+  parseSentinelBlock,
+  parseStatBlock,
+  parseUploadReceipt,
+  partFileName,
+  planUploadParts,
+  randomUploadId,
+  sha256Hex,
+  shq,
+  TRANSFER_CHUNK_BYTES,
+  UPLOAD_PARTS_DIR,
+  B64_BEGIN,
+  B64_END,
+} from "@/lib/files-transfer"
+import { appendShellOutput, shellResultOutcome } from "@/lib/shell-blocks"
 import {
   checkDeploymentRequest,
   cleanWorkspaceRequest,
@@ -35,6 +57,9 @@ import {
   CheckIcon,
   RocketIcon,
   TrashIcon,
+  DownloadIcon,
+  PencilIcon,
+  FolderPlusIcon,
 } from "./icons"
 import { useAppDialog } from "./app-dialog"
 
@@ -47,6 +72,7 @@ interface UploadProgress {
   total: number
   done: number
   current: string
+  detail: string
   failed: number
   active: boolean
 }
@@ -57,12 +83,7 @@ function parentDir(dir: string) {
   return idx <= 0 ? "/" : trimmed.slice(0, idx)
 }
 
-// shell 安全转义（单引号包裹）
-function shq(s: string) {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
-}
-
-// 大文件 / 二进制不适合走 file_write，建议用 doops push
+// 256 KiB 以内的文本文件直接 file_write 一次写入
 const MAX_INLINE_BYTES = 256 * 1024
 const TEXT_EXT = /\.(txt|md|json|ya?ml|toml|ini|conf|cfg|env|sh|bash|zsh|py|js|ts|tsx|jsx|go|rs|java|c|h|cpp|cs|rb|php|sql|html|css|scss|xml|csv|log|gitignore|dockerfile|properties|lock)$/i
 
@@ -73,26 +94,56 @@ function looksTextual(file: File) {
   return !/\.[a-z0-9]+$/i.test(file.name) || file.type.startsWith("text/") || file.type === "application/json"
 }
 
+interface FilesWorkspaceCache {
+  cwd: string
+  openPath: string | null
+  content: string
+  dirty: boolean
+  drafts: Map<string, string>
+}
+
+const filesCacheBySession = new WeakMap<object, Map<string, FilesWorkspaceCache>>()
+
+function getFilesWorkspaceCache(session: Session, targetKey: string, sessionId: string): FilesWorkspaceCache {
+  let byScope = filesCacheBySession.get(session)
+  if (!byScope) {
+    byScope = new Map()
+    filesCacheBySession.set(session, byScope)
+  }
+  const key = `${targetKey}|${sessionId}`
+  let cache = byScope.get(key)
+  if (!cache) {
+    cache = { cwd: workspaceRootPath(sessionId) || "", openPath: null, content: "", dirty: false, drafts: new Map() }
+    byScope.set(key, cache)
+  }
+  return cache
+}
+
 export function FilesPanel({
   session,
   target,
   sessionId,
   onSessionChange,
+  onRunningChange,
 }: {
   session: Session
   target: Target
   sessionId: string
   onSessionChange?: (id: string) => void
+  onRunningChange?: (running: boolean) => void
 }) {
-  const [cwd, setCwd] = useState(() => workspaceRootPath(sessionId) || "")
+  const cache = useMemo(() => getFilesWorkspaceCache(session, target.key, sessionId), [session, target.key, sessionId])
+  const [cwd, setCwd] = useState(() => cache.cwd || workspaceRootPath(sessionId) || "")
   const workspaceRoot = workspaceRootPath(sessionId)
   const [entries, setEntries] = useState<Entry[]>([])
   const [listBusy, setListBusy] = useState(false)
   const [listErr, setListErr] = useState("")
 
-  const [openPath, setOpenPath] = useState<string | null>(null)
-  const [content, setContent] = useState("")
-  const [dirty, setDirty] = useState(false)
+  const [openPath, setOpenPath] = useState<string | null>(() => cache.openPath)
+  const [content, setContent] = useState(() => cache.content)
+  const [dirty, setDirty] = useState(() => cache.dirty)
+  const drafts = useRef(cache.drafts)
+  drafts.current = cache.drafts
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
 
@@ -107,8 +158,29 @@ export function FilesPanel({
   const dirInputRef = useRef<HTMLInputElement>(null)
   const { prompt, dialog } = useAppDialog()
 
+  useEffect(() => {
+    cache.cwd = cwd
+    cache.openPath = openPath
+    cache.content = content
+    cache.dirty = dirty
+  }, [cache, cwd, openPath, content, dirty])
+
+  const activeOp = Boolean(busy || upload?.active || maint?.running)
+  // Uploads and file operations write the same tree; only one runs at a time.
+  const locked = busy || Boolean(upload?.active)
+  // What the editor shows now, for a save that returns after more typing.
+  const editor = useRef({ openPath, content })
+  editor.current = { openPath, content }
+  const listRequest = useRef(0)
+  useEffect(() => {
+    onRunningChange?.(activeOp)
+    return () => onRunningChange?.(false)
+  }, [activeOp, onRunningChange])
+
   const list = useCallback(
     async (dir: string) => {
+      const request = ++listRequest.current
+      const stale = () => request !== listRequest.current
       setListBusy(true)
       setListErr("")
       let buf = ""
@@ -133,28 +205,38 @@ export function FilesPanel({
             if (ev.type === "output") buf += ev.data
             // doops_shell streams stdout as output; the final result is only a
             // generic completion receipt and must not become a directory entry.
-            else if (ev.type === "error") setListErr(ev.error)
+            else if (ev.type === "error" && !stale()) setListErr(ev.error)
           },
         )
+        if (stale()) return
         const parsed = parseDirectoryListing(buf)
         if (parsed.error) setListErr(parsed.error)
         setEntries(parsed.entries)
         setCwd(remoteDir)
       } catch (err) {
-        setListErr((err as Error).message)
+        if (!stale()) setListErr((err as Error).message)
       } finally {
-        setListBusy(false)
+        if (!stale()) setListBusy(false)
       }
     },
     [session, target, sessionId],
   )
 
   useEffect(() => {
-    list(workspaceRoot || "")
+    list(cache.cwd || workspaceRoot || "")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
   async function openFile(path: string) {
+    const savedDraft = drafts.current.get(path)
+    if (savedDraft !== undefined) {
+      setOpenPath(path)
+      setContent(savedDraft)
+      setDirty(true)
+      setStatus(null)
+      return
+    }
+    if (locked) return
     setBusy(true)
     setStatus(null)
     let buf = ""
@@ -190,6 +272,8 @@ export function FilesPanel({
 
   async function save() {
     if (!openPath || busy) return
+    const savedPath = openPath
+    const saved = content
     setBusy(true)
     setStatus(null)
     try {
@@ -209,8 +293,12 @@ export function FilesPanel({
         (ev) => {
           if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
           else if (ev.type === "result") {
-            setStatus({ kind: "ok", text: "写入成功" })
-            setDirty(false)
+            // Text typed while the write was in flight stays an unsaved draft.
+            const current = editor.current
+            const unchanged = current.openPath !== savedPath || current.content === saved
+            if (drafts.current.get(savedPath) === saved) drafts.current.delete(savedPath)
+            if (current.openPath === savedPath && unchanged) setDirty(false)
+            setStatus({ kind: "ok", text: unchanged ? "写入成功" : "已写入保存时的内容，之后的修改尚未保存" })
           }
         },
       )
@@ -235,6 +323,7 @@ export function FilesPanel({
       setStatus({ kind: "err", text: "文件名必须位于当前工作区内" })
       return
     }
+    drafts.current.set(path, "")
     setOpenPath(path)
     setContent("")
     setDirty(true)
@@ -303,6 +392,7 @@ export function FilesPanel({
     setCheckOpen(false)
     if (await runMaintenance("clean", args)) {
       // 工作区已整体删除：不再展示旧目录和已打开的文件，也不重新列举（列根目录会重建空工作区）。
+      drafts.current.clear()
       setEntries([])
       setListErr("")
       setCwd(workspaceRoot || "")
@@ -313,6 +403,34 @@ export function FilesPanel({
     } else {
       list(cwd)
     }
+  }
+
+  // 收集一次 doops_shell 调用的 stdout 与错误；result 里的启动失败也算失败。
+  async function runShell(command: string): Promise<{ output: string; error: string }> {
+    const state = { output: "", progress: "" }
+    let error = ""
+    await callTool(
+      session,
+      {
+        cluster: target.cluster,
+        instance: target.instance,
+        tool: TOOLS.shell,
+        arguments: { session_id: sessionId, command },
+      },
+      (ev) => {
+        if (ev.type === "output") {
+          const next = appendShellOutput(state, ev.data)
+          state.output = next.output
+          state.progress = next.progress
+        } else if (ev.type === "result") {
+          const outcome = shellResultOutcome(extractText(ev.result))
+          if (!outcome.ok) error = outcome.text
+        } else if (ev.type === "error") {
+          error = ev.error
+        }
+      },
+    )
+    return { output: state.output, error }
   }
 
   // 通过 doops_file_write 逐个写入文件，子目录先 mkdir -p
@@ -352,11 +470,38 @@ export function FilesPanel({
     )
   }
 
-  // 一键上传：浏览器选择的文件/文件夹，逐个写入当前目录（仅小文本文件）
+  // 大文件/二进制：base64 分片经 doops_file_write 暂存，再由 doops_shell 组装并校验 SHA-256
+  async function uploadChunked(file: File, dest: string) {
+    const safeRoot = workspaceRootPath(sessionId)
+    if (!safeRoot) throw new Error("工作区路径无效")
+    const buffer = await file.arrayBuffer()
+    const sha256 = await sha256Hex(buffer)
+    const bytes = new Uint8Array(buffer)
+    const uploadId = randomUploadId()
+    const partsDir = `${safeRoot}/${UPLOAD_PARTS_DIR}/${uploadId}`
+    const total = planUploadParts(file.size)
+    for (let i = 0; i < total; i++) {
+      setUpload((p) => (p ? { ...p, detail: `分片 ${i + 1}/${total}` } : p))
+      const chunk = encodeBase64Chunk(bytes.subarray(i * TRANSFER_CHUNK_BYTES, Math.min((i + 1) * TRANSFER_CHUNK_BYTES, bytes.length)))
+      await writeRemoteFile(`${partsDir}/${partFileName(i)}`, chunk)
+    }
+    setUpload((p) => (p ? { ...p, detail: "校验中…" } : p))
+    const res = await runShell(assembleUploadCommand({ root: safeRoot, partsDir, target: dest, sha256 }))
+    if (res.error) throw new Error(res.error)
+    const receipt = parseUploadReceipt(res.output, sha256)
+    if (!receipt.ok) throw new Error(receipt.error)
+  }
+
+  // 一键上传：小文本直接 file_write，其余文件（≤64 MiB）走 base64 分片
   async function handleUpload(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return
     const files = Array.from(fileList)
+    // The picker keeps its selection; reset it so the same files can be chosen again.
+    if (fileInputRef.current) fileInputRef.current.value = ""
+    if (dirInputRef.current) dirInputRef.current.value = ""
+    if (locked) return
     const skipped: string[] = []
+    const reasons: string[] = []
     const dirsToMake = new Set<string>()
     const destinations = files.map((file) => {
       const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
@@ -380,7 +525,7 @@ export function FilesPanel({
     }
 
     setStatus(null)
-    setUpload({ total: files.length, done: 0, current: "", failed: 0, active: true })
+    setUpload({ total: files.length, done: 0, current: "", detail: "", failed: 0, active: true })
 
     // 先创建目录树（按路径深度排序，浅的先建）
     for (const d of Array.from(dirsToMake).sort((a, b) => a.length - b.length)) {
@@ -394,8 +539,8 @@ export function FilesPanel({
     let done = 0
     let failed = 0
     for (const { file: f, rel, path: dest } of safeDestinations) {
-      setUpload((p) => (p ? { ...p, current: rel } : p))
-      if (!looksTextual(f)) {
+      setUpload((p) => (p ? { ...p, current: rel, detail: "" } : p))
+      if (!looksTextual(f) && f.size > MAX_TRANSFER_BYTES) {
         skipped.push(rel)
         failed++
         done++
@@ -403,32 +548,189 @@ export function FilesPanel({
         continue
       }
       try {
-        const text = await f.text()
-        await writeRemoteFile(dest, text)
-      } catch {
+        if (looksTextual(f)) {
+          const text = await f.text()
+          await writeRemoteFile(dest, text)
+        } else {
+          await uploadChunked(f, dest)
+        }
+      } catch (err) {
         failed++
+        reasons.push(`${rel}：${(err as Error).message}`)
       }
       done++
-      setUpload((p) => (p ? { ...p, done, failed } : p))
+      setUpload((p) => (p ? { ...p, done, failed, detail: "" } : p))
     }
 
-    setUpload((p) => (p ? { ...p, active: false, current: "" } : p))
+    setUpload((p) => (p ? { ...p, active: false, current: "", detail: "" } : p))
     const ok = done - failed
     if (skipped.length > 0) {
       setStatus({
         kind: ok > 0 ? "ok" : "err",
-        text: `已上传 ${ok}/${files.length} 个文本文件。${skipped.length} 个大文件/二进制被跳过，请用下方「复制上传命令」走 doops push。`,
+        text: `已上传 ${ok}/${files.length} 个文件。${skipped.length} 个超过 64 MiB 被跳过，请用下方「复制上传命令」走 doops push。${reasons.slice(0, 3).join("；")}`,
       })
     } else {
       setStatus({
         kind: failed === 0 ? "ok" : "err",
-        text: `上传完成：成功 ${ok}，失败 ${failed}。`,
+        text: failed === 0
+          ? `上传完成：成功 ${ok}。`
+          : `上传完成：成功 ${ok}，失败 ${failed}。${reasons.slice(0, 3).join("；")}${reasons.length > 3 ? ` 等 ${reasons.length} 个` : ""}`,
       })
     }
     await list(cwd)
     // 清空 input，便于重复选择同一文件
     if (fileInputRef.current) fileInputRef.current.value = ""
     if (dirInputRef.current) dirInputRef.current.value = ""
+  }
+
+  // 下载：先取大小和 SHA-256，再分块拉 base64，拼装校验一致才落盘。
+  async function downloadFile(path: string, name: string) {
+    if (locked) return
+    setBusy(true)
+    setStatus(null)
+    try {
+      const statRes = await runShell(assembleStatCommand(path))
+      if (statRes.error) throw new Error(statRes.error)
+      const stat = parseStatBlock(statRes.output)
+      if (!stat) throw new Error("无法读取远端文件信息")
+      if (stat.size > MAX_TRANSFER_BYTES) {
+        setStatus({ kind: "err", text: `${name} 超过 64 MiB，请用 doops pull 下载` })
+        return
+      }
+      const bytes = new Uint8Array(stat.size)
+      for (let offset = 0; offset < stat.size; offset += TRANSFER_CHUNK_BYTES) {
+        const length = Math.min(TRANSFER_CHUNK_BYTES, stat.size - offset)
+        const res = await runShell(assembleReadChunkCommand(path, offset, length))
+        if (res.error) throw new Error(res.error)
+        const block = parseSentinelBlock(res.output, B64_BEGIN, B64_END)
+        if (block === null) throw new Error("下载数据块缺失")
+        const chunk = decodeBase64(block)
+        if (chunk.length !== length) throw new Error("下载数据块长度不一致")
+        bytes.set(chunk, offset)
+      }
+      const sha256 = await sha256Hex(bytes)
+      if (sha256 !== stat.sha256) throw new Error("下载内容与远端 SHA-256 不一致，已取消保存")
+      const url = URL.createObjectURL(new Blob([bytes]))
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = name
+      anchor.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setStatus({ kind: "ok", text: `已下载 ${name}` })
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // 打开文件/草稿在删除或改名后同步失效或迁移
+  function closeIfUnder(path: string) {
+    if (openPath === path || openPath?.startsWith(`${path}/`)) {
+      setOpenPath(null)
+      setContent("")
+      setDirty(false)
+    }
+  }
+
+  function moveDraftKey(from: string, to: string) {
+    for (const key of Array.from(drafts.current.keys())) {
+      if (key === from || key.startsWith(`${from}/`)) {
+        drafts.current.set(to + key.slice(from.length), drafts.current.get(key)!)
+        drafts.current.delete(key)
+      }
+    }
+  }
+
+  async function deleteEntry(path: string, name: string) {
+    if (locked) return
+    const relative = workspaceRelativePath(sessionId, path)
+    if (relative === null || !relative) {
+      setStatus({ kind: "err", text: "只能删除当前工作区内的文件或目录" })
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    try {
+      const res = await runShell(`rm -rf -- ${shq(path)}`)
+      if (res.error) throw new Error(res.error)
+      for (const key of Array.from(drafts.current.keys())) {
+        if (key === path || key.startsWith(`${path}/`)) drafts.current.delete(key)
+      }
+      closeIfUnder(path)
+      setStatus({ kind: "ok", text: `已删除 ${name}` })
+      await list(cwd)
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function renameEntry(path: string, name: string) {
+    if (locked) return
+    const input = await prompt({
+      title: "重命名",
+      message: "输入新的名称（单个路径段，不含 /）。",
+      label: "新名称",
+      defaultValue: name,
+      confirmLabel: "重命名",
+    })
+    const newName = input?.trim()
+    if (!newName || newName === name) return
+    const newPath = joinWorkspacePath(sessionId, cwd, newName)
+    if (!newPath || newName.includes("/")) {
+      setStatus({ kind: "err", text: "名称必须是当前目录下的单个路径段" })
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    try {
+      const res = await runShell(
+        `if [ -e ${shq(newPath)} ]; then echo "rename failed: target exists"; exit 1; fi; mv -n -- ${shq(path)} ${shq(newPath)}`,
+      )
+      if (res.output.includes("rename failed: target exists")) throw new Error(`目标 ${newName} 已存在`)
+      if (res.error) throw new Error(res.error)
+      if (openPath === path || openPath?.startsWith(`${path}/`)) {
+        setOpenPath(newPath + (openPath === path ? "" : openPath.slice(path.length)))
+      }
+      moveDraftKey(path, newPath)
+      setStatus({ kind: "ok", text: `已重命名为 ${newName}` })
+      await list(cwd)
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function newFolder() {
+    const input = await prompt({
+      title: "新建目录",
+      message: "目录名相对于当前目录。",
+      label: "目录名",
+      placeholder: "docs",
+      confirmLabel: "创建",
+    })
+    const name = input?.trim()
+    if (!name) return
+    const path = joinWorkspacePath(sessionId, cwd, name)
+    if (!path || name.includes("/")) {
+      setStatus({ kind: "err", text: "目录名必须是当前目录下的单个路径段" })
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    try {
+      const res = await runShell(`mkdir -p -- ${shq(path)}`)
+      if (res.error) throw new Error(res.error)
+      setStatus({ kind: "ok", text: `已创建目录 ${name}` })
+      await list(cwd)
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
   }
 
   const pushCommand = `doops -session ${sessionId} push \\
@@ -454,11 +756,7 @@ export function FilesPanel({
         {onSessionChange ? (
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             session
-            <input
-              value={sessionId}
-              onChange={(e) => onSessionChange(e.target.value)}
-              className="w-40 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
-            />
+            <SessionInput value={sessionId} disabled={activeOp} onCommit={onSessionChange} className="w-40 font-mono" />
           </label>
         ) : (
           <span className="text-xs font-medium text-muted-foreground">上传到</span>
@@ -486,26 +784,25 @@ export function FilesPanel({
           />
           <Button
             onClick={() => fileInputRef.current?.click()}
-            disabled={upload?.active}
+            disabled={locked}
             size="sm"
           >
             <UploadIcon width={14} height={14} /> 上传文件
           </Button>
           <Button
             onClick={() => dirInputRef.current?.click()}
-            disabled={upload?.active}
+            disabled={locked}
             size="sm"
           >
             <FolderUpIcon width={14} height={14} /> 上传文件夹
           </Button>
-          <button
+          <Button
             onClick={() => setShowCmd((v) => !v)}
-            className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors hover:bg-muted ${
-              showCmd ? "border-primary/50 text-foreground" : "text-foreground"
-            }`}
+            size="sm"
+            className={showCmd ? "border-primary/50" : ""}
           >
             <CopyIcon width={14} height={14} /> 上传命令
-          </button>
+          </Button>
           <span className="mx-1 h-4 w-px bg-border" aria-hidden />
           <Button
             onClick={() => {
@@ -539,58 +836,59 @@ export function FilesPanel({
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               命名空间
-              <input
+              <Input
                 name="namespace"
                 value={checkInput.namespace}
                 onChange={(e) => setCheckInput((p) => ({ ...p, namespace: e.target.value }))}
-                className="input w-40"
+                className="w-40 font-mono"
                 placeholder="apps"
                 autoComplete="off"
               />
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               Deployment
-              <input
+              <Input
                 name="deployment"
                 value={checkInput.deployment}
                 onChange={(e) => setCheckInput((p) => ({ ...p, deployment: e.target.value }))}
-                className="input w-44"
+                className="w-44 font-mono"
                 placeholder="api"
                 autoComplete="off"
               />
             </label>
             <label className="flex min-w-64 flex-1 flex-col gap-1 text-xs text-muted-foreground">
               期望镜像
-              <input
+              <Input
                 name="image"
                 value={checkInput.image}
                 onChange={(e) => setCheckInput((p) => ({ ...p, image: e.target.value }))}
-                className="input w-full font-mono"
+                className="w-full font-mono"
                 placeholder="registry.example.com/team/api:1.2.3"
                 autoComplete="off"
               />
             </label>
             <div className="flex gap-2">
-              <button
+              <Button
                 type="submit"
+                variant="primary"
+                size="sm"
                 disabled={maint?.running}
-                className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
               >
                 开始检查
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                size="sm"
                 onClick={() => setCheckOpen(false)}
-                className="rounded-lg border px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted"
               >
                 取消
-              </button>
+              </Button>
             </div>
           </div>
           {checkErr && (
-            <p role="alert" className="mt-2 text-xs text-destructive">
+            <StatusBanner tone="error" compact className="mt-2">
               {checkErr}
-            </p>
+            </StatusBanner>
           )}
         </form>
       )}
@@ -609,12 +907,12 @@ export function FilesPanel({
               {maint.running && <span className="text-muted-foreground">· 执行中…</span>}
             </p>
             {!maint.running && (
-              <button
+              <Button
                 onClick={() => setMaint(null)}
-                className="rounded-md border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                size="sm"
               >
                 关闭
-              </button>
+              </Button>
             )}
           </div>
           <pre className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-background p-3 font-mono text-xs leading-relaxed text-foreground">
@@ -633,7 +931,7 @@ export function FilesPanel({
         <div className="shrink-0 border-b bg-muted/30 px-3 py-3">
           <div className="mb-1.5 flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              大文件 / 整个目录用 CLI 极速同步（Git HTTP），上传到 <code className="font-mono">/root/ws/{sessionId}</code>
+              大文件 / 整个目录用 CLI 极速同步（Git HTTP），上传到 <code className="font-mono">{workspaceRootPath(sessionId) || "—"}</code>
             </p>
             <Button
               onClick={copyCommand}
@@ -657,7 +955,10 @@ export function FilesPanel({
               {upload.active ? "上传中…" : "上传结束"} {upload.done}/{upload.total}
               {upload.failed > 0 && <span className="ml-1 text-destructive">（{upload.failed} 失败/跳过）</span>}
             </span>
-            <span className="truncate pl-2 font-mono text-muted-foreground">{upload.current}</span>
+            <span className="truncate pl-2 font-mono text-muted-foreground">
+              {upload.current}
+              {upload.detail && ` ${upload.detail}`}
+            </span>
           </div>
           <div className="progress-track mt-1.5 h-1.5">
             <div
@@ -674,20 +975,37 @@ export function FilesPanel({
           <div className="flex items-center justify-between gap-1 border-b px-3 py-2">
             <span className="text-xs font-medium text-muted-foreground">文件浏览器</span>
             <div className="flex items-center gap-1">
-              <button
+              <Button
                 onClick={newFile}
                 title="新建文件"
-                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="新建文件"
+                variant="ghost"
+                size="sm"
+                icon
               >
                 <PlusIcon width={15} height={15} />
-              </button>
-              <button
+              </Button>
+              <Button
+                onClick={newFolder}
+                title="新建目录"
+                aria-label="新建目录"
+                variant="ghost"
+                size="sm"
+                icon
+                disabled={locked}
+              >
+                <FolderPlusIcon width={15} height={15} />
+              </Button>
+              <Button
                 onClick={() => list(cwd)}
                 title="刷新"
-                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="刷新"
+                variant="ghost"
+                size="sm"
+                icon
               >
                 <RefreshIcon width={15} height={15} className={listBusy ? "animate-spin" : ""} />
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -726,23 +1044,58 @@ export function FilesPanel({
               if (!full) return null
               const active = openPath === full
               return (
-                <button
-                  key={e.name}
-                  onClick={() => (e.isDir ? list(full) : openFile(full))}
-                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                    active ? "bg-primary/15 text-foreground" : "text-foreground/90 hover:bg-muted"
-                  }`}
-                >
-                  {e.isDir ? (
-                    <FolderIcon width={15} height={15} className="shrink-0 text-primary" />
-                  ) : (
-                    <FileIcon width={15} height={15} className="shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="truncate">{e.name}</span>
-                  {e.isDir && (
-                    <ChevronRightIcon width={13} height={13} className="ml-auto shrink-0 text-muted-foreground" />
-                  )}
-                </button>
+                <div key={e.name} className="group flex items-center">
+                  <button
+                    onClick={() => (e.isDir ? list(full) : openFile(full))}
+                    className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                      active ? "bg-primary/15 text-foreground" : "text-foreground/90 hover:bg-muted"
+                    }`}
+                  >
+                    {e.isDir ? (
+                      <FolderIcon width={15} height={15} className="shrink-0 text-primary" />
+                    ) : (
+                      <FileIcon width={15} height={15} className="shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="truncate">{e.name}</span>
+                    {e.isDir && (
+                      <ChevronRightIcon width={13} height={13} className="ml-auto shrink-0 text-muted-foreground" />
+                    )}
+                  </button>
+                  <span className="flex shrink-0 items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                    {!e.isDir && (
+                      <button
+                        type="button"
+                        onClick={() => void downloadFile(full, e.name)}
+                        disabled={locked}
+                        className="rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                        title="下载"
+                        aria-label={`下载 ${e.name}`}
+                      >
+                        <DownloadIcon width={13} height={13} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void renameEntry(full, e.name)}
+                      disabled={locked}
+                      className="rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      title="重命名"
+                      aria-label={`重命名 ${e.name}`}
+                    >
+                      <PencilIcon width={13} height={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void deleteEntry(full, e.name)}
+                      disabled={locked}
+                      className="rounded p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50"
+                      title="删除"
+                      aria-label={`删除 ${e.name}`}
+                    >
+                      <TrashIcon width={13} height={13} />
+                    </button>
+                  </span>
+                </div>
               )
             })}
           </div>
@@ -755,41 +1108,55 @@ export function FilesPanel({
               {openPath || "未打开文件"}
               {dirty && <span className="ml-1 text-warning">●</span>}
             </span>
-            <button
-              onClick={save}
-              disabled={!openPath || busy || !dirty}
-              className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-            >
-              <SaveIcon width={15} height={15} /> 保存
-            </button>
+            <span className="flex shrink-0 items-center gap-1">
+              {openPath && (
+                <Button
+                  onClick={() => void downloadFile(openPath, openPath.split("/").pop() || "file")}
+                  disabled={locked}
+                  size="sm"
+                  title="下载"
+                >
+                  <DownloadIcon width={15} height={15} />
+                </Button>
+              )}
+              <Button
+                onClick={save}
+                disabled={!openPath || busy || !dirty}
+                variant="primary"
+                size="sm"
+              >
+                <SaveIcon width={15} height={15} /> 保存
+              </Button>
+            </span>
           </div>
 
           {status && (
-            <p
-              className={`mx-3 mt-2 rounded-lg px-3 py-2 text-sm ${
-                status.kind === "ok" ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive"
-              }`}
+            <StatusBanner
+              tone={status.kind === "ok" ? "success" : "error"}
+              className="mx-3 mt-2"
             >
               {status.text}
-            </p>
+            </StatusBanner>
           )}
 
           <div className="relative min-h-0 flex-1 p-3">
             {openPath ? (
-              <textarea
+              <Textarea
                 value={content}
                 onChange={(e) => {
-                  setContent(e.target.value)
+                  const next = e.target.value
+                  drafts.current.set(openPath, next)
+                  setContent(next)
                   setDirty(true)
                 }}
                 spellCheck={false}
-                className="h-full w-full resize-none rounded-lg border bg-background p-3 font-mono text-sm leading-relaxed text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                className="h-full w-full resize-none p-3 font-mono leading-relaxed"
               />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
                 <FileIcon width={28} height={28} />
                 <p className="text-pretty text-center text-sm">从左侧选择文件打开编辑，或用上方按钮上传文件/文件夹</p>
-                <p className="text-xs">小文本走 file_write 一键上传 · 大文件/目录请复制 doops push 命令</p>
+                <p className="text-xs">小文本走 file_write 一键上传 · 64 MiB 内自动分块校验上传 · 更大文件/目录请复制 doops push 命令</p>
               </div>
             )}
           </div>

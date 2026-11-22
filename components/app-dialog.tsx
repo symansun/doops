@@ -1,8 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useId, useRef, useState } from "react"
-import { createPortal } from "react-dom"
-import { Button, Input } from "./ui"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { Button, Input, Modal } from "./ui"
 
 export type PromptOptions = {
   title: string
@@ -76,36 +75,10 @@ function AppDialog({
   request: PromptRequest
   onClose: (value: string | null) => void
 }) {
-  const titleId = useId()
-  const messageId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
   const [value, setValue] = useState(request.options.defaultValue ?? "")
   const [error, setError] = useState("")
   const message = request.options.message
-
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const focusTarget = inputRef.current
-    focusTarget?.focus()
-    if (focusTarget instanceof HTMLInputElement) focusTarget.select()
-    return () => previous?.focus()
-  }, [])
-
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key !== "Escape") return
-      event.preventDefault()
-      event.stopPropagation()
-      onClose(null)
-    }
-    document.addEventListener("keydown", onKey, true)
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    return () => {
-      document.removeEventListener("keydown", onKey, true)
-      document.body.style.overflow = previousOverflow
-    }
-  }, [onClose])
 
   function submitPrompt() {
     const next = request.options.inputType === "password" ? value : value.trim()
@@ -121,77 +94,57 @@ function AppDialog({
     onClose(null)
   }
 
-  if (typeof document === "undefined") return null
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) cancel()
+  return (
+    <Modal
+      title={request.options.title}
+      size="sm"
+      hideCloseButton
+      onClose={cancel}
+      onOpenAutoFocus={(event) => {
+        event.preventDefault()
+        inputRef.current?.focus()
+        inputRef.current?.select()
       }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={message ? messageId : undefined}
-        className="w-full max-w-md rounded-xl border bg-card shadow-xl"
-        onMouseDown={(event) => event.stopPropagation()}
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault()
+          submitPrompt()
+        }}
       >
-        <div className="border-b px-4 py-3">
-          <h3 id={titleId} className="text-sm font-semibold text-foreground">
-            {request.options.title}
-          </h3>
+        {message ? (
+          <p className="text-sm leading-relaxed text-foreground">
+            {message}
+          </p>
+        ) : null}
+        <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+          {request.options.label || "内容"}
+          <Input
+            ref={inputRef}
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value)
+              if (error) setError("")
+            }}
+            placeholder={request.options.placeholder}
+            type={request.options.inputType === "password" ? "password" : "text"}
+            autoComplete={request.options.inputType === "password" ? "new-password" : "off"}
+            spellCheck={false}
+            aria-invalid={error ? true : undefined}
+            className="w-full"
+          />
+        </label>
+        {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button type="button" onClick={cancel} size="sm">
+            {request.options.cancelLabel || "取消"}
+          </Button>
+          <Button type="submit" size="sm" variant="primary">
+            {request.options.confirmLabel || "确认"}
+          </Button>
         </div>
-        <form
-          className="space-y-3 p-4"
-          onSubmit={(event) => {
-            event.preventDefault()
-            submitPrompt()
-          }}
-        >
-          {message ? (
-            <p id={messageId} className="text-sm leading-relaxed text-foreground">
-              {message}
-            </p>
-          ) : null}
-          <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
-            {request.options.label || "内容"}
-            <Input
-              ref={inputRef}
-              value={value}
-              onChange={(event) => {
-                setValue(event.target.value)
-                if (error) setError("")
-              }}
-              placeholder={request.options.placeholder}
-              type={request.options.inputType === "password" ? "password" : "text"}
-              autoComplete={request.options.inputType === "password" ? "new-password" : "off"}
-              spellCheck={false}
-              aria-invalid={error ? true : undefined}
-              className="w-full"
-            />
-          </label>
-          {error ? <p className="text-xs text-destructive">{error}</p> : null}
-          <div className="flex justify-end gap-2 pt-1">
-            <Button
-              type="button"
-              onClick={cancel}
-              size="sm"
-            >
-              {request.options.cancelLabel || "取消"}
-            </Button>
-            <Button
-              type="submit"
-              size="sm"
-              variant="primary"
-            >
-              {request.options.confirmLabel || "确认"}
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>,
-    document.body,
+      </form>
+    </Modal>
   )
 }

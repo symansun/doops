@@ -14,6 +14,7 @@ import {
   type ShellFailure,
 } from "@/lib/shell-blocks"
 import { commandJournal } from "@/lib/console-persistence"
+import { Button, StatusBanner, Textarea } from "./ui"
 import { SendIcon, StopIcon, TerminalIcon } from "./icons"
 
 interface ExecRun {
@@ -136,14 +137,14 @@ export function AgentExecBar({
   if (!open && blocks.length === 0) {
     return (
       <div className="flex justify-end px-4 pt-2">
-        <button
+        <Button
           type="button"
+          size="sm"
           onClick={() => setOpen(true)}
-          className="flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <TerminalIcon width={13} height={13} />
           执行命令
-        </button>
+        </Button>
       </div>
     )
   }
@@ -157,35 +158,35 @@ export function AgentExecBar({
             <div key={block.command} className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-background/70 px-2 py-1 font-mono">{block.command}</pre>
-                {block.risk && <div className="mt-0.5 text-destructive">⚠ 高风险：{block.risk}</div>}
+                {block.risk && <div className="mt-0.5 text-destructive">高风险：{block.risk}</div>}
               </div>
               {onRunInTerminal && (
-                <button
+                <Button
                   type="button"
+                  size="sm"
                   onClick={() => onRunInTerminal(block.command)}
-                  className="shrink-0 rounded-md border border-border px-2 py-1 hover:bg-muted"
                 >
                   填入终端
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 type="button"
+                size="sm"
                 onClick={() => { setOpen(true); void execute(block.command) }}
                 disabled={running || stopPending}
-                className="shrink-0 rounded-md border border-border px-2 py-1 hover:bg-muted disabled:opacity-40"
               >
                 在此执行
-              </button>
+              </Button>
             </div>
           ))}
         </div>
       )}
       {!open ? (
         <div className="flex justify-end">
-          <button type="button" onClick={() => setOpen(true)} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+          <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(true)}>
             <TerminalIcon width={13} height={13} />
             执行命令
-          </button>
+          </Button>
         </div>
       ) : (
         <>
@@ -196,45 +197,48 @@ export function AgentExecBar({
               {run.status === "running" && <div className="text-muted-foreground">{run.progress || "执行中…"}</div>}
               {run.status === "ok" && <div className="text-muted-foreground">✓ 完成，退出码 0</div>}
               {run.status === "failed" && run.failure && (
-                <div
-                  role={run.failure.tone === "error" ? "alert" : "status"}
-                  className={run.failure.tone === "info"
-                    ? "text-muted-foreground"
-                    : run.failure.tone === "warn"
-                      ? "rounded border border-warning/40 bg-warning/10 px-2 py-1 text-warning"
-                      : "text-destructive"}
-                >
-                  {run.failure.text}
-                </div>
+                run.failure.tone === "warn" ? (
+                  <StatusBanner tone="warning" compact className="mt-1">
+                    {run.failure.text}
+                  </StatusBanner>
+                ) : (
+                  <div
+                    role={run.failure.tone === "error" ? "alert" : "status"}
+                    className={run.failure.tone === "info" ? "text-muted-foreground" : "text-destructive"}
+                  >
+                    {run.failure.text}
+                  </div>
+                )
               )}
             </div>
           ))}
           {stopError && <div role="alert" className="text-destructive">{stopError}</div>}
           <div className="flex items-end gap-2">
-            <textarea
+            <Textarea
+              scale="sm"
               aria-label="在当前机器执行的命令"
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault()
                   submit()
                 }
               }}
               rows={1}
               placeholder={`在 ${target.instance} 上执行（doops_shell，需要该目标的授权）`}
-              className="min-h-8 flex-1 resize-y rounded-md border border-border bg-background px-2 py-1.5 font-mono outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex-1 resize-y font-mono"
             />
             {running ? (
-              <button type="button" aria-label="停止" title={stopPending ? "停止中…" : "停止"} onClick={stop} disabled={stopPending} className="flex size-8 items-center justify-center rounded-md border border-border hover:bg-muted disabled:opacity-40">
+              <Button type="button" size="sm" icon variant="danger-outline" aria-label="停止" title={stopPending ? "停止中…" : "停止"} onClick={stop} disabled={stopPending}>
                 <StopIcon width={14} height={14} />
-              </button>
+              </Button>
             ) : (
-              <button type="button" aria-label="执行" onClick={() => submit()} disabled={!command.trim()} className="flex size-8 items-center justify-center rounded-md border border-border hover:bg-muted disabled:opacity-40">
+              <Button type="button" size="sm" icon variant="primary" aria-label="执行" title="执行" onClick={() => submit()} disabled={!command.trim()}>
                 <SendIcon width={14} height={14} />
-              </button>
+              </Button>
             )}
-            <button type="button" onClick={() => setOpen(false)} disabled={running} className="h-8 rounded-md px-2 text-muted-foreground hover:bg-muted disabled:opacity-40">收起</button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={running}>收起</Button>
           </div>
         </>
       )}

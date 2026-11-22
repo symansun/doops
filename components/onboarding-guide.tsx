@@ -1,24 +1,24 @@
 "use client"
 
-import { Button } from "./ui"
 import { useState } from "react"
+import { Button, Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui"
 import { ServerIcon, SparkIcon, TerminalIcon } from "./icons"
 
 const STEPS = [
   {
     icon: ServerIcon,
-    title: "从资产看板了解平台状态",
-    body: "打开「资产」查看可见集群、异常和本周巡检。在「机器台账」或「集群台账」可以找到指定资产。",
+    title: "从首页查看运行总览",
+    body: "首页显示连接、会话、集群与近期活动。打开「平台监控」查看汇总状态，或用「平台资产台账」查看机器、集群和业务系统。",
   },
   {
     icon: TerminalIcon,
-    title: "选择目标 Agent",
-    body: "在「目标运维」顶部选择已授权的在线 Agent。新 Agent 的安装步骤在「发布部署 → 首次接入」。",
+    title: "从右上角选择目标 Agent",
+    body: "顶栏右上角显示当前目标，随时可以切换或返回全部 Agent。选择后，「Agent 概览」「Agent 资产」「Agent 监控」显示它的状态。新 Agent 的安装步骤在「发布部署 → 首次接入」。",
   },
   {
     icon: SparkIcon,
     title: "查看资源或执行操作",
-    body: "在「操作资源」中查数据库、网站或 Kubernetes，在「运维工具」中打开凭据、审计或终端。也可以进入「AI 助手」描述需求。",
+    body: "左侧菜单按用途列出功能：数据库、网站、Kubernetes、镜像和文件直接打开。「AI 助手」用自然语言描述需求，「终端」直接执行 shell 命令。",
   },
 ]
 
@@ -29,16 +29,20 @@ export function OnboardingGuide({ onClose }: { onClose: () => void }) {
   const last = step === STEPS.length - 1
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-xl border bg-card p-6 shadow-xl">
+    <Dialog open onOpenChange={(next) => { if (!next) onClose() }}>
+      <DialogContent size="md" className="p-6">
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15 text-primary">
           <Icon width={24} height={24} />
         </div>
-        <h2 className="text-xl font-semibold tracking-tight text-card-foreground">{cur.title}</h2>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{cur.body}</p>
+        <DialogTitle className="text-xl font-semibold tracking-tight text-card-foreground">
+          {cur.title}
+        </DialogTitle>
+        <DialogDescription className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          {cur.body}
+        </DialogDescription>
 
         <div className="mt-6 flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5" aria-hidden="true">
             {STEPS.map((_, i) => (
               <span
                 key={i}
@@ -49,17 +53,11 @@ export function OnboardingGuide({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              onClick={onClose}
-              variant="ghost"
-            >
+            <Button onClick={onClose} variant="ghost">
               跳过
             </Button>
             {step > 0 && (
-              <Button
-                onClick={() => setStep((s) => s - 1)}
-
-              >
+              <Button onClick={() => setStep((s) => s - 1)}>
                 上一步
               </Button>
             )}
@@ -71,7 +69,7 @@ export function OnboardingGuide({ onClose }: { onClose: () => void }) {
             </Button>
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

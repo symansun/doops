@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
+import { BackgroundTaskError, listBackgroundTasks } from "@/lib/background-tasks"
 import {
   appendShellOutput,
   describeShellFailure,
@@ -11,6 +12,7 @@ import {
   type TerminalPrefill,
 } from "@/lib/shell-blocks"
 import { commandJournal } from "@/lib/console-persistence"
+import { Button, Textarea } from "./ui"
 import { TerminalIcon, SendIcon, StopIcon } from "./icons"
 
 interface Line {
@@ -57,6 +59,27 @@ export function TerminalPanel({
   const cancelRef = useRef<ToolCancel | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
+  // 「后台运行」是 Gateway 托管任务：不占用终端执行锁，离开页面只结束本地流。
+  const [bgSupported, setBgSupported] = useState(false)
+  const [bgRunning, setBgRunning] = useState(false)
+  const bgAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    let active = true
+    setBgSupported(Boolean(session.demo))
+    if (!session.demo) {
+      // detachedBackground 是 Gateway 自有能力：老 Gateway 没有 /v1/background-tasks。
+      listBackgroundTasks(session, target)
+        .then(() => { if (active) setBgSupported(true) })
+        .catch((err) => {
+          if (active && !(err instanceof BackgroundTaskError && err.status === 404)) setBgSupported(true)
+        })
+    }
+    return () => { active = false }
+  }, [session, target])
+
+  useEffect(() => () => bgAbortRef.current?.abort(), [])
+
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
   }, [lines])
@@ -68,9 +91,8 @@ export function TerminalPanel({
     push({ kind: failure.tone === "info" ? "info" : failure.tone === "warn" ? "warn" : "err", text: failure.text })
   }
 
-  async function run() {
-    const cmd = command.trim()
-    if (running || stopPending || !cmd) return
+  async function run(cmd: string) {
+    if (running || stopPending || !cmd.trim()) return
     setHistory((h) => [...h, cmd])
     setHistIdx(-1)
     setCommand("")
@@ -126,6 +148,61 @@ export function TerminalPanel({
     }
   }
 
+  async function runDetached(cmd: string) {
+    const targetOffline = target.status === "offline"
+    if (bgRunning || !bgSupported || targetOffline || !cmd.trim()) return
+    setHistory((h) => [...h, cmd])
+    setHistIdx(-1)
+    setCommand("")
+    push({ kind: "cmd", text: cmd })
+    const abort = new AbortController()
+    bgAbortRef.current = abort
+    setBgRunning(true)
+    let submitted = false
+    try {
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool: TOOLS.bg,
+          arguments: { session_id: sessionId, command: cmd, detach: true },
+          signal: abort.signal,
+        },
+        (ev) => {
+          if (ev.type === "background_task") {
+            submitted = true
+            push({ kind: "info", text: `已提交后台任务 #${ev.audit_id}，离开页面不会中断；在「后台任务」查看或停止` })
+            return
+          }
+          if (ev.type === "output") {
+            const next = appendShellOutput({ output: "", progress: "" }, ev.data)
+            if (next.progress) setProgress(next.progress)
+            if (next.output) push({ kind: "out", text: next.output })
+          } else if (ev.type === "result") {
+            const outcome = shellResultOutcome(extractText(ev.result))
+            if (!outcome.ok) {
+              fail(outcome.text)
+              return
+            }
+            if (outcome.text) push({ kind: "out", text: outcome.text })
+          }
+        },
+      )
+    } catch (err) {
+      // 本地流被释放不代表任务停止；已提交的任务仍由 Gateway 托管。
+      if (submitted) {
+        push({ kind: "info", text: "本地流已结束；任务仍在后台运行，在「后台任务」查看终态" })
+      } else {
+        fail((err as Error).message)
+      }
+    } finally {
+      bgAbortRef.current = null
+      setBgRunning(false)
+      setProgress("")
+    }
+  }
+
   function stop() {
     if (!cancelRef.current || stopPending) return
     stopRequestedRef.current = true
@@ -139,9 +216,11 @@ export function TerminalPanel({
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Candidate confirmation/navigation belongs to the IME. Safari may only report keyCode 229.
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      void run()
+      if (!e.repeat) void run(e.currentTarget.value)
     } else if (e.key === "ArrowUp" && !command.includes("\n")) {
       e.preventDefault()
       const idx = histIdx < 0 ? history.length - 1 : histIdx - 1
@@ -215,31 +294,45 @@ export function TerminalPanel({
         )}
         <div className="flex items-end gap-2">
           <span className="select-none pb-2 font-mono text-primary">$</span>
-          <textarea
+          <Textarea
             ref={inputRef}
+            aria-label="终端命令"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
             value={command}
             onChange={(e) => setCommand(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="hostname && kubectl get nodes"
             rows={1}
-            className="max-h-32 min-h-9 flex-1 resize-none rounded-lg border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+            className="max-h-32 min-h-9 flex-1 resize-none font-mono"
           />
           {running || stopPending ? (
-            <button
+            <Button
               onClick={stop}
               disabled={stopPending}
-              className="flex items-center gap-1.5 rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+              variant="danger"
             >
               <StopIcon width={16} height={16} /> {stopPending ? "停止中…" : "停止"}
-            </button>
+            </Button>
           ) : (
-            <button
-              onClick={() => void run()}
-              disabled={!command.trim()}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              <SendIcon width={16} height={16} /> 执行
-            </button>
+            <>
+              <Button
+                onClick={() => void run(command)}
+                disabled={!command.trim()}
+                variant="primary"
+              >
+                <SendIcon width={16} height={16} /> 执行
+              </Button>
+              <Button
+                onClick={() => void runDetached(command)}
+                disabled={!command.trim() || !bgSupported || target.status === "offline"}
+                title={bgSupported && target.status !== "offline" ? "在 Gateway 托管的后台任务中执行，离开页面不会中断" : "Gateway 未启用后台任务"}
+                variant="default"
+              >
+                <SendIcon width={16} height={16} /> {bgRunning ? "后台运行中…" : "后台运行"}
+              </Button>
+            </>
           )}
         </div>
       </div>

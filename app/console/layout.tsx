@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import "./console.css"
 
 export const metadata: Metadata = {
   title: "DoOps Console · 智能运维工作台",

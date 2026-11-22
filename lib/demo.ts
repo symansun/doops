@@ -517,10 +517,48 @@ export async function demoCallTool(
 ): Promise<void> {
   const { tool, arguments: args, signal } = opts
 
+  if (tool === "doops_bg" && args.detach === true) {
+    onEvent({ type: "open" })
+    onEvent({ type: "background_task", audit_id: 1284, operation_id: "op-demo-1284" })
+    onEvent({ type: "capabilities", capabilities: { gatewayProtocols: { detachedBackground: { schemaVersion: "doops.sh/detached-background/v1" } } } })
+    await emitChunks(
+      ["Task submitted.\nTaskID: task-9f2c\nPID: 4213\n", "running…\n"],
+      onEvent,
+      signal,
+      160,
+    )
+    onEvent({ type: "result", result: { content: [{ type: "text", text: "Task complete.\nTaskID: task-9f2c\nExitCode: 0" }] } })
+    onEvent({ type: "done" })
+    return
+  }
+
   if (tool === "doops_shell") {
     const cmd = String(args.command || args.cmd || "")
     await emitChunks(shellOutput(cmd), onEvent, signal, 160)
     onEvent({ type: "result", result: { content: [{ type: "text", text: "exit code: 0" }] } })
+    onEvent({ type: "done" })
+    return
+  }
+
+  if (tool === "doops_node_info") {
+    await emitChunks(
+      [
+        "Linux demo-node 6.8.0-41-generic #41-Ubuntu SMP x86_64 GNU/Linux\n",
+        "uptime: 14 days, 03:12, load average: 0.18, 0.22, 0.19\n",
+        "free -m: total 15872 MiB, used 6210 MiB, available 9144 MiB\n",
+        "df -h /: /dev/sda1 80G 30G 47G 39% /\n",
+        "kubectl: OK v1.30.2\n",
+        "container-runtime: docker 26.1\n",
+        "buildctl: MISSING\n",
+        "skopeo: OK 1.15\n",
+        "buildkit-sock: MISSING\n",
+        "kubeconfig: OK\n",
+      ],
+      onEvent,
+      signal,
+      120,
+    )
+    onEvent({ type: "result", result: { content: [{ type: "text", text: "Operation complete." }] } })
     onEvent({ type: "done" })
     return
   }
@@ -855,4 +893,86 @@ function randomToken(n: number): string {
   let out = ""
   for (let i = 0; i < n; i++) out += chars[Math.floor(Math.random() * chars.length)]
   return out
+}
+
+// --- Detached background tasks (demo) -------------------------------------
+// 合成几条 staging/db-01 的任务，覆盖运行中/成功/失败/已停止等状态徽标。
+
+interface DemoBackgroundTask {
+  audit_id: number
+  operation_id: string
+  cluster: string
+  instance: string
+  session: string
+  command_summary: string
+  status: string
+  started_at: string
+  finished_at?: string
+  task_id?: string
+  cancel_requested?: boolean
+  output: string
+}
+
+const demoBgTasks: DemoBackgroundTask[] = [
+  {
+    audit_id: 1284, operation_id: "op-demo-1284", cluster: "staging", instance: "db-01",
+    session: "console-demo", command_summary: "pg_dump demo_db -Fc -f /tmp/demo_db.dump",
+    status: "running", started_at: ago(2), task_id: "task-9f2c",
+    output: "Task submitted.\nTaskID: task-9f2c\nPID: 4213\npg_dump: dumping table orders (41238 rows)\n",
+  },
+  {
+    audit_id: 1281, operation_id: "op-demo-1281", cluster: "staging", instance: "db-01",
+    session: "console-demo", command_summary: "apt update && apt install -y sysstat",
+    status: "success", started_at: ago(240), finished_at: ago(238), task_id: "task-7ad1",
+    output: "Task submitted.\nTaskID: task-7ad1\nReading package lists... Done\nTask complete.\nTaskID: task-7ad1\nExitCode: 0\n",
+  },
+  {
+    audit_id: 1277, operation_id: "op-demo-1277", cluster: "staging", instance: "db-01",
+    session: "console-demo", command_summary: "tar czf /tmp/logs.tgz /var/log/nginx",
+    status: "failed", started_at: ago(480), finished_at: ago(479), task_id: "task-52be",
+    output: "Task submitted.\nTaskID: task-52be\ntar: /var/log/nginx: Cannot read: Permission denied\nTask failed.\nTaskID: task-52be\nExitCode: 2\n",
+  },
+  {
+    audit_id: 1270, operation_id: "op-demo-1270", cluster: "staging", instance: "db-01",
+    session: "console-demo", command_summary: "sleep 3600",
+    status: "canceled", started_at: ago(720), finished_at: ago(700), task_id: "task-1c04", cancel_requested: true,
+    output: "Task submitted.\nTaskID: task-1c04\nTask canceled.\nTaskID: task-1c04\n",
+  },
+]
+
+export async function demoBackgroundTasks(target: Target) {
+  await sleep(120)
+  return demoBgTasks
+    .filter((task) => task.cluster === target.cluster && task.instance === target.instance)
+    .map(({ output: _output, ...view }) => ({ ...view }))
+}
+
+export async function demoBackgroundTask(id: number) {
+  await sleep(120)
+  const task = demoBgTasks.find((t) => t.audit_id === id)
+  if (!task) {
+    const err = new Error("后台任务不存在") as Error & { status?: number }
+    err.status = 404
+    throw err
+  }
+  return { ...task }
+}
+
+export async function demoStopBackgroundTask(id: number) {
+  await sleep(120)
+  const task = demoBgTasks.find((t) => t.audit_id === id)
+  if (!task) {
+    const err = new Error("后台任务不存在") as Error & { status?: number }
+    err.status = 404
+    throw err
+  }
+  if (task.status !== "running") {
+    const err = new Error("任务已结束") as Error & { status?: number }
+    err.status = 409
+    throw err
+  }
+  task.cancel_requested = true
+  task.status = "canceled"
+  task.finished_at = nowISO()
+  task.output += "Task canceled.\n"
 }

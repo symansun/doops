@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next"
 import "@agent-cloud/agent-ui/styles.css"
+import "katex/dist/katex.min.css"
+import "streamdown/styles.css"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -20,7 +22,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="zh-CN" className="bg-background">
+    <html lang="zh-CN" className="dark bg-background">
       <body className="font-sans antialiased">{children}</body>
     </html>
   )

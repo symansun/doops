@@ -13,7 +13,7 @@ import {
   TerminalIcon,
   RocketIcon,
 } from "./icons"
-import { SegmentedControl, Input } from "./ui"
+import { Button, Input, SegmentedControl } from "./ui"
 
 // 可复制的代码块
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
@@ -34,10 +34,11 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
       <pre className="overflow-x-auto px-3 py-2.5 pr-10 font-mono text-xs leading-relaxed text-foreground">
         {code}
       </pre>
-      <button
+      <Button
         onClick={copy}
         aria-label="复制代码"
-        className="absolute right-1.5 top-1.5 flex items-center gap-1 rounded-md border bg-background px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        size="sm"
+        className="absolute right-1.5 top-1.5"
       >
         {copied ? (
           <>
@@ -48,7 +49,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
             <CopyIcon width={12} height={12} /> 复制
           </>
         )}
-      </button>
+      </Button>
     </div>
   )
 }

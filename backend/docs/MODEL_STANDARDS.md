@@ -34,6 +34,8 @@ defined in [CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md#model-provider).
 No Kubernetes Secret, ConfigMap or host file holds the model configuration, and
 the Chart has no model settings values.
 
+Model metadata reports the model selected in the current target settings. ACP initialization confirms the connection, while each new session loads the current binding, including a model delivered or rotated after startup.
+
 The image must not supply a provider, infer a credential, or reset the
 delivered model during an upgrade. Installation and upgrade procedures belong
 to [CLUSTER_INSTALL_GUIDE.md](CLUSTER_INSTALL_GUIDE.md) and

@@ -9,7 +9,7 @@ import {
   type AuditScope,
 } from "@/lib/gateway"
 import { HistoryIcon, RefreshIcon } from "./icons"
-import { Button, Input, Select } from "./ui"
+import { Badge, Button, Card, Checkbox, Input, Select, StatusBanner } from "./ui"
 
 const PAGE_SIZE = 50
 
@@ -204,7 +204,7 @@ export function AuditPanel({
         <div className="flex w-full flex-wrap items-center gap-3 text-sm text-muted-foreground">
           <label className="flex min-w-0 flex-wrap items-center gap-2">开始时间<Input type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
           <label className="flex min-w-0 flex-wrap items-center gap-2">结束时间<Input type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={!hideObserve} onChange={(e) => setHideObserve(!e.target.checked)} />显示升级进行中的轮询</label>
+          <label className="flex items-center gap-2"><Checkbox checked={!hideObserve} onChange={(e) => setHideObserve(!e.target.checked)} />显示升级进行中的轮询</label>
         </div>
       </div>
 
@@ -215,9 +215,9 @@ export function AuditPanel({
         </p>
         {hint && <p className="mb-3 text-sm text-muted-foreground">{hint}</p>}
         {error && (
-          <p role="alert" className="status-error mb-3">
+          <StatusBanner tone="error" className="mb-3">
             {error}
-          </p>
+          </StatusBanner>
         )}
         {loading && <p role="status" className="mb-3 text-sm text-muted-foreground">正在查询审计记录…</p>}
         {!error && !hint && events.length === 0 && !loading && (
@@ -228,28 +228,29 @@ export function AuditPanel({
         )}
         <ul className="flex flex-col gap-2">
           {events.map((e) => (
-            <li key={e.id} className="min-w-0 rounded-lg border bg-card p-4 shadow-sm">
+            <Card as="li" key={e.id} className="min-w-0 p-4">
               <div className="flex flex-wrap items-center gap-2.5">
-                <span className="rounded-md bg-muted px-2 py-1 text-sm font-medium text-foreground">
+                <Badge className="px-2 py-1 text-xs text-foreground">
                   {e.action || "?"}
-                </span>
-                <span
-                  className={`rounded-md px-2 py-1 text-sm font-medium ${
+                </Badge>
+                <Badge
+                  variant={
                     e.status === "success"
-                      ? "bg-success/15 text-success"
+                      ? "success"
                       : ["running", "executing", "accepted", "observing"].includes(e.status || "")
-                        ? "bg-warning/15 text-warning"
-                        : "bg-destructive/15 text-destructive"
-                  }`}
+                        ? "warning"
+                        : "danger"
+                  }
+                  className="px-2 py-1 text-xs"
                 >
                   status={e.status || "unknown"}
-                </span>
+                </Badge>
                 <span className="ml-auto text-sm text-muted-foreground">
                   {fmtTime(e.started_at)}
                 </span>
               </div>
               <div className="mt-3 grid min-w-0 gap-x-5 gap-y-1.5 text-sm leading-6 text-muted-foreground sm:grid-cols-2">
-                <span className="break-all"><strong className="font-medium text-foreground/80">审计 ID</strong> {e.id}</span>
+                <span className="break-all"><strong className="font-medium text-foreground/80">审计 ID</strong> <span className="font-mono">{e.id}</span></span>
                 <span><strong className="font-medium text-foreground/80">耗时</strong> {duration(e)}</span>
                 <span className="break-all"><strong className="font-medium text-foreground/80">输入 / 输出</strong> {e.bytes_in ?? 0} / {e.bytes_out ?? 0} B</span>
                 {e.correlation_id && (
@@ -260,8 +261,8 @@ export function AuditPanel({
                   }} title="查询本操作的审计记录">操作 {e.correlation_id}</button>
                 )}
                 <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">用户</strong> {e.user_id || "—"}</span>
-                <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">Token</strong> {e.token_id || "—"}</span>
-                <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">目标</strong> {e.cluster || "—"}/{e.instance || "—"}</span>
+                <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">Token</strong> <span className="font-mono">{e.token_id || "—"}</span></span>
+                <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">目标</strong> <span className="font-mono">{e.cluster || "—"}/{e.instance || "—"}</span></span>
                 {e.session && <span className="min-w-0 break-all font-mono"><strong className="font-sans font-medium text-foreground/80">Session</strong> {e.session}</span>}
               </div>
               {e.command_summary && (
@@ -270,14 +271,14 @@ export function AuditPanel({
                 </p>
               )}
               {e.error && (
-                <p className="mt-3 break-words rounded-md bg-destructive/10 px-3 py-2.5 text-sm leading-6 text-destructive">错误：{e.error}</p>
+                <StatusBanner tone="error" className="mt-3 break-words">错误：{e.error}</StatusBanner>
               )}
               {e.tail && (
                 <pre className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/80 p-3 font-mono text-[13px] leading-6 text-foreground/85">
                   {e.tail}
                 </pre>
               )}
-            </li>
+            </Card>
           ))}
         </ul>
         {events.length > 0 && (

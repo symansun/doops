@@ -21,6 +21,8 @@ Gateway 使用 SQLite 持久化元数据、加密 payload、grant、verification
 inventory 和 audit。`DOOPS_GATEWAY_SECRET_KEY` 是必需的加密主密钥；Gateway 不自动生成
 替代 key。
 
+机器台账保存的 SSH 登录信息属于独立的 `machine_login` 保管域。管理员可查看已保存的账号和引用，但 Skill 不提供读取密码或按标签导出凭据的方法。台账标签只用于发现资产，不授予 SSH 或目标权限。
+
 ## 登录和隔离
 
 ```bash

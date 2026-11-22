@@ -7,12 +7,14 @@ import { ServerIcon, RefreshIcon, ChevronDownIcon, CheckIcon } from "./icons"
 import { Button } from "./ui"
 
 function statusDot(t: Target): string {
+  if (t.status === "offline") return "bg-muted-foreground/50"
   if (t.busy) return "bg-warning"
   if (t.status === "active") return "bg-accent"
   return "bg-success"
 }
 
 function statusLabel(t: Target): string {
+  if (t.status === "offline") return "离线"
   if (t.busy) return "忙碌"
   if (t.status === "active") return "活动"
   return "空闲"
@@ -25,6 +27,7 @@ export function TargetSwitcher({
   onRefresh,
   loading,
   isAdmin,
+  onViewAll,
 }: {
   targets: Target[]
   selected: Target | null
@@ -33,6 +36,7 @@ export function TargetSwitcher({
   loading: boolean
   // 未传入时空状态用对两种角色都成立的说法。
   isAdmin?: boolean
+  onViewAll?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -69,11 +73,12 @@ export function TargetSwitcher({
   const current = selected && targets.find(target => target.key === selected.key)
 
   return (
-    <div ref={ref} className="relative min-w-0">
+    <div ref={ref} className="relative flex min-w-0 flex-wrap items-center gap-2">
       <Button
         onClick={() => setOpen((v) => !v)}
         size="sm"
         className="max-w-full"
+        title={current ? `${current.key} · ${statusLabel(current)}` : "选择 Agent 目标"}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -84,11 +89,11 @@ export function TargetSwitcher({
         <span className="max-w-[40vw] truncate text-xs font-medium text-foreground sm:max-w-[200px]">
           {current?.instance || "选择 Agent 目标"}
         </span>
-        <span className="hidden truncate font-mono text-[11px] text-muted-foreground sm:inline">
+        <span className="hidden truncate font-mono text-sm text-muted-foreground sm:inline">
           {current?.cluster}
         </span>
         {targets.length > 1 && (
-          <span className="rounded-full bg-background px-1.5 text-[10px] text-muted-foreground">
+          <span className="rounded-full bg-background px-1.5 text-sm text-muted-foreground">
             {targets.length}
           </span>
         )}
@@ -98,12 +103,19 @@ export function TargetSwitcher({
       {open && (
         <div
           role="listbox"
-          aria-label="在线 Agent 目标"
+          aria-label="Agent 目标"
           className="absolute left-0 top-full z-50 mt-1 max-h-80 w-72 max-w-[calc(100vw_-_4.25rem)] overflow-y-auto rounded-lg border bg-card p-1 shadow-lg"
         >
           <div className="flex items-center justify-between px-2 py-1.5">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              在线 Agent 目标 {targets.length}
+            <Button
+              onClick={() => { onViewAll?.(); setOpen(false) }}
+              variant="ghost"
+              size="sm"
+            >
+              全部 Agent
+            </Button>
+            <span className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+              {targets.length} 个目标
             </span>
             <Button
               onClick={onRefresh}
@@ -134,7 +146,7 @@ export function TargetSwitcher({
                 <span className={`h-2 w-2 shrink-0 rounded-full ${statusDot(t)}`} aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm text-foreground">{t.instance}</span>
-                  <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                  <span className="block truncate font-mono text-sm text-muted-foreground">
                     {t.cluster} · {statusLabel(t)}
                   </span>
                 </span>

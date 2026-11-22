@@ -1,6 +1,6 @@
 "use client"
 
-import { Button, Select, Input, Textarea } from "./ui"
+import { Button, Checkbox, Input, Select, StatusBanner, Textarea } from "./ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
 import type { Target } from "@/lib/gateway"
@@ -293,13 +293,16 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
                       >
                         编辑
                       </Button>
-                      <button
+                      <Button
                         onClick={() => deleteConfig(c.id)}
-                        className="rounded-md border border-destructive/40 px-2 py-1 text-destructive transition-colors hover:bg-destructive/10"
+                        variant="danger-outline"
+                        size="sm"
+                        icon
                         aria-label="删除配置"
+                        title="删除配置"
                       >
                         <TrashIcon width={14} height={14} />
-                      </button>
+                      </Button>
                     </div>
                   </li>
                 )
@@ -357,9 +360,9 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
           </Button>
         </div>
         {dispatchError && (
-          <p className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+          <StatusBanner tone="error" compact className="rounded-none border-x-0 border-t-0 px-4">
             {dispatchError}
-          </p>
+          </StatusBanner>
         )}
 
         {dispatchCfg && (
@@ -403,12 +406,10 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
                       online ? "bg-card" : "bg-card/40 opacity-70"
                     }`}
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={!!selected[key]}
                       disabled={!online}
                       onChange={() => toggle(key)}
-                      className="h-4 w-4 accent-[var(--primary)] disabled:opacity-40"
                       aria-label={`选择 ${key}`}
                     />
                     <span

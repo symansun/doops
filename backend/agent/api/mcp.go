@@ -73,12 +73,6 @@ type WorkspaceReadParams struct {
 	Ref       string `json:"ref,omitempty"`
 }
 
-// DockerParams 用于 doops_docker 容器管理。
-type DockerParams struct {
-	SessionID string `json:"session_id"`
-	Command   string `json:"command"` // Docker subcommand, e.g. "ps -a", "logs nginx"
-}
-
 // KubectlParams 用于 doops_kubectl K8s 管理。
 type KubectlParams struct {
 	SessionID string `json:"session_id"`

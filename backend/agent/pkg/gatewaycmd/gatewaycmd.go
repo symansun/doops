@@ -50,6 +50,7 @@ func serve(args []string) {
 	loginTokenTTL := fs.Duration("login-token-ttl", server.DefaultLoginTokenTTL, "Password-login sliding token TTL")
 	loginTokenMaxLifetime := fs.Duration("login-token-max-lifetime", server.DefaultLoginTokenMaxLifetime, "Absolute max lifetime for a password-login token, including renewals")
 	operationTimeout := fs.Duration("operation-timeout", 60*time.Minute, "Maximum runtime for one forwarded operation")
+	detachedTaskTimeout := fs.Duration("detached-task-timeout", 24*time.Hour, "Maximum lifetime of a detached background task (doops_bg detach)")
 	// Retired limits stay parseable so existing unit files keep starting.
 	retiredGlobalLimit := fs.Int("max-concurrent-operations", 0, "Retired; ignored")
 	retiredUserLimit := fs.Int("max-concurrent-per-user", 0, "Retired; ignored")
@@ -63,6 +64,9 @@ func serve(args []string) {
 
 	if *retiredGlobalLimit != 0 || *retiredUserLimit != 0 {
 		log.Printf("[gateway] -max-concurrent-operations and -max-concurrent-per-user are retired and ignored")
+	}
+	if *detachedTaskTimeout <= 0 {
+		log.Fatal("-detached-task-timeout must be positive")
 	}
 	resolvedDBPath, err := canonicalGatewayDBPath(*dbPath)
 	if err != nil {
@@ -84,6 +88,7 @@ func serve(args []string) {
 		LoginTokenTTL:         *loginTokenTTL,
 		LoginTokenMaxLifetime: *loginTokenMaxLifetime,
 		OperationTimeout:      *operationTimeout,
+		DetachedTaskTimeout:   *detachedTaskTimeout,
 		TargetQueueTimeout:    *targetQueueTimeout,
 		MaxQueuedPerTarget:    *maxQueuedPerTarget,
 	})

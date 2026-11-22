@@ -69,7 +69,7 @@ export function ConnectScreen({
   }
 
   return (
-    <main className="relative flex min-h-dvh items-center justify-center overflow-hidden p-4">
+    <main className="console-login relative flex min-h-dvh items-center justify-center overflow-hidden p-4">
       <div aria-hidden className="hero-ambient pointer-events-none absolute inset-0 opacity-60" />
       <div className="relative w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
@@ -81,10 +81,11 @@ export function ConnectScreen({
         </div>
 
         <div className="card-surface p-6 sm:p-7">
-          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+          <label htmlFor="login-gateway" className="mb-1.5 block text-sm font-medium text-foreground">
             Gateway 地址
           </label>
           <Input
+            id="login-gateway"
             aria-label="Gateway 地址"
             value={gateway}
             onChange={(e) => setGateway(e.target.value)}
@@ -126,6 +127,7 @@ export function ConnectScreen({
             </div>
           ) : (
             <Textarea
+              aria-label="用户 Token"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder="dgw_user_xxx"
@@ -152,7 +154,7 @@ export function ConnectScreen({
 
           <div className="my-4 flex items-center gap-3">
             <span className="h-px flex-1 bg-border" />
-            <span className="text-xs text-muted-foreground">或</span>
+            <span className="text-sm text-muted-foreground">或</span>
             <span className="h-px flex-1 bg-border" />
           </div>
 
@@ -167,12 +169,12 @@ export function ConnectScreen({
           )}
         </div>
 
-        <p className="mt-4 text-center text-xs text-muted-foreground">
+        <p className="mt-4 text-center text-sm text-muted-foreground">
           登录会话由当前工作台的 HttpOnly Cookie 保存，业务请求统一经过 Gateway 授权。
         </p>
 
-        <p className="mt-2 text-center text-xs">
-          <Link href="/blog" className="text-primary underline-offset-4 hover:underline">
+        <p className="mt-2 text-center text-sm">
+          <Link href="/blog" className="login-link underline underline-offset-4">
             查看博客 / Blog
           </Link>
         </p>

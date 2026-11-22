@@ -275,7 +275,7 @@ async function request<T>(s: Session, path: string, init?: RequestInit): Promise
 
 export async function listCredentials(
   s: Session,
-  target: Target,
+  target: Target | undefined,
   view: "target" | "managed",
   signal?: AbortSignal,
 ): Promise<CredentialResource[]> {
@@ -307,6 +307,7 @@ export async function listCredentials(
       },
     ]
     if (view === "managed") return managed.filter((credential) => credential.scope === "personal")
+    if (!target) throw new Error("请选择目标 Agent")
     return [
       {
         ...managed[0],
@@ -331,6 +332,7 @@ export async function listCredentials(
   }
   const qs = new URLSearchParams({ view })
   if (view === "target") {
+    if (!target) throw new Error("请选择目标 Agent")
     qs.set("cluster", target.cluster)
     qs.set("instance", target.instance)
   }

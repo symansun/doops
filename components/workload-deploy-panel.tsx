@@ -12,6 +12,7 @@ import {
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
 import { browserSessionStorage, loadDeployState, saveDeployDraft, saveDeploySession } from "@/lib/console-persistence"
+import { Button, StatusBanner } from "./ui"
 import { DeploymentForm } from "./deployment-form"
 
 // Helm release channel: the same `doops.operations/apply` command as `doops ask --apply`,
@@ -24,7 +25,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
   onOpenUpgrade?: () => void
 }) {
   // Keep the release session across view switches so a running apply stays visible after returning. It is kept per
-  // Gateway, user and target; a token login keeps it in memory only. Logout clears both (console-persistence.ts).
+  // Gateway, user and target (falling back to memory-only when username is absent). Logout clears both (console-persistence.ts).
   const [releaseState, setReleaseState] = useState(() => {
     const saved = loadDeployState(browserSessionStorage(), session, target.key)
     return { ...saved, sessionId: saved.sessionId && /^deploy-[a-z0-9]{1,16}$/.test(saved.sessionId) ? saved.sessionId : randomSession("deploy") }
@@ -93,32 +94,35 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
         </div>
         <div className="flex items-center gap-2">
           <ConnectionBadge snapshot={snapshot} availability={availability} />
-          <button
+          <Button
             type="button"
+            size="sm"
             disabled={busy}
             onClick={startNewRelease}
             title={`当前会话 ${sessionId}`}
-            className="flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-          ><Plus aria-hidden="true" className="size-3.5" />新发布</button>
+          ><Plus aria-hidden="true" className="size-3.5" />新发布</Button>
         </div>
       </header>
       {newSessionWarning && (
-        <div role="status" className="flex flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-amber-600 dark:text-amber-400">
+        <StatusBanner tone="warning" compact className="flex flex-wrap items-center gap-2 rounded-none border-x-0 border-t-0 px-4">
           <p className="min-w-0 flex-1">{newSessionWarning}</p>
           {releaseState.previousRelease && (
-            <button type="button" disabled={!readOnly && busy}
+            <Button
+              type="button"
+              size="sm"
+              disabled={!readOnly && busy}
               onClick={() => {
                 if (!readOnly && isDoopsAgentSessionBusy(runtime.getSnapshot(sessionId))) return
                 setStopError("")
                 setViewingReceipt((current) => !current)
               }}
               title={readOnly ? releaseState.sessionId : releaseState.previousRelease.sessionId}
-              className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-muted disabled:opacity-50">
+            >
               {readOnly ? <ArrowLeft aria-hidden="true" className="size-3.5" /> : <History aria-hidden="true" className="size-3.5" />}
               {readOnly ? "返回当前发布" : "查看原回执"}
-            </button>
+            </Button>
           )}
-        </div>
+        </StatusBanner>
       )}
 
       {/* Narrow screens scroll the whole page with the form at full height; wide screens scroll each column. */}
@@ -131,7 +135,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
             <div className="space-y-2 text-xs">
               <h3 className="text-sm font-medium">原发布回执 · 只读</h3>
               <p className="break-all font-mono text-muted-foreground">{sessionId}</p>
-              <p className="text-amber-600 dark:text-amber-400">上次记录：发布结果未确认。以原会话实时回执和目标状态为准。</p>
+              <p className="text-warning">上次记录：发布结果未确认。以原会话实时回执和目标状态为准。</p>
             </div>
           ) : <DeploymentForm
             key={sessionId}
@@ -156,10 +160,15 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
               <p className="truncate text-[11px] text-muted-foreground">以 Helm release 的实际终态为准；工具失败、连接中断或缺少终态都不算成功</p>
             </div>
             {!readOnly && busy && snapshot.capabilities.interrupt && (
-              <button type="button" disabled={stopping || snapshot.connection !== "connected"} onClick={() => void stop()}
-                className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-destructive/50 px-2.5 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40">
+              <Button
+                type="button"
+                variant="danger-outline"
+                size="sm"
+                disabled={stopping || snapshot.connection !== "connected"}
+                onClick={() => void stop()}
+              >
                 <Square aria-hidden="true" className="size-3" />{stopping ? "正在停止…" : "停止"}
-              </button>
+              </Button>
             )}
           </div>
           <div className="min-h-0 flex-1">
@@ -199,21 +208,20 @@ function AvailabilityNotice({ notice, onReconnect, onOpenCredentials, onOpenUpgr
   })
   return (
     <div role={connecting ? "status" : "alert"} data-notice={notice.kind}
-      className={`mb-4 rounded-lg border p-3 ${connecting ? "bg-card" : "border-amber-500/40 bg-amber-500/10"}`}>
+      className={`mb-4 rounded-lg border p-3 ${connecting ? "bg-card" : "border-warning/40 bg-warning/10"}`}>
       <div className="flex items-start gap-2">
         {connecting
           ? <Loader2 aria-hidden="true" className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
-          : <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />}
+          : <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />}
         <div className="min-w-0">
-          <p className="text-sm font-medium">{notice.title}</p>
+          <p className="text-sm font-medium text-foreground">{notice.title}</p>
           <p className="mt-1 break-words text-xs text-muted-foreground">{notice.detail}</p>
           {buttons.length > 0 && (
             <div className="mt-2.5 flex flex-wrap gap-2">
               {buttons.map(({ action, label, Icon, onClick }) => (
-                <button key={action} type="button" onClick={onClick}
-                  className="flex h-7 items-center gap-1.5 rounded-md border bg-background px-2.5 text-xs transition-colors hover:bg-muted">
+                <Button key={action} type="button" size="sm" onClick={onClick}>
                   <Icon aria-hidden="true" className="size-3.5" />{label}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -226,9 +234,9 @@ function AvailabilityNotice({ notice, onReconnect, onOpenCredentials, onOpenUpgr
 function ConnectionBadge({ snapshot, availability }: { snapshot: AgentSessionSnapshot; availability: DeploymentAvailability }) {
   const connecting = snapshot.connection === "connecting" || snapshot.connection === "reconnecting"
   const [tone, label] = availability.canSubmit
-    ? ["bg-emerald-500", "Agent 已就绪"]
-    : snapshot.connection === "connected" ? ["bg-amber-500", isDoopsAgentSessionBusy(snapshot) ? "发布执行中" : "通道不可用"]
-      : connecting ? ["bg-amber-500 animate-pulse", "正在连接 Agent"] : ["bg-destructive", "Agent 不可用"]
+    ? ["bg-success", "Agent 已就绪"]
+    : snapshot.connection === "connected" ? ["bg-warning", isDoopsAgentSessionBusy(snapshot) ? "发布执行中" : "通道不可用"]
+      : connecting ? ["bg-warning animate-pulse", "正在连接 Agent"] : ["bg-destructive", "Agent 不可用"]
   return (
     <span className="flex h-8 max-w-64 items-center gap-1.5 rounded-md border px-2.5 text-xs text-muted-foreground" title={availability.canSubmit ? undefined : availability.blockedReason}>
       <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${tone}`} />
@@ -244,18 +252,17 @@ function RunStatus({ outcome, stopError, onOpenCredentials }: {
   onOpenCredentials?: () => void
 }) {
   const tone = outcome.kind === "failed" ? "text-destructive"
-    : outcome.kind === "unknown" || outcome.kind === "cancelled" ? "text-amber-600 dark:text-amber-400"
-      : outcome.kind === "succeeded" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
+    : outcome.kind === "unknown" || outcome.kind === "cancelled" ? "text-warning"
+      : outcome.kind === "succeeded" ? "text-success" : "text-muted-foreground"
   return (
     <div role="status" aria-live="polite" data-outcome={outcome.kind} className="max-h-40 shrink-0 overflow-y-auto border-t px-4 py-2.5 text-xs">
       <p className={`font-medium ${tone}`}>{outcome.title}</p>
       {outcome.detail && <p className="mt-0.5 break-words text-muted-foreground">{outcome.detail}</p>}
       {stopError && <p role="alert" className="mt-1 break-words text-destructive">{stopError}</p>}
       {outcome.actions.includes("open_credentials") && onOpenCredentials && (
-        <button type="button" onClick={onOpenCredentials}
-          className="mt-2 flex h-7 items-center gap-1.5 rounded-md border bg-background px-2.5 text-xs transition-colors hover:bg-muted">
+        <Button type="button" size="sm" onClick={onOpenCredentials} className="mt-2">
           <KeyRound aria-hidden="true" className="size-3.5" />去凭据页
-        </button>
+        </Button>
       )}
     </div>
   )

@@ -8,11 +8,14 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 type machineInventoryInput struct {
+	Tags        []string `json:"tags"`
 	AssetID     string   `json:"asset_id"`
 	Name        string   `json:"name"`
 	Kind        string   `json:"kind"`
@@ -68,25 +71,64 @@ func (m machineInventoryInput) validate() *machineInventoryProblem {
 	return nil
 }
 
+// Tags have no authorization meaning. Constrain their shape so they are safe
+// metadata in a model-facing list, not connection strings or instructions.
+var machineTagPattern = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{M}\p{N}._-]*$`)
+
+func normalizeMachineTags(raw []string) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	invalid := machineBadRequest("invalid_tags", "最多 20 个标签，每个限 32 字，使用文字、数字、点、横线或下划线，不含凭据")
+	if len(raw) > 20 {
+		return nil, invalid
+	}
+	tags := make([]string, 0, len(raw))
+	seen := map[string]bool{}
+	for _, s := range raw {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if utf8.RuneCountInString(s) > 32 || !machineTagPattern.MatchString(s) || !inventoryMetadata(s) {
+			return nil, invalid
+		}
+		if !seen[s] {
+			tags = append(tags, s)
+			seen[s] = true
+		}
+	}
+	sort.Strings(tags)
+	return tags, nil
+}
+
 func validInventoryCapacity(n *float64) bool { return n == nil || (*n > 0 && !math.IsInf(*n, 0)) }
 
 // A single read snapshot controls both membership and the host reference. An
 // inventory record can outlive the gateway's offline agent-status retention.
 const machineInventoryColumns = `m.asset_id,m.name,m.kind,m.address,m.cpu_count,m.memory_gib,m.disk_gib,
+ (SELECT json_group_array(t.tag ORDER BY t.tag) FROM inventory_machine_tags t WHERE t.asset_id=m.asset_id),
  COALESCE(host.asset_id,''),m.cluster,m.instance,m.revision,
  CASE WHEN m.cluster='' THEN 'unbound' ELSE COALESCE(a.status,'offline') END,COALESCE(a.last_seen,'')`
 const machineStatusJoin = ` LEFT JOIN agent_status a ON a.cluster=m.cluster AND a.instance=m.instance `
 
 func scanInventoryMachine(row interface{ Scan(...any) error }) (m inventoryMachine, err error) {
-	err = row.Scan(&m.AssetID, &m.Name, &m.Kind, &m.Address, &m.CPUCount, &m.MemoryGiB, &m.DiskGiB, &m.HostAssetID, &m.Cluster, &m.Instance, &m.Revision, &m.TargetStatus, &m.LastSeen, (*[]byte)(&m.LoginAccounts))
+	var tagJSON string
+	err = row.Scan(&m.AssetID, &m.Name, &m.Kind, &m.Address, &m.CPUCount, &m.MemoryGiB, &m.DiskGiB, &tagJSON, &m.HostAssetID, &m.Cluster, &m.Instance, &m.Revision, &m.TargetStatus, &m.LastSeen, (*[]byte)(&m.LoginAccounts))
+	if err == nil {
+		err = json.Unmarshal([]byte(tagJSON), &m.Tags)
+	}
 	return
 }
 
-func listInventoryMachines(tx *sql.Tx, auth TokenAuth) ([]inventoryMachine, error) {
+func listInventoryMachines(tx *sql.Tx, auth TokenAuth, tags ...string) ([]inventoryMachine, error) {
+	args := []any{auth.UserID, auth.TokenID}
+	where := " WHERE 1=1"
+	for _, tag := range tags {
+		where += " AND EXISTS (SELECT 1 FROM inventory_machine_tags t WHERE t.asset_id=m.asset_id AND t.tag=?)"
+		args = append(args, tag)
+	}
 	rows, err := tx.Query(inventoryGrants+`, visible AS (
  SELECT m.* FROM inventory_machines m WHERE EXISTS (SELECT 1 FROM permitted p
  WHERE p.is_admin=1 OR (m.cluster<>'' AND m.instance<>'' AND p.cluster IN ('*',m.cluster) AND p.instance IN ('*',m.instance))))
- SELECT `+machineInventoryColumns+`, CASE WHEN (SELECT is_admin FROM actor)=1 THEN `+machineLoginAccountsJSON+` END FROM visible m LEFT JOIN visible host ON host.asset_id=m.host_asset_id `+machineStatusJoin+` ORDER BY m.asset_id`, auth.UserID, auth.TokenID)
+ SELECT `+machineInventoryColumns+`, CASE WHEN (SELECT is_admin FROM actor)=1 THEN `+machineLoginAccountsJSON+` END FROM visible m LEFT JOIN visible host ON host.asset_id=m.host_asset_id `+machineStatusJoin+where+` ORDER BY m.asset_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +165,10 @@ func insertInventoryMachine(tx *sql.Tx, m machineInventoryInput) error {
 
 func saveInventoryMachine(tx *sql.Tx, m machineInventoryInput, revision *int64) (inventoryMachine, error) {
 	var empty inventoryMachine
+	var tagErr error
+	if m.Tags, tagErr = normalizeMachineTags(m.Tags); tagErr != nil {
+		return empty, tagErr
+	}
 	if issue := m.validate(); issue != nil {
 		return empty, *issue
 	}
@@ -181,6 +227,17 @@ func saveInventoryMachine(tx *sql.Tx, m machineInventoryInput, revision *int64) 
 	}
 	if err != nil {
 		return empty, err
+	}
+	// Omission by older clients preserves tags. An explicit [] clears them.
+	if m.Tags != nil {
+		if _, err := tx.Exec("DELETE FROM inventory_machine_tags WHERE asset_id=?", m.AssetID); err != nil {
+			return empty, err
+		}
+		for _, tag := range m.Tags {
+			if _, err := tx.Exec("INSERT INTO inventory_machine_tags(asset_id,tag) VALUES(?,?)", m.AssetID, tag); err != nil {
+				return empty, err
+			}
+		}
 	}
 	// The mutation was authorized by requireInventoryAdmin in this transaction.
 	return scanInventoryMachine(tx.QueryRow(`SELECT `+machineInventoryColumns+`, `+machineLoginAccountsJSON+machineByIDFrom, m.AssetID))

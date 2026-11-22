@@ -114,11 +114,11 @@ func (h *GatewayHub) HandleClusterInventory(w http.ResponseWriter, r *http.Reque
 }
 
 func (req inventoryRequest) valid() bool {
-	return (req.Action == "discover" || req.Action == "import") &&
+	return (req.Action == "discover" || req.Action == "import" || req.Action == "attach") &&
 		inventoryKeyPattern.MatchString(req.Cluster) && inventoryKeyPattern.MatchString(req.Instance) &&
 		(req.AssetID == "" || inventoryKeyPattern.MatchString(req.AssetID)) &&
 		len(req.Name) <= 256 && strings.TrimSpace(req.Name) == req.Name && strings.IndexFunc(req.Name, unicode.IsControl) < 0 &&
-		(req.Action != "import" || (req.AssetID != "" && req.Name != ""))
+		(req.Action == "discover" || (req.AssetID != "" && req.Name != ""))
 }
 
 func (h *GatewayHub) observeClusterInventory(ctx context.Context, auth TokenAuth, req inventoryRequest) (inventoryCluster, error) {
@@ -190,7 +190,7 @@ func (h *GatewayHub) verifyInventoryObservation(ctx context.Context, auth TokenA
 		}
 	}
 	row.Namespaces = namespaces
-	if req.Action == "import" {
+	if req.Action == "import" || req.Action == "attach" {
 		if err := saveInventoryObservation(tx, *row); err != nil {
 			return err
 		}
@@ -223,6 +223,17 @@ func authorizeInventory(ctx context.Context, q interface {
 	}
 	if !allowed {
 		return inventoryFailure{403, "inventory_forbidden"}
+	}
+	if req.Action == "attach" {
+		// A grant lets the creator publish their own pending profile to that target,
+		// never adopt another cluster, or broaden the sources of an existing one.
+		err = q.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM inventory_cluster_profiles WHERE asset_id=? AND name=? AND created_by=?) AND NOT EXISTS(SELECT 1 FROM cluster_inventory_sources WHERE asset_id=? OR (cluster=? AND instance=?))", req.AssetID, req.Name, auth.UserID, req.AssetID, req.Cluster, req.Instance).Scan(&allowed)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return inventoryFailure{409, "cluster_identity_conflict"}
+		}
 	}
 	return nil
 }

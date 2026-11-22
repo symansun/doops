@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/user/doops/agent/api"
@@ -23,6 +24,11 @@ import (
 
 var uploadLocks sync.Map
 var workspaceReplacementMu sync.Mutex
+
+// knowledgeBaseTempSeq keeps concurrent saves in one Agent process from
+// picking the same scratch file name; the wall clock alone repeats at
+// microsecond resolution under load.
+var knowledgeBaseTempSeq atomic.Uint64
 
 type workspaceBeginParams struct {
 	SessionID string `json:"session_id"`
@@ -363,6 +369,16 @@ func writeKnowledgeBaseFile(sessionID, rawPath, content string) (string, error) 
 	if err := validateSession(sessionID); err != nil {
 		return "", err
 	}
+	// Knowledge-base documents are read back into an agent or console session,
+	// so the save limit is the read limit. A document that could be written but
+	// never read again is not useful, and the 16 MiB workspace limit exists for
+	// a different consumer.
+	if int64(len(content)) > maxFileReadBytes() {
+		return "", fmt.Errorf(
+			"knowledge base document is %d bytes, over the %d-byte limit: split it into smaller documents before saving",
+			len(content), maxFileReadBytes(),
+		)
+	}
 	rootPath, err := knowledgeBaseRoot()
 	if err != nil {
 		return "", err
@@ -379,17 +395,25 @@ func writeKnowledgeBaseFile(sessionID, rawPath, content string) (string, error) 
 	if err := rejectKnowledgeBaseSymlink(root, name, rawPath); err != nil {
 		return "", err
 	}
-	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	// Write a sibling temporary file and rename it into place, so a killed
+	// process or a full disk leaves the previous document intact instead of a
+	// truncated one. The temporary name never ends in .md, so the console
+	// listing cannot mistake it for a document.
+	tmpName := fmt.Sprintf(".doops-save-%d-%d-%d.tmp", os.Getpid(), time.Now().UnixNano(), knowledgeBaseTempSeq.Add(1))
+	tmp, err := root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return "", err
 	}
-	_, writeErr := io.WriteString(file, content)
-	closeErr := file.Close()
-	if writeErr != nil {
-		return "", writeErr
+	_, writeErr := io.WriteString(tmp, content)
+	syncErr := tmp.Sync()
+	closeErr := tmp.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		_ = root.Remove(tmpName)
+		return "", err
 	}
-	if closeErr != nil {
-		return "", closeErr
+	if err := os.Rename(filepath.Join(rootPath, tmpName), filepath.Join(rootPath, name)); err != nil {
+		_ = root.Remove(tmpName)
+		return "", err
 	}
 	return fmt.Sprintf("Wrote %d bytes to %s", len(content), filepath.Join(rootPath, name)), nil
 }

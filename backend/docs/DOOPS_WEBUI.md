@@ -4,32 +4,50 @@
 
 登录页使用 14 px 文字，表单标签和输入提示采用浅色，博客链接使用浅蓝色并带下划线。
 
-登录后的顶栏以 34 px 高显示 DoOps 标志与字标，右上角是目标 Agent 选择器：显示当前目标的集群/实例和在线状态，可切换目标或返回全部 Agent。登录后默认进入「首页」，可查看在线连接、活跃会话、机器和集群规模、正在执行、近期执行，以及集群概览和近期活动。未连接 Agent 时仍可查看首页。首页提供 AI 助手、文件管理、知识库、终端和 CI/CD 接入快捷入口。
+登录后的顶栏以 34 px 高显示 DoOps 标志与字标，右上角是目标 Agent 选择器：显示当前目标的集群/实例和在线状态，可切换目标或返回全部 Agent。登录后默认进入「首页」，可查看在线连接、活跃会话、机器和集群规模、正在执行、近期执行，以及集群概览和近期活动。未连接 Agent 时仍可查看首页。首页展示全局运行情况，不重复列出工具入口；单台机器的状态在「目标运维 → Agent 概览」，工具和 CI/CD 接入从左侧菜单打开。
 
-主导航是一行拉平的功能入口，不出现「Agent 工作区」「平台控制面」这类内部工作台名称，也没有展开出来的第二行。窗口变窄时导航不换行、不堆叠：放不下的入口收进行尾的「更多」下拉菜单，当前页面对应的入口仍保持高亮。下拉菜单基于 Radix Primitives（shadcn/ui 同款底层），支持方向键、Enter、Esc 和焦点回填。目标类入口为：首页、概览、AI 助手、终端、数据库、网站、Kubernetes、镜像、文件、Agent 资产、Agent 监控、凭据、审计记录、知识库；平台类入口紧随其后，以细分隔线相隔：平台监控、机器台账、集群台账、业务系统、Agent 资产分配、发布工作负载、升级 Agent、首次接入、CI/CD 接入、实例、配置中心、用户、权限、令牌、代理路由。其中「Agent 资产分配」和「实例」及其后的管理项仅对管理员显示。目标相关入口共享右上角选择的目标；尚未选定 Agent 时先显示 Agent 目录，选定后直达所点工具。「发布工作负载」和「升级 Agent」需要目标，未选目标时置灰。刷新或断线后，仍获授权的目标会保留。离线时导航仍可使用，可查看登记资产、历史指标、凭据和审计记录；需要 Agent 执行的工具会提示等待连接，当前目标重新上线后自动恢复。
+主导航位于左侧。桌面侧栏可独立滚动，窄屏点左上角「菜单」打开左侧抽屉，选择入口或按 Esc 收起。首页、目标运维、资产、台账与监控、发布部署以及平台管理按组排列；当前页用蓝底、亮边和粗体标识。平台管理和「Agent管理」仅管理员可见。目标相关入口共享右上角选择的目标；尚未选定 Agent 时先显示 Agent 目录，选定后直达所点工具。「发布工作负载」和「升级 Agent」需要目标，未选目标时置灰。刷新或断线后，仍获授权的目标会保留。离线时导航仍可使用，可查看登记资产、历史指标、凭据和审计记录；需要 Agent 执行的工具会提示等待连接，当前目标重新上线后自动恢复。
 
-「平台监控」汇总当前可见范围的资产、异常和采集中断，页面内的看板视图（概览、拓扑、监控、巡检、覆盖率）切换的是同一份数据，不属于导航层级。「机器台账」「集群台账」「业务系统」「Agent 资产分配」各自直接打开对应台账分区，页面内不再重复一组页签。发布与管理的各个分区同样直接出现在顶部导航，页面内不再重复页签。
+「平台监控」汇总当前可见范围的资产、异常和采集中断，页面内的看板视图（概览、拓扑、监控、巡检、覆盖率）切换的是同一份数据，不属于导航层级。「台账与监控」保留机器台账和业务系统。
+
+「资产 → Kubernetes」是集群台账的唯一菜单入口。可登记待接入集群（自动编号、名称、环境、负责人）；创建者可选择自己获授权的在线 Agent 做只读发现、预览并确认关联。未接入时只对创建者可见；关联后按实际来源授权展示。同一集群有多个来源时，修改整份资料需要有权访问所有来源。工作负载操作使用选中行的来源和命名空间。解除来源关联和移出待接入登记不会销毁真实集群；存在 Node、部署或分配关系时须先处理依赖。
+
+数据库按引擎、主机、端口、库名登记；网站按协议、域名、访问路径登记；镜像按仓库地址、镜像路径和 Tag 或 Digest 登记。未绑定目标时是个人待接入资料；显式选择目标后，获授权用户共同维护，操作入口绑定该条记录的 Agent。登记不是连通性验证。旧版个人登记单独只读展示，不自动公开。凭据沿用原管理和授权流程。
+
+「平台管理」跳转到独立页面 `/console/admin`，集中实例、配置中心、用户、权限、令牌、代理路由和 Agent管理。仅管理员可见，直接访问也会核对当前会话。
+
+在「机器台账 → 编辑机器」维护标签，列表可组合机器类型、关键词及多个标签（交集）；巡检沿用筛选后的列表。标签是可见元数据，不要输入密码、密钥或连接串。
 
 ## 前端组件层
 
-控制台的界面由 shadcn/ui 风格的基础组件组成，底层是 Radix Primitives，样式仍用 Tailwind v4 与仓库既有主题令牌，不引入自带设计语言的整套 UI 框架。
+控制台的界面由 shadcn/ui 风格的基础组件组成，底层是 Radix Primitives，样式仍用 Tailwind v4 与仓库既有主题令牌，不引入自带设计语言的整套 UI 框架。完整视觉与组件规范见 [DESIGN.md](../../DESIGN.md)，页面统一从 `@/components/ui`（`components/ui.tsx`）导入原语与控件：
 
 - 布局：`components/ui/layout.tsx` 提供 `Stack`、`Inline`、`Grid`、`Container`、`Spacer`，页面用它们表达纵向节奏、工具行和卡片墙，不再手写 `grid-cols-*` 字符串
-- 容器：`Card` 系列（`components/ui/card.tsx`）、`Badge`、`Separator`
-- 交互：`DropdownMenu`（`更多` 菜单）、`Tabs`、`Tooltip`、`ScrollArea`，以及基于 `react-resizable-panels` 的 `ResizablePanelGroup` 分栏
+- 表单与操作：`Button`、`Input`、`Textarea`、`Select`、`Checkbox`、`SegmentedControl`、`PageTabs`
+- 容器与数据：`Card` 系列（`components/ui/card.tsx`）、`Badge`、`Table` 系列、`StatusBanner`、`Separator`
+- 浮层与交互：`Dialog` / `Modal`、`DropdownMenu`、`Tabs`、`Tooltip`、`ScrollArea`，以及基于 `react-resizable-panels` 的 `ResizablePanelGroup` 分栏
+- 富文本与知识库：`components/markdown.tsx` 与 `components/blog-markdown.tsx` 基于 `Streamdown`（集成 Shiki 代码语法高亮、交互式 Mermaid 图表、KaTeX 公式、CJK 排版及 GFM 提示块），数据库和网站结果区保持 `allowImages={false}`；「知识库」（`components/knowledge-base.tsx` + `components/kb-markdown-editor.tsx`）采用 `CodeMirror 6` 编辑器、快捷格式/块插入工具栏、可拖拽分栏预览与目录大纲导航
 - 类名合并统一走 `lib/cn.ts` 的 `cn()`，变体矩阵用 `class-variance-authority`
 
-新增页面应优先复用这些组件；需要新原语时在同一目录按同样方式封装 Radix，不另起一套样式体系。
+新增页面应优先复用这些组件；需要新原语时在同一目录按同样方式封装 Radix 并从 `components/ui.tsx` 导出，不另起一套样式体系。
 
 控制台的下拉选项使用跟随主题的菜单，支持方向键选择、Enter 确认和 Esc 收起。资产看板仅有全平台可见范围时，直接显示范围名称。
 
-控制台导航、目标选择器、AI 助手的状态与模型标签以及消息输入框均使用 14 px 字号。
+控制台导航、目标选择器、AI 助手的状态与模型标签以及消息输入框均使用 14 px 字号。AI 助手的会话消息正文使用 15 px；工具行的命令或资源名使用 13 px 等宽字体，耗时使用 12 px；运行中、等待和失败状态分别显示为蓝色、琥珀色和红色。
 
-目标选择器的在线状态表示 Agent 已连接 Gateway。「AI 助手会话」中的连接状态表示控制台能否读取该会话并接收事件。AI 助手的模型标签显示目标已下发的模型。旧版 Agent 在启动后收到凭据时，控制台会核对目标上报的模型列表和连接状态。读取会话状态失败时，可在「目标运维 → 审计记录」查看该目标的请求记录。
+目标选择器显示当前账号可见的在线和已登记离线 Agent；有目标但未选中时显示「选择 Agent 目标」，不显示无目标告警。在线状态表示 Agent 已连接 Gateway。「AI 助手会话」中的连接状态表示控制台能否读取该会话并接收事件。AI 助手的模型标签显示目标已下发的模型。旧版 Agent 在启动后收到凭据时，控制台会核对目标上报的模型列表和连接状态。读取会话状态失败时，可在「目标运维 → 审计记录」查看该目标的请求记录。
+
+## AI 助手常用提示词
+
+在「AI 助手」的空会话中，「工作」模式提供 DoOps 自带的运行巡检、发布与交付、网站与数据库模板。点击模板只会把文字填入输入框（已有草稿会保留），可补充信息、编辑后再发送。模板默认用于只读检查或拟定发布方案，不会自动执行。模板卡片最多两行，显示标题和正文的开头。
+
+维护者可在 [DoOps 提示词配置](../../lib/doops-start-prompts.ts) 调整分组、标题和正文；控制台通过 Agent UI 的 `startPromptGroups` 注入，不修改 Agent 的系统提示词。
 
 ## 资产台账
 
-登录 Gateway 后打开顶部导航的「机器台账」。即使机器尚未接入 Agent，管理员也可以先登记配置。普通用户看到自己获授权目标关联的资产。
+在「机器台账」点「发起巡检」检查当前筛选的机器，或点某行的「巡检」只查该机。Agent 在线不等于宿主健康：巡检按资产编号和已绑定的目标读取已核验的宿主样本；隧道模式主动拉取，挂载模式只读已有样本。CPU 或内存使用率达到 90% 时提示偏高，样本超过 5 分钟、指标不完整或无权限时不会判为正常。「监控详情」可查看该机 CPU、内存、进程与采样时间。未接入机器须先关联 Agent 并核验宿主指纹；仅登记 SSH 账号不会启用采集。此入口不创建每周巡检计划。
+
+机器的唯一入口是侧栏「台账与监控 → 机器台账」，默认显示全部机器。「物理机」和「虚拟机」仅为类型筛选；筛选为虚拟机时，手工新增也默认选择虚拟机。即使机器尚未接入 Agent，管理员也可以先登记配置。普通用户看到自己获授权目标关联的资产。
 
 - **机器**支持手工新增、搜索和编辑。物理机登记物理核心数，虚拟机登记 vCPU 数，内存与磁盘容量单位为 GiB。虚拟机可引用已登记的宿主。详情页可反查虚拟机、宿主和手工关联的 K8s Node。修改规格会更新资产记录。
 - **文本导入**支持在机器台账或手工新增页粘贴多行清单。机器行格式为 `管理IPv4 账号 密码 [内网IPv4] [SSH端口]`，也支持 `-p 端口`；仅登记资产时可只填写管理 IP。分组名单独占一行（有空格的名称可用方括号包围），作用到下一分组。新机器以管理 IP 生成编号，可选物理机或虚拟机，分组、内网地址和显式端口保存在显示名称中。已有机器按唯一管理 IP 匹配。默认只导入资产，勾选「同时保存登录账号和密码」才会将登录资料送交 Gateway。核对右侧字段后点「预览导入」，再确认写入。
@@ -40,7 +58,7 @@
 
 迁移顺序、接口和权限见 [API 指南](DOOPS_API_GUIDE.md#资产台账)。
 
-打开顶部导航的「Agent 资产分配」，选择已登记的 Agent，按机器、集群或业务系统逐项分配。每项资产可以供多个 Agent 查看。撤销仅影响所选目标的显式分配，台账直接关联由对应资产详情维护。登录凭据及目标授权沿用各自的管理流程。
+打开「平台管理 → Agent管理」，选择已登记的 Agent，按机器、集群或业务系统逐项分配。每项资产可以供多个 Agent 查看。撤销仅影响所选目标的显式分配，台账直接关联由对应资产详情维护。登录凭据及目标授权沿用各自的管理流程。
 
 ### 在资产看板切换范围
 
@@ -129,6 +147,9 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   `isError`, protocol errors and interrupted streams remain failures. Helm
   parameters, values behavior, credential origin selection and failure handling
   are defined in [NATURAL_LANGUAGE_DEPLOYMENT.md](NATURAL_LANGUAGE_DEPLOYMENT.md).
+- In the terminal, Enter submits and Shift+Enter inserts a newline. While composing text
+  with an IME, Enter and the arrow keys select candidates instead of running commands or
+  browsing history. Nonblank commands are submitted as typed; the console does not repair shell quoting.
 - While a terminal command is running, target/session and in-console navigation
   remain locked so the original output and Stop control stay available. A failed
   stop request keeps the lock until a remote terminal result arrives. Background
@@ -187,6 +208,45 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
 - 管理员实例页将在线、近期离线、历史和已归档记录分开计数。历史和已归档记录默认折叠；
   只有离线记录可归档或恢复，点击对应操作直接提交。归档不会删除 target 授权、令牌、凭据绑定或审计历史，
   Agent 重新连接时会自动恢复该记录。离线超过 90 天的实例记录由 Gateway 自动删除，授权仍保留。
+- The console mirrors its `/console` view state (view, tab, asset area, catalog
+  kind, deploy section) in the URL query and the `/console/admin` page syncs its
+  active tab to `?tab=`; reloads and Back/Forward restore the state and links are
+  shareable. Tokens and session IDs are never serialized into the URL.
+- The database, website and image catalog ledgers and the Kubernetes cluster
+  ledger can jump straight into the selected online Agent's live panels via
+  直接操作当前目标. Demo mode reaches the same panels.
+- The Agent overview shows a node info card that streams `doops_node_info`
+  output (uname, uptime, memory, disk and tool capability lines), rendered in a
+  scrollable block with capability badges for OK/runtime and MISSING tools.
+- The Files panel uploads text files up to 256 KiB with one `doops_file_write`;
+  any other file up to 64 MiB uploads as 3 MiB base64 chunks written under
+  `.doops-upload/` and assembled by one `doops_shell` command that verifies the
+  SHA-256, renames atomically and cleans staged parts. Single-file download reads
+  size + SHA-256 first, then fetches 3 MiB base64 ranges via `doops_shell` and
+  verifies the assembled bytes before saving. Row delete, rename and new-folder
+  buttons submit directly without a confirmation dialog.
+- Knowledge-base and Files panels keep unsaved drafts across tab, target and
+  session switches, and lock target/session/navigation while an operation runs.
+- While a panel operation (Files, Knowledge base, Database, Website, Kubernetes,
+  Image, node info) or an AI assistant exec-bar command runs, menu navigation,
+  tab and session switches and browser Back/Forward are locked, the same as for
+  a running terminal command. A running AI task additionally blocks a session
+  switch; its panel stays mounted, so other tabs remain reachable.
+- The session field switches the session on Enter or blur, not per keystroke;
+  Escape restores the current session and an invalid name is not applied.
+- The AI assistant header lists recent `console-` sessions for the selected
+  target, derived from the user's latest 1000 audit records, and switches to
+  one on selection.
+- The target's 「后台任务」 tab lists the current user's Gateway-hosted
+  detached `doops_bg` tasks (running, success, failed, canceled, timeout,
+  outcome_unknown) for the selected target, even while the Agent is offline.
+  Detail output polls while the task runs; 停止 submits directly without a
+  confirmation dialog and only acknowledges the request — the terminal state
+  still arrives through the task record. A finished task reports 「任务已结束」.
+- The terminal's 「后台运行」 button submits `doops_bg` with `detach: true` and
+  does not take the terminal running lock: leaving the page only ends the
+  browser stream. It is disabled with 「Gateway 未启用后台任务」 when the
+  Gateway lacks the `detachedBackground` capability or the target is offline.
 
 Explicit execution and management buttons submit their operation directly,
 without an extra confirmation dialog or checkbox. Invalid inputs, unavailable

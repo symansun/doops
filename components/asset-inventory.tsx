@@ -1,35 +1,33 @@
 "use client"
 
 import { useRef, useState, type ReactNode } from "react"
-import { Activity, Boxes, Layers, Server } from "lucide-react"
 import { assetRequest } from "@/lib/assets"
+import { ASSET_LEDGER_SECTIONS } from "@/lib/console-views"
 import { fetchTargets, sessionIsAdmin, type Session, type Target } from "@/lib/client"
-import { Button, PageTabs } from "./ui"
+import { Button } from "./ui"
 import { MachineAssetsPanel } from "./machine-assets-panel"
 import { ClusterAssetsPanel } from "./cluster-assets-panel"
 import { AssetPlatformPanel } from "./asset-platform-panel"
 import { BusinessAssetsPanel } from "./business-assets-panel"
 
-const sections = [
-  { id: "platform" as const, label: "平台看板", icon: <Activity className="size-4" /> },
-  { id: "machines" as const, label: "机器台账", icon: <Server className="size-4" /> },
-  { id: "clusters" as const, label: "集群台账", icon: <Boxes className="size-4" /> },
-  { id: "systems" as const, label: "业务系统", icon: <Layers className="size-4" /> },
-]
+import type { ComponentProps } from "react"
+import { PlatformAssetScope } from "./agent-asset-scope"
 
+// Section labels come from lib/console-views.ts, which also renders them in the
+// header navigation, so the ledger never keeps a second copy of the list.
 type TargetTab = "overview" | "credentials" | "k8s"
 export type MachinePage = {
-  section: "machines"; machineId: string; query?: string; kind?: "all" | "physical" | "vm"; nodesOpen?: boolean
+  section: "machines"; machineId: string; query?: string; tags?: string[]; kind?: "all" | "physical" | "vm"; nodesOpen?: boolean
 }
 export type ClusterSourcePage = {
   section: "clusters"; source: { assetId: string; cluster: string; instance: string; namespace?: string }
   query: string; expanded: string[]
 }
 type TargetOrigin = (MachinePage | ClusterSourcePage) & { returnTab?: TargetTab }
-export type AssetPage =
-  | { section: (typeof sections)[number]["id"] }
-  | { section: "clusters"; clusterId: string; from: "platform" | "clusters" }
-  | TargetOrigin
+type LedgerSection = "machines" | "clusters" | "systems"
+export type ClusterListState = Pick<ClusterSourcePage, "query" | "expanded">
+type LedgerPage = { section: LedgerSection } | ({ section: "clusters" } & ClusterListState) | TargetOrigin
+export type AssetPage = { section: "board"; clusterId?: string } | { section: "scope" } | LedgerPage
 
 export function assetReturnLabel(page: AssetPage) {
   if ("machineId" in page) return `返回机器 ${page.machineId}`
@@ -37,8 +35,9 @@ export function assetReturnLabel(page: AssetPage) {
     const { assetId, cluster, instance, namespace } = page.source
     return `返回集群 ${assetId} · ${cluster}/${instance}${namespace ? ` · ${namespace}` : ""}`
   }
-  if ("clusterId" in page) return `返回集群 ${page.clusterId}`
-  return `返回${sections.find(item => item.id === page.section)!.label}`
+  if (page.section === "board") return "返回资产看板"
+  if (page.section === "scope") return "返回 Agent管理"
+  return `返回${ASSET_LEDGER_SECTIONS.find(item => item.id === page.section)!.label}`
 }
 
 type TargetAction = { target?: Target; tab: TargetTab; origin: TargetOrigin; label: string }
@@ -82,15 +81,22 @@ function TargetActionButton({ target, label, restoreFocus, enter }: {
   </span>
 }
 
-export function AssetInventory({ session, targets, initialPage, onOpenTarget }: {
+export function AssetInventory({ session, targets, selectedTarget, catalog, page, onPage, onOpenTarget, onOpenDirectK8s }: {
   session: Session
   targets: Target[]
-  initialPage?: AssetPage
+  selectedTarget?: Target | null
+  catalog: ComponentProps<typeof PlatformAssetScope>
+  // The header navigation owns the area, so the ledger has no tab row of its own.
+  page: AssetPage
+  onPage: (page: AssetPage) => void
   onOpenTarget: OpenTarget
+  onOpenDirectK8s?: (target: Target) => void
 }) {
-  const [page, setPage] = useState<AssetPage>(initialPage ?? { section: "platform" })
-  const [initialAction] = useState(() => initialPage && "returnTab" in initialPage && initialPage.returnTab
-    ? actionKey(initialPage, initialPage.returnTab) : undefined)
+  function openLedger(next: LedgerPage) {
+    onPage(next)
+  }
+  const [initialAction] = useState(() => "returnTab" in page && page.returnTab
+    ? actionKey(page, page.returnTab) : undefined)
   const returnFocus = useRef(initialAction)
   const attempt = useRef(0)
   const renderTargetAction: RenderAssetTargetAction = ({ target, tab, origin, label }) => {
@@ -110,28 +116,36 @@ export function AssetInventory({ session, targets, initialPage, onOpenTarget }: 
       }
     }} />
   }
-  const detail = "clusterId" in page ? page : undefined
   // A changed online set invalidates previous reads. Gateway may still return authorized offline assets.
   const scope = sessionIsAdmin(session) ? "admin" : JSON.stringify(targets
     .filter((target) => target.status !== "offline")
     .map(({ cluster, instance }) => JSON.stringify([cluster, instance])).sort())
+  const onlineTargets = targets.filter((target) => target.status !== "offline")
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageTabs ariaLabel="资产类型" items={sections} value={page.section} onChange={section => setPage({ section })} />
       <div key={JSON.stringify([scope, page])} className="min-h-0 flex-1 overflow-auto p-4">
-        {session.demo ? <p className="card-surface p-4 text-sm">请连接 Gateway 查看和维护持久化资产台账。</p>
-          : <>
-            {(page.section === "platform" || detail) && <AssetPlatformPanel session={session} targets={targets}
-              cluster={detail && {
-                id: detail.clusterId,
-                from: detail.from === "platform" ? "平台看板" : "集群台账",
-                onBack: () => setPage({ section: detail.from }),
-              }}
-              onCluster={clusterId => setPage({ section: "clusters", clusterId, from: "platform" })}
-              onMachine={machineId => setPage({ section: "machines", machineId })} />}
+        {session.demo ? (
+          <div className="card-surface space-y-3 p-4 text-sm">
+            <p>请连接 Gateway 查看和维护持久化资产台账。</p>
+            {page.section === "clusters" && onOpenDirectK8s && onlineTargets.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <span className="text-xs text-muted-foreground">演示模式下可直接浏览在线目标的 Kubernetes 实时资源：</span>
+                {(selectedTarget && selectedTarget.status !== "offline" ? [selectedTarget] : onlineTargets).map((t) => (
+                  <Button key={t.key} size="sm" variant="primary" onClick={() => onOpenDirectK8s(t)}>
+                    进入 {t.cluster}/{t.instance} 实时资源
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : page.section === "scope" && sessionIsAdmin(session) ? <PlatformAssetScope {...catalog} /> : <>
+            {page.section === "board" && <AssetPlatformPanel session={session} targets={targets}
+              initialClusterId={page.clusterId} onMachine={machineId => openLedger(machineId ? { section: "machines", machineId } : { section: "machines" })} />}
             {page.section === "machines" && <MachineAssetsPanel initialPage={"machineId" in page ? page : undefined} session={session} targets={targets} renderTargetAction={renderTargetAction} />}
-            {page.section === "clusters" && !detail && <ClusterAssetsPanel session={session} targets={targets}
-              onOpenCluster={clusterId => setPage({ section: "clusters", clusterId, from: "clusters" })} initialPage={"source" in page ? page : undefined} renderTargetAction={renderTargetAction} />}
+            {page.section === "clusters" && <ClusterAssetsPanel session={session} targets={targets}
+              selectedTarget={selectedTarget} onOpenTargetK8s={onOpenDirectK8s}
+              initialPage={"query" in page ? page : undefined} renderTargetAction={renderTargetAction}
+              onOpenCluster={(clusterId) => onPage({ section: "board", clusterId })} />}
             {page.section === "systems" && <BusinessAssetsPanel session={session} targets={targets}/>}
           </>}
       </div>

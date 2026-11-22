@@ -145,7 +145,7 @@ exit 0`
 						processMutationAuthoritySecret, agentSessionID,
 						params["mutationAuthorizationId"].(string),
 						int64(params["mutationAuthorizationIssuedAt"].(float64)),
-						doagentAllowedTools(true, ""), params["mutationContextDigest"].(string),
+						doagentAllowedTools(true, "", true), params["mutationContextDigest"].(string),
 					)
 					if err != nil {
 						t.Error(err)

@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* shadcn/ui animation utilities (animate-in, fade-in-0, zoom-in-95, ...). */
+@import "tw-animate-css";
+@source "../node_modules/streamdown/dist/*.js";
 
 @theme inline {
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
@@ -8,6 +11,8 @@
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
@@ -37,26 +42,30 @@
   color-scheme: dark;
   --radius: 0.625rem;
 
-  --background: oklch(0.16 0.012 250);
-  --foreground: oklch(0.92 0.006 250);
+  --background: oklch(0.16 0.02 262);
+  --foreground: oklch(0.92 0.006 252);
 
-  --card: oklch(0.2 0.014 250);
-  --card-foreground: oklch(0.92 0.006 250);
+  --card: oklch(0.2 0.02 262);
+  --card-foreground: oklch(0.92 0.006 252);
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--card-foreground);
 
-  --popover: oklch(0.2 0.014 250);
-  --popover-foreground: oklch(0.92 0.006 250);
+  --popover: oklch(0.2 0.02 262);
+  --popover-foreground: oklch(0.92 0.006 252);
 
-  --primary: oklch(0.72 0.13 175);
-  --primary-foreground: oklch(0.16 0.012 250);
+  /* Brand blue from the DoOps mark; filled elements always carry light text. */
+  --primary: oklch(0.58 0.22 266);
+  --primary-foreground: oklch(0.985 0.006 250);
 
-  --secondary: oklch(0.27 0.014 250);
-  --secondary-foreground: oklch(0.92 0.006 250);
+  --secondary: oklch(0.27 0.018 262);
+  --secondary-foreground: oklch(0.92 0.006 252);
 
-  --muted: oklch(0.25 0.012 250);
-  --muted-foreground: oklch(0.65 0.01 250);
+  --muted: oklch(0.25 0.016 262);
+  --muted-foreground: oklch(0.72 0.012 252);
 
-  --accent: oklch(0.78 0.13 75);
-  --accent-foreground: oklch(0.16 0.012 250);
+  /* Brand teal sampled from the mark, used for selections and accents. */
+  --accent: oklch(0.78 0.14 194);
+  --accent-foreground: oklch(0.16 0.02 262);
 
   --destructive: oklch(0.62 0.2 22);
   --destructive-foreground: oklch(0.96 0.006 250);
@@ -71,15 +80,71 @@
   --danger: var(--destructive);
   --danger-bg: color-mix(in oklch, var(--destructive) 12%, var(--background));
 
-  --border: oklch(0.3 0.014 250);
-  --input: oklch(0.3 0.014 250);
-  --ring: oklch(0.72 0.13 175);
+  --border: oklch(0.3 0.018 262);
+  --input: oklch(0.3 0.018 262);
+  --ring: oklch(0.7 0.16 266);
+
+  /* Duo from the logo: blue -> teal. */
+  --brand-blue: oklch(0.56 0.24 265);
+  --brand-teal: oklch(0.78 0.14 194);
+  --brand-gradient: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-teal) 100%);
+
+  accent-color: var(--primary);
 }
 
 @layer base {
   * {
     border-color: var(--border);
   }
+}
+
+html {
+  background-color: var(--background);
+  /* Always reserve the vertical scrollbar: pages that do not scroll would
+     otherwise center their content ~5px to the right of pages that do, and the
+     left/right margins stop matching between routes. */
+  overflow-y: scroll;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+/* Zero specificity so a component's own outline-none (e.g. agent-ui's unlayered
+   utilities) wins; layered Tailwind utilities still lose to this unlayered rule. */
+:where(:focus-visible) {
+  outline: 2px solid color-mix(in oklch, var(--ring) 75%, transparent);
+  outline-offset: 2px;
+}
+
+/* Preflight dims placeholders; keep hints readable on the dark surfaces. */
+::placeholder {
+  color: var(--muted-foreground);
+  opacity: 1;
+}
+
+::selection {
+  background-color: color-mix(in oklch, var(--primary) 35%, transparent);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
 }
 
 @layer components {
@@ -135,6 +200,7 @@
     color: var(--muted-foreground);
   }
   .btn-ghost:hover:not(:disabled) {
+    background-color: var(--muted);
     color: var(--foreground);
   }
   .btn-sm {
@@ -142,6 +208,18 @@
     padding: 0.25rem 0.625rem;
     font-size: 0.75rem;
     line-height: 1rem;
+  }
+  .btn-md {
+    min-height: 2.375rem;
+    padding: 0.5rem 1.125rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+  }
+  .btn-lg {
+    min-height: 2.75rem;
+    padding: 0.625rem 1.375rem;
+    border-radius: 9999px;
+    font-size: 0.9375rem;
   }
   .btn-icon {
     width: 2.25rem;
@@ -154,6 +232,7 @@
     cursor: not-allowed;
     opacity: 0.5;
   }
+
   .segmented {
     display: inline-flex;
     align-items: center;
@@ -192,6 +271,7 @@
     cursor: not-allowed;
     opacity: 0.5;
   }
+
   .page-tab {
     display: inline-flex;
     min-height: 2.75rem;
@@ -217,6 +297,7 @@
     cursor: not-allowed;
     opacity: 0.5;
   }
+
   .input {
     min-height: 2.25rem;
     min-width: 0;
@@ -245,8 +326,26 @@
   .input[aria-invalid="true"] {
     border-color: var(--destructive);
   }
+
+  .checkbox {
+    height: 1rem;
+    width: 1rem;
+    flex-shrink: 0;
+    border-radius: 0.25rem;
+    border: 1px solid var(--input);
+    background-color: var(--background);
+    accent-color: var(--primary);
+    cursor: pointer;
+  }
+  .checkbox:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
   .status-error,
-  .status-success {
+  .status-warning,
+  .status-success,
+  .status-info {
     border: 1px solid;
     border-radius: var(--radius-md);
     padding: 0.5rem 0.75rem;
@@ -258,157 +357,32 @@
     background-color: var(--danger-bg);
     color: var(--destructive);
   }
+  .status-warning {
+    border-color: color-mix(in oklch, var(--warning) 35%, transparent);
+    background-color: var(--warning-bg);
+    color: var(--warning);
+  }
   .status-success {
     border-color: color-mix(in oklch, var(--success) 30%, transparent);
     background-color: var(--success-bg);
     color: var(--success);
   }
+  .status-info {
+    border-color: var(--border);
+    background-color: color-mix(in oklch, var(--muted) 55%, var(--background));
+    color: var(--muted-foreground);
+  }
+
   .btn:focus-visible,
   .segment-option:focus-visible,
   .page-tab:focus-visible,
-  .input:focus-visible {
+  .input:focus-visible,
+  .checkbox:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
   .page-tab:focus-visible {
     outline-offset: -2px;
-  }
-  @media (pointer: coarse) {
-    .btn,
-    .segment-option {
-      min-width: 2.75rem;
-    }
-    .btn,
-    .segment-option,
-    .input:not(textarea) {
-      min-height: 2.75rem;
-    }
-    .btn-icon,
-    .btn-icon.btn-sm {
-      width: 2.75rem;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .btn,
-    .segment-option {
-      transition: none;
-    }
-  }
-}
-
-html {
-  background-color: var(--background);
-  /* Always reserve the vertical scrollbar: pages that do not scroll would
-     otherwise center their content ~5px to the right of pages that do, and the
-     left/right margins stop matching between routes. */
-  overflow-y: scroll;
-}
-
-body {
-  background-color: var(--background);
-  color: var(--foreground);
-  font-feature-settings: "rlig" 1, "calt" 1;
-}
-
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 9999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-foreground);
-}
-
-/* ---------------------------------------------------------------------------
-   DoOps brand layer: palette, base rendering rules and marketing primitives.
-   Appended after the control system above so these values win.
---------------------------------------------------------------------------- */
-:root {
-  --background: oklch(0.16 0.02 262);
-  --foreground: oklch(0.92 0.006 252);
-  --card: oklch(0.2 0.02 262);
-  --card-foreground: oklch(0.92 0.006 252);
-  --popover: oklch(0.2 0.02 262);
-  --popover-foreground: oklch(0.92 0.006 252);
-
-  /* Brand blue from the DoOps mark; filled elements always carry light text. */
-  --primary: oklch(0.58 0.22 266);
-  --primary-foreground: oklch(0.985 0.006 250);
-
-  --secondary: oklch(0.27 0.018 262);
-  --secondary-foreground: oklch(0.92 0.006 252);
-
-  --muted: oklch(0.25 0.016 262);
-  --muted-foreground: oklch(0.72 0.012 252);
-
-  /* Brand teal sampled from the mark, used for selections. */
-  --accent: oklch(0.78 0.14 194);
-  --accent-foreground: oklch(0.16 0.02 262);
-
-  --border: oklch(0.3 0.018 262);
-  --input: oklch(0.3 0.018 262);
-  --ring: oklch(0.7 0.16 266);
-
-  /* Duo from the logo: blue -> teal. */
-  --brand-blue: oklch(0.56 0.24 265);
-  --brand-teal: oklch(0.78 0.14 194);
-  --brand-gradient: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-teal) 100%);
-
-  color-scheme: dark;
-  accent-color: var(--primary);
-}
-
-html {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
-
-:focus-visible {
-  outline: 2px solid color-mix(in oklch, var(--ring) 75%, transparent);
-  outline-offset: 2px;
-}
-
-/* Preflight dims placeholders; keep hints readable on the dark surfaces. */
-::placeholder {
-  color: var(--muted-foreground);
-  opacity: 1;
-}
-
-::selection {
-  background-color: color-mix(in oklch, var(--primary) 35%, transparent);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-@layer components {
-  .btn-lg {
-    min-height: 2.75rem;
-    padding: 0.625rem 1.375rem;
-    border-radius: 9999px;
-    font-size: 0.9375rem;
-  }
-
-  .btn-md {
-    min-height: 2.375rem;
-    padding: 0.5rem 1.125rem;
-    border-radius: 9999px;
-    font-size: 0.875rem;
   }
 
   /* Elevated card surface: hairline top highlight + soft drop shadow. */
@@ -464,6 +438,10 @@ html {
       );
   }
 
+  .brand-gradient {
+    background-image: var(--brand-gradient);
+  }
+
   .text-gradient {
     background-image: var(--brand-gradient);
     -webkit-background-clip: text;
@@ -495,5 +473,32 @@ html {
     background-image: var(--brand-gradient);
     box-shadow: 0 0 12px -2px color-mix(in oklch, var(--brand-teal) 45%, transparent);
     transition: width 200ms ease;
+  }
+
+  @media (pointer: coarse) {
+    .btn,
+    .segment-option {
+      min-width: 2.75rem;
+    }
+    .btn,
+    .segment-option,
+    .input:not(textarea) {
+      min-height: 2.75rem;
+    }
+    .btn-icon,
+    .btn-icon.btn-sm {
+      width: 2.75rem;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -59,6 +59,9 @@ CI 或镜像证据。CI 调用只负责准备临时 Gateway 登录并提交这�
 
 Agent 必须把 doagent 会话创建为 `auto`。普通 `ask` 暴露内置读取工具、
 `Bash`、`mcp_doops_k8s_read` 和 `mcp_doops_web_read`；K8s 读取工具明确拒绝 Secret、ServiceAccount 和其它凭据载体。
+target 不一定是 Kubernetes：Agent 探测自身是否在 Pod 或容器内、Kubernetes API 是否可达（结果缓存 30 秒），
+并把这些事实附在会话系统提示词末尾。API 不可达（独立 Docker、Linux 原生或集群暂不可用）时，
+普通 `ask` 不提供 `mcp_doops_k8s_read`，主机与容器诊断走 `Bash`；`--apply` 的 mutation 工具不受此影响。
 `Bash` 由 doagent 的统一 PermissionEngine 决策，运行在目标 Agent 执行环境中，
 用于结构化读取工具未覆盖的诊断；普通 `ask` 不暴露业务 workload mutation MCP。
 DoOps 不提供交互式 `permission/reply`，Auto 会话的合法工具不应触发 `permission.updated`。

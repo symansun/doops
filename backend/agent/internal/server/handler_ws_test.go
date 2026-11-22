@@ -521,7 +521,7 @@ func TestAgentMetadataModeReturnsModelStatusWithoutPrompt(t *testing.T) {
 			"jsonrpc": "2.0",
 			"id":      req["id"],
 			"result": map[string]interface{}{
-				"_meta": map[string]interface{}{"model": "MiniMax-M3"},
+				"_meta": map[string]interface{}{"model": "unconfigured"},
 			},
 		})
 	}))
@@ -545,6 +545,9 @@ func TestAgentMetadataModeReturnsModelStatusWithoutPrompt(t *testing.T) {
 	}
 	if meta["status"] != "connected" || meta["provider"] != "minimax" || meta["model"] != "minimax/MiniMax-M3" {
 		t.Fatalf("metadata mismatch: %+v", meta)
+	}
+	if meta["metadata"].(map[string]interface{})["model"] != meta["model"] {
+		t.Fatal("ACP startup placeholder overrode the delivered model")
 	}
 }
 
@@ -875,7 +878,7 @@ func TestAgentSystemPromptNamesOnlyOfferedTools(t *testing.T) {
 	offered := map[string]bool{}
 	for _, apply := range []bool{false, true} {
 		for _, skill := range []string{"", "dosql", "doweb"} {
-			for _, tool := range doagentAllowedTools(apply, skill) {
+			for _, tool := range doagentAllowedTools(apply, skill, true) {
 				offered[tool] = true
 			}
 		}
@@ -1436,7 +1439,7 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed, invalidArguments
 				agentSessionID,
 				authorityID,
 				int64(issuedAt),
-				doagentAllowedTools(true, ""),
+				doagentAllowedTools(true, "", true),
 				contextDigest,
 			)
 			if err != nil {
@@ -1736,25 +1739,6 @@ func TestAgentWebSocketRejectsBlockedShellCommand(t *testing.T) {
 	})
 	if result["error"] == nil {
 		t.Fatalf("expected blocked command error, got %#v", result)
-	}
-}
-
-func TestAgentWebSocketRejectsDockerNewlineInjection(t *testing.T) {
-	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
-	gw := NewGateway()
-	ts := newGatewayAuthorizedAgentServer(t, gw)
-	defer ts.Close()
-
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_docker", map[string]interface{}{
-		"session_id": "docker",
-		"command":    "ps\nid",
-	})
-	if result["error"] == nil {
-		t.Fatalf("expected docker newline injection error, got %#v", result)
 	}
 }
 

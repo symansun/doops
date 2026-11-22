@@ -12,12 +12,18 @@ import "strings"
 // Workload mutations stay behind the explicit apply path and its mutation
 // authority, so ordinary ask cannot silently turn a Helm or site operation
 // into an unverified mutation.
-func doagentAllowedTools(apply bool, skill string) []string {
+//
+// Kubernetes reads are offered only when the target has a reachable Kubernetes
+// API. A standalone container or plain Linux host is diagnosed through Bash.
+func doagentAllowedTools(apply bool, skill string, kubernetes bool) []string {
 	tools := []string{"Read", "glob", "grep", "Skill"}
 	if !apply {
 		tools = append(tools, "Bash")
 	}
-	tools = append(tools, "mcp_doops_k8s_read", "mcp_doops_web_read")
+	if kubernetes {
+		tools = append(tools, "mcp_doops_k8s_read")
+	}
+	tools = append(tools, "mcp_doops_web_read")
 	if strings.TrimSpace(skill) == "dosql" {
 		tools = append(tools, "mcp_dosql_read")
 	}

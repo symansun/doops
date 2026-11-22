@@ -4,7 +4,7 @@ import { proxyGatewayRequest } from "@/lib/server/gateway-proxy"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const endpoints = new Set(["machines", "clusters", "node-links", "dashboard", "systems", "topology", "coverage", "monitor", "inspections", "machine-diagnostics"])
+const endpoints = new Set(["catalog", "cluster-profiles", "records", "workspace", "machines", "clusters", "node-links", "dashboard", "systems", "topology", "coverage", "monitor", "inspections", "machine-diagnostics"])
 
 async function inventory(req: Request, ctx: { params: Promise<{ kind: string }> }) {
   const { kind } = await ctx.params

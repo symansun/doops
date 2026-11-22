@@ -1,121 +1,239 @@
 "use client"
 
-import { memo, useState, type ReactNode } from "react"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
-import { CopyIcon, CheckIcon } from "./icons"
+import { memo, type ComponentPropsWithoutRef } from "react"
+import {
+  Streamdown,
+  defaultComponents,
+  defaultRemarkPlugins,
+  type AllowedTags,
+  type Components,
+  type PluginConfig,
+  type StreamdownTranslations,
+} from "streamdown"
+import { code } from "@streamdown/code"
+import { mermaid } from "@streamdown/mermaid"
+import { math } from "@streamdown/math"
+import { cjk } from "@streamdown/cjk"
+import { CircleAlert, Info, Lightbulb, ShieldAlert, TriangleAlert } from "lucide-react"
+import { cn } from "@/lib/cn"
 import { imageAsText } from "@/lib/markdown-images"
+import { remarkDoopsEnhancements, type CalloutKind } from "@/lib/markdown-render"
 
-function CodeBlock({ children, className }: { children: ReactNode; className?: string }) {
-  const [copied, setCopied] = useState(false)
-  const lang = (className || "").replace(/language-/, "")
-  const raw = extractRawText(children)
+export type MarkdownVariant = "default" | "document" | "compact"
 
-  function copy() {
-    navigator.clipboard?.writeText(raw).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }
-
-  return (
-    <div className="group/code my-2 overflow-hidden rounded-lg border bg-muted/40">
-      <div className="flex items-center justify-between border-b bg-muted/60 px-3 py-1">
-        <span className="font-mono text-[11px] text-muted-foreground">{lang || "代码"}</span>
-        <button
-          onClick={copy}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
-          title="复制代码"
-        >
-          {copied ? <CheckIcon width={12} height={12} /> : <CopyIcon width={12} height={12} />}
-          {copied ? "已复制" : "复制"}
-        </button>
-      </div>
-      <pre className="overflow-x-auto px-3 py-2.5 font-mono text-xs leading-relaxed text-foreground">
-        <code>{children}</code>
-      </pre>
-    </div>
-  )
+export const STREAMDOWN_PLUGINS: PluginConfig = {
+  code,
+  mermaid,
+  math,
+  cjk,
 }
 
-function extractRawText(node: ReactNode): string {
-  if (typeof node === "string") return node
-  if (Array.isArray(node)) return node.map(extractRawText).join("")
-  if (node && typeof node === "object" && "props" in node) {
-    // @ts-expect-error props children traversal
-    return extractRawText(node.props?.children)
-  }
-  return ""
+export const STREAMDOWN_SHIKI_THEME: [string, string] = ["github-dark-default", "github-dark-default"]
+
+export const STREAMDOWN_MERMAID_OPTIONS = {
+  config: {
+    theme: "dark",
+    securityLevel: "strict",
+    suppressErrorRendering: true,
+    flowchart: { useMaxWidth: true },
+    sequence: { useMaxWidth: true },
+  },
 }
+
+export const STREAMDOWN_ALLOWED_TAGS: AllowedTags = {
+  blockquote: ["data-callout", "data-callout-title", "dataCallout", "dataCalloutTitle"],
+  h1: ["id"],
+  h2: ["id"],
+  h3: ["id"],
+  h4: ["id"],
+  h5: ["id"],
+  h6: ["id"],
+}
+
+export const STREAMDOWN_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkDoopsEnhancements]
+
+export const ZH_STREAMDOWN_TRANSLATIONS: Partial<StreamdownTranslations> = {
+  close: "关闭",
+  copied: "已复制",
+  copyCode: "复制代码",
+  copyLink: "复制链接",
+  copyTable: "复制表格",
+  copyTableAsCsv: "复制为 CSV",
+  copyTableAsMarkdown: "复制为 Markdown",
+  copyTableAsTsv: "复制为 TSV",
+  downloadDiagram: "导出图表",
+  downloadDiagramAsMmd: "下载 Mermaid 源码 (.mmd)",
+  downloadDiagramAsPng: "下载 PNG 图片",
+  downloadDiagramAsSvg: "下载 SVG 矢量图",
+  downloadFile: "下载文件",
+  downloadImage: "下载图片",
+  downloadTable: "导出表格",
+  downloadTableAsCsv: "下载 CSV",
+  downloadTableAsMarkdown: "下载 Markdown",
+  errorMermaid: "Mermaid 图表渲染失败，请检查语法",
+  exitFullscreen: "退出全屏",
+  externalLinkWarning: "即将打开外部链接",
+  imageNotAvailable: "图片无法加载",
+  mermaidAriaLabel: "Mermaid 架构与流程图",
+  mermaidFormatMmd: "MMD",
+  mermaidFormatPng: "PNG",
+  mermaidFormatSvg: "SVG",
+  openExternalLink: "打开外部链接",
+  openLink: "打开链接",
+  resetView: "重置视图",
+  tableFormatCsv: "CSV",
+  tableFormatMarkdown: "Markdown",
+  tableFormatTsv: "TSV",
+  viewFullscreen: "全屏查看",
+  zoomIn: "放大",
+  zoomOut: "缩小",
+}
+
+const CALLOUT_META: Record<
+  CalloutKind,
+  {
+    defaultTitle: string
+    icon: typeof Info
+    containerClass: string
+    headerClass: string
+  }
+> = {
+  note: {
+    defaultTitle: "提示",
+    icon: Info,
+    containerClass: "border-primary/40 bg-primary/[0.07]",
+    headerClass: "text-primary",
+  },
+  tip: {
+    defaultTitle: "建议",
+    icon: Lightbulb,
+    containerClass: "border-success/40 bg-success/[0.07]",
+    headerClass: "text-success",
+  },
+  important: {
+    defaultTitle: "重要",
+    icon: CircleAlert,
+    containerClass: "border-accent/45 bg-accent/[0.08]",
+    headerClass: "text-accent",
+  },
+  warning: {
+    defaultTitle: "注意",
+    icon: TriangleAlert,
+    containerClass: "border-warning/45 bg-warning/[0.08]",
+    headerClass: "text-warning",
+  },
+  caution: {
+    defaultTitle: "高危注意",
+    icon: ShieldAlert,
+    containerClass: "border-destructive/45 bg-destructive/[0.08]",
+    headerClass: "text-destructive",
+  },
+}
+
+export function MarkdownBlockquote({
+  children,
+  node: _node,
+  spacing = "default",
+  ...props
+}: ComponentPropsWithoutRef<"blockquote"> & {
+  node?: unknown
+  "data-callout"?: string
+  "data-callout-title"?: string
+  spacing?: "default" | "article"
+}) {
+  const rawKind = props["data-callout"]
+  const kind = rawKind && rawKind in CALLOUT_META ? (rawKind as CalloutKind) : null
+
+  if (kind) {
+    const meta = CALLOUT_META[kind]
+    const Icon = meta.icon
+    const title = props["data-callout-title"] || meta.defaultTitle
+    return (
+      <aside
+        role="note"
+        className={cn(
+          "rounded-lg border border-l-[3px] px-3.5 py-2.5 first:mt-0 last:mb-0",
+          spacing === "article" ? "my-6 px-4 py-3.5" : "my-3",
+          meta.containerClass,
+        )}
+      >
+        <div className={cn("mb-1 flex items-center gap-1.5 text-xs font-semibold tracking-wide", meta.headerClass)}>
+          <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+          <span>{title}</span>
+        </div>
+        <div className="text-foreground/90 [&>p:first-child]:mt-0 [&>p:last-child]:mb-0">{children}</div>
+      </aside>
+    )
+  }
+
+  const DefaultBlockquote = defaultComponents.blockquote
+  return <DefaultBlockquote {...props}>{children}</DefaultBlockquote>
+}
+
+const COMPONENTS_WITH_IMAGES: Components = {
+  blockquote: MarkdownBlockquote,
+}
+
+const COMPONENTS_TEXT_IMAGES: Components = {
+  blockquote: MarkdownBlockquote,
+  img: ({ src, alt }) => imageAsText({ src, alt }),
+}
+
+const CONTROLS_WITH_IMAGES = {
+  code: { copy: true, download: true },
+  table: { copy: true, download: true, fullscreen: true },
+  mermaid: { copy: true, download: true, fullscreen: true, panZoom: true },
+  image: { download: false },
+} as const
+
+const CONTROLS_NO_IMAGES = {
+  code: { copy: true, download: false },
+  table: { copy: true, download: true, fullscreen: true },
+  mermaid: { copy: true, download: true, fullscreen: true, panZoom: true },
+  image: false,
+} as const
 
 // allowImages=false renders images as plain text (lib/markdown-images.ts); use it
 // for Agent answers that may carry text from outside the console.
-export const Markdown = memo(function Markdown({ content, allowImages = true }: { content: string; allowImages?: boolean }) {
+export const Markdown = memo(function Markdown({
+  content,
+  allowImages = true,
+  streaming = false,
+  variant = "default",
+  className,
+}: {
+  content: string
+  allowImages?: boolean
+  streaming?: boolean
+  variant?: MarkdownVariant
+  className?: string
+}) {
   return (
-    <div className="text-sm leading-relaxed text-foreground">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          ...(allowImages ? {} : { img: imageAsText }),
-          p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0 break-words">{children}</p>,
-          h1: ({ children }) => (
-            <h1 className="mb-2 mt-3 text-base font-semibold text-foreground first:mt-0">{children}</h1>
-          ),
-          h2: ({ children }) => (
-            <h2 className="mb-1.5 mt-3 text-sm font-semibold text-foreground first:mt-0">{children}</h2>
-          ),
-          h3: ({ children }) => (
-            <h3 className="mb-1 mt-2.5 text-sm font-semibold text-foreground first:mt-0">{children}</h3>
-          ),
-          ul: ({ children }) => <ul className="my-1.5 ml-4 list-disc space-y-1">{children}</ul>,
-          ol: ({ children }) => <ol className="my-1.5 ml-4 list-decimal space-y-1">{children}</ol>,
-          li: ({ children }) => <li className="break-words pl-0.5 marker:text-muted-foreground">{children}</li>,
-          a: ({ children, href }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium text-primary underline underline-offset-2 hover:opacity-80"
-            >
-              {children}
-            </a>
-          ),
-          strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
-          em: ({ children }) => <em className="italic">{children}</em>,
-          blockquote: ({ children }) => (
-            <blockquote className="my-2 border-l-2 border-primary/40 pl-3 text-muted-foreground">
-              {children}
-            </blockquote>
-          ),
-          hr: () => <hr className="my-3 border-border" />,
-          code: ({ className, children, ...props }) => {
-            const isBlock = "node" in props && (props.node as { tagName?: string })?.tagName === "code"
-            // 行内 code：无 language- 前缀且不含换行
-            const isInline = !className && !String(children).includes("\n")
-            if (isInline) {
-              return (
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground">
-                  {children}
-                </code>
-              )
-            }
-            return <CodeBlock className={className}>{children}</CodeBlock>
-          },
-          pre: ({ children }) => <>{children}</>,
-          table: ({ children }) => (
-            <div className="my-2 overflow-x-auto">
-              <table className="w-full border-collapse text-xs">{children}</table>
-            </div>
-          ),
-          thead: ({ children }) => <thead className="bg-muted/50">{children}</thead>,
-          th: ({ children }) => (
-            <th className="border px-2 py-1 text-left font-semibold text-foreground">{children}</th>
-          ),
-          td: ({ children }) => <td className="border px-2 py-1 text-foreground/90">{children}</td>,
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
+    <Streamdown
+      mode={streaming ? "streaming" : "static"}
+      isAnimating={streaming}
+      plugins={STREAMDOWN_PLUGINS}
+      shikiTheme={STREAMDOWN_SHIKI_THEME}
+      mermaid={STREAMDOWN_MERMAID_OPTIONS}
+      remarkPlugins={STREAMDOWN_REMARK_PLUGINS}
+      allowedTags={STREAMDOWN_ALLOWED_TAGS}
+      translations={ZH_STREAMDOWN_TRANSLATIONS}
+      linkSafety={{ enabled: false }}
+      controls={allowImages ? CONTROLS_WITH_IMAGES : CONTROLS_NO_IMAGES}
+      codeBlockMaxHeight={variant === "document" ? 560 : 420}
+      tableMaxHeight={variant === "document" ? 480 : 340}
+      components={allowImages ? COMPONENTS_WITH_IMAGES : COMPONENTS_TEXT_IMAGES}
+      className={cn(
+        "min-w-0 break-words text-foreground [overflow-wrap:anywhere] [&_[data-streamdown^=heading-]]:scroll-mt-16 [&_.contains-task-list]:list-none [&_.contains-task-list]:pl-0 [&_li.task-list-item]:list-none [&_[data-streamdown=mermaid-block]_svg]:h-auto [&_[data-streamdown=mermaid-block]_svg]:max-w-full",
+        variant === "document"
+          ? "text-[14.5px] leading-7 [&_h1]:border-b [&_h1]:border-border [&_h1]:pb-2 [&_h1]:text-2xl [&_h2]:border-b [&_h2]:border-border/60 [&_h2]:pb-1.5 [&_h2]:text-lg [&_h3]:text-base"
+          : variant === "compact"
+            ? "text-xs leading-5 [&_h1]:text-sm [&_h2]:text-[13px] [&_h3]:text-xs"
+            : "text-sm leading-6 [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-[15px]",
+        className,
+      )}
+    >
+      {content}
+    </Streamdown>
   )
 })

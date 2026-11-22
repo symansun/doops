@@ -404,7 +404,8 @@ func (c *MCPClient) dispatchMessage(msg map[string]interface{}) {
 		}
 	}
 
-	if method, ok := msg["method"].(string); ok && method == "notifications/message" {
+	method, _ := msg["method"].(string)
+	if method == "notifications/message" || method == "notifications/doops/background_task" {
 		requestID, ok := requestIDFromClientNotification(msg)
 		if !ok {
 			return
@@ -1048,15 +1049,8 @@ func toolResultText(result map[string]interface{}, fallback string) string {
 	return fallback
 }
 
-// ExecBg streams one doops_bg call until the Agent reports the process has stopped.
-func (c *MCPClient) ExecBg(command string) error {
-	if err := c.RequireProtocol("executionLifecycle"); err != nil {
-		return err
-	}
-	return c.Call("doops_bg", map[string]interface{}{
-		"command": command,
-	})
-}
+// ExecBg is declared in detached.go: exec --bg submits doops_bg with
+// detach:true and the Gateway hosts the task to its terminal state.
 
 // printFinalResult reports whether the final tool result text must be printed.
 // ask streams its answer as assistant deltas; printing the final result again

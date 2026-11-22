@@ -249,6 +249,34 @@ export function UploadIcon(p: IconProps) {
   )
 }
 
+export function DownloadIcon(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  )
+}
+
+export function PencilIcon(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
+    </svg>
+  )
+}
+
+export function FolderPlusIcon(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+      <line x1="12" y1="10" x2="12" y2="16" />
+      <line x1="9" y1="13" x2="15" y2="13" />
+    </svg>
+  )
+}
+
 export function FolderUpIcon(p: IconProps) {
   return (
     <svg {...base} {...p}>

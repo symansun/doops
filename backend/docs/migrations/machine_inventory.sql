@@ -39,4 +39,11 @@ CREATE TABLE IF NOT EXISTS inventory_machine_login_accounts (
     version_id TEXT NOT NULL UNIQUE REFERENCES credential_versions(id),
     PRIMARY KEY (asset_id, username)
 ) STRICT;
+-- Reapply to an existing ledger before upgrading the Gateway. Tags are metadata only.
+CREATE TABLE IF NOT EXISTS inventory_machine_tags (
+    asset_id TEXT NOT NULL REFERENCES inventory_machines(asset_id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    PRIMARY KEY (asset_id, tag)
+) STRICT;
+CREATE INDEX IF NOT EXISTS inventory_machine_tags_by_tag ON inventory_machine_tags(tag, asset_id);
 COMMIT;

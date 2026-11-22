@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { consoleFetch } from "@/lib/network-error"
+import { AgentPicker } from "./agent-picker"
 import { Button, Input, Select } from "./ui"
 
 const kinds: Record<string, string> = {
@@ -76,6 +77,8 @@ type Props = {
   session: Session
   targets: Target[]
   clusterId?: string
+  machineCount: number
+  onOpenMachines: () => void
   initialSelection?: AssetMonitorSelection
 }
 const stamp = (at: number) => new Date(at).toLocaleString("zh-CN", { hour12: false })
@@ -281,7 +284,7 @@ function MetricCard({
     </article>
   )
 }
-function SourcePanel({
+export function AgentMonitor({
   session,
   target,
   clusterId,
@@ -402,7 +405,7 @@ function SourcePanel({
       ) : !assets ? (
         <p role="status">正在读取授权来源…</p>
       ) : !asset ? (
-        <p>当前来源和类型尚无监控样本。</p>
+        <p className="text-sm">当前来源和类型尚无监控样本。要查看主机指标，请核对采集器上报状态。要查看 Pod 指标，请选择在线目标并填写命名空间，然后点击「采集 Pod CPU / 内存」。</p>
       ) : !detail.data ? (
         <p role="status">正在读取时间序列…</p>
       ) : (
@@ -431,47 +434,6 @@ function SourcePanel({
         </>
       )}
     </div>
-  )
-}
-function MonitorSources({ session, targets, clusterId }: Props) {
-  const [choice, setChoice] = useState("")
-  const clusters = useMonitorRead<{ clusters: { cluster: string; instance: string; asset_id: string }[] }>(
-    clusterId ? "/api/assets/clusters" : "",
-  )
-  const available = clusterId
-    ? targets.filter((t) =>
-        clusters.data?.clusters.some(
-          (s) => s.asset_id === clusterId && s.cluster === t.cluster && s.instance === t.instance,
-        ),
-      )
-    : targets
-  const key = (t: Target) => JSON.stringify([t.cluster, t.instance])
-  const target = available.find((t) => key(t) === choice) ?? available[0]
-  return (
-    <section className="space-y-4 rounded-lg border bg-card p-4">
-      <h3 className="font-semibold">资产监控</h3>
-      {clusters.error ? (
-        <p role="alert">{clusters.error}</p>
-      ) : clusterId && !clusters.data ? (
-        <p role="status">正在核对集群来源…</p>
-      ) : !target ? (
-        <p>当前范围没有授权来源。</p>
-      ) : (
-        <>
-          <label className="block max-w-md text-sm">
-            采集目标
-            <Select value={key(target)} onChange={(e) => setChoice(e.target.value)}>
-              {available.map((t) => (
-                <option key={key(t)} value={key(t)}>
-                  {t.cluster}/{t.instance}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <SourcePanel key={key(target)} target={target} session={session} clusterId={clusterId} />
-        </>
-      )}
-    </section>
   )
 }
 type AlertState = "open" | "missing"
@@ -737,17 +699,42 @@ function SelectedCurve({
     </section>
   )
 }
+function MonitorSources({ session, targets, clusterId }: Props) {
+  const clusters = useMonitorRead<{ clusters: { cluster: string; instance: string; asset_id: string }[] }>(
+    clusterId ? "/api/assets/clusters" : "",
+  )
+  const available = clusterId ? targets.filter(target => clusters.data?.clusters.some(source =>
+    source.asset_id === clusterId && source.cluster === target.cluster && source.instance === target.instance
+  )) : targets
+  return <section className="card-surface space-y-3 p-4">
+    <h3 className="font-semibold">按采集目标查看指标</h3>
+    {clusters.error ? <p role="alert">{clusters.error}</p>
+      : clusterId && !clusters.data ? <p role="status">正在核对集群来源…</p>
+      : !available.length ? <p className="text-sm text-muted-foreground">当前范围没有可用的在线采集目标。</p>
+      : <AgentPicker targets={available} label="采集目标">{target => (
+          <AgentMonitor session={session} target={target} clusterId={clusterId} />
+        )}</AgentPicker>}
+  </section>
+}
+
 function MonitorEntry(props: Props) {
-  const [browse, setBrowse] = useState(false)
-  if (props.initialSelection && !browse)
+  const [selection, setSelection] = useState(props.initialSelection)
+  if (selection)
     return (
       <SelectedCurve
-        selection={props.initialSelection}
+        selection={selection}
         clusterId={props.clusterId}
-        browse={() => setBrowse(true)}
+        browse={() => setSelection(undefined)}
       />
     )
-  return <MonitorSources {...props} />
+  return <div className="space-y-4">
+    <div className="card-surface flex flex-wrap items-center justify-between gap-2 p-4 text-sm">
+      <p>{props.clusterId ? "当前集群" : "全平台"} · {props.machineCount} 台可见机器{!props.clusterId && ` · ${props.targets.filter(t => t.status !== "offline").length} 个在线 Agent`}</p>
+      <Button size="sm" onClick={props.onOpenMachines}>查看机器台账</Button>
+    </div>
+    <AssetAlertSummary clusterId={props.clusterId} onOpen={setSelection} />
+    <MonitorSources {...props} />
+  </div>
 }
 export function AssetMonitorPanel(props: Props) {
   if (props.session.demo) return <p>真实资产监控需要 Gateway 会话。</p>

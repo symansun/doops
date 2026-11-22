@@ -448,3 +448,20 @@ export function targetSwitchBlocker(state: TargetSwitchState): string | null {
   if (state.execRunning) return "AI 助手执行栏里的命令还在运行，请等它结束或停止后再切换目标"
   return null
 }
+
+export const TERMINAL_RUNNING_MESSAGE = "终端命令仍在执行，请先等待结束或停止命令，再切换目标、会话或页面"
+
+export interface NavigationLockState {
+  terminalRunning: boolean
+  skillRunning: boolean
+  execRunning: boolean
+}
+
+// navigationBlocker 返回不能切换页面或会话的原因；可以切换时返回 null。面板按页签挂载，
+// 离开会卸载它并丢掉正在执行的操作的输出和终态。
+export function navigationBlocker(state: NavigationLockState): string | null {
+  if (state.terminalRunning) return TERMINAL_RUNNING_MESSAGE
+  if (state.skillRunning) return "请先等待当前操作结束，再切换页面或会话"
+  if (state.execRunning) return "AI 助手执行栏里的命令还在运行，请等它结束或停止后再切换页面或会话"
+  return null
+}

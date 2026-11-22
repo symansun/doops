@@ -61,6 +61,96 @@ func TestSessionLeaseCannotEnterDuringAgentUpgrade(t *testing.T) {
 	}
 }
 
+func TestAgentUpgradeQueueStopsNewAdmissionUntilDrained(t *testing.T) {
+	agent := &GatewayAgent{closed: make(chan struct{})}
+	holder, err := agent.acquireActionLeaseForSession(context.Background(), ActionRead, "workspace:release", "release", 0, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Release()
+
+	upgraded := make(chan error, 1)
+	go func() {
+		lease, err := agent.acquireActionLeaseForSession(context.Background(), ActionAgentUpgrade, "target:dev/node", "upgrade", 1, 5*time.Second)
+		if lease != nil {
+			lease.Release()
+		}
+		upgraded <- err
+	}()
+	pending := func() int {
+		agent.opsMu.Lock()
+		defer agent.opsMu.Unlock()
+		return agent.upgradeWaiters
+	}
+	requireEventually(t, 5*time.Second, func() bool {
+		return agent.runtimeState().queuedOps == 1 && pending() == 1
+	})
+
+	for _, request := range []struct {
+		action   GatewayAction
+		resource string
+		session  string
+	}{
+		{ActionInfo, "query:node", "observer"},
+		{ActionWrite, "workspace:other", "other"},
+		{ActionExec, "target-mutation:dev/node", "other"},
+		{ActionExec, "nginx:dev/node", "website"},
+	} {
+		lease, err := agent.acquireActionLeaseForSession(context.Background(), request.action, request.resource, request.session, 0, time.Second)
+		if err == nil {
+			lease.Release()
+			t.Fatalf("%s %s was admitted while the upgrade was queued", request.action, request.resource)
+		}
+	}
+	if state := agent.runtimeState(); len(state.resources) != 0 {
+		t.Fatalf("rejected requests left resource slots: %v", state.resources)
+	}
+
+	holder.Release()
+	if err := <-upgraded; err != nil {
+		t.Fatalf("upgrade did not drain the target: %v", err)
+	}
+	lease, err := agent.acquireActionLeaseForSession(context.Background(), ActionInfo, "query:node", "observer", 0, time.Second)
+	if err != nil {
+		t.Fatalf("admission did not resume after the upgrade: %v", err)
+	}
+	lease.Release()
+	if state := agent.runtimeState(); state.activeOps != 0 || state.queuedOps != 0 || state.busy {
+		t.Fatalf("upgrade gate left stale state: %#v", state)
+	}
+}
+
+func TestAgentUpgradeQueueTimeoutReleasesAdmissionGate(t *testing.T) {
+	agent := &GatewayAgent{closed: make(chan struct{})}
+	holder, err := agent.acquireActionLeaseForSession(context.Background(), ActionRead, "workspace:release", "release", 0, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Release()
+
+	upgraded := make(chan error, 1)
+	go func() {
+		lease, err := agent.acquireActionLeaseForSession(context.Background(), ActionAgentUpgrade, "target:dev/node", "upgrade", 1, time.Second)
+		if lease != nil {
+			lease.Release()
+		}
+		upgraded <- err
+	}()
+	requireEventually(t, 5*time.Second, func() bool {
+		agent.opsMu.Lock()
+		defer agent.opsMu.Unlock()
+		return agent.upgradeWaiters == 1
+	})
+	if err := <-upgraded; err == nil || !strings.Contains(err.Error(), "target queue timeout") {
+		t.Fatalf("queued upgrade error = %v, want target queue timeout", err)
+	}
+	lease, err := agent.acquireActionLeaseForSession(context.Background(), ActionInfo, "query:node", "observer", 0, time.Second)
+	if err != nil {
+		t.Fatalf("timeout left the admission gate closed: %v", err)
+	}
+	lease.Release()
+}
+
 func TestSessionConflictPolicyMatchesMutationAndWorkspaceLeases(t *testing.T) {
 	holder := GatewayActiveOperation{Cluster: "dev", Instance: "node", Session: "release", Action: ActionExec, Resource: "target-mutation:dev/node"}
 	for _, tc := range []struct {

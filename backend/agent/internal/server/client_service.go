@@ -18,6 +18,8 @@ type ClientService struct {
 
 	activeOpsMu sync.Mutex
 	activeOps   map[string]*gatewayActiveOperation
+
+	detached *detachedTaskRegistry
 }
 
 func NewClientService(
@@ -30,6 +32,7 @@ func NewClientService(
 		registry:  registry,
 		opts:      opts,
 		activeOps: make(map[string]*gatewayActiveOperation),
+		detached:  newDetachedTaskRegistry(),
 	}
 }
 

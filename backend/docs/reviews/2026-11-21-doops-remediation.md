@@ -9,7 +9,7 @@
 | Registry 授权文件 | 归属记录或授权文件落盘失败时恢复已有内容，并核对 Secret 版本 | [registry_authfile_test.go](../../agent/internal/server/registry_authfile_test.go) | v0.3.21 已发布，隔离 T2 生命周期通过，实际服务待验收 |
 | Linux 凭证清理 | 按凭证类型路由，避免普通凭证受模型目录权限影响 | [credential_materializer_test.go](../../agent/internal/server/credential_materializer_test.go) | 已发布，非 root Linux 定向通过 |
 | DoSQL 直接查询与验证 | 收紧只读语句准入并保留引号中的字面量 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，采用词法规则 |
-| MySQL 查询模式 | 拒绝 INTO 和可执行注释 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，Skill 测试随 CI 通过 |
+| MySQL 查询模式 | 拒绝 INTO 和可执行注释 | [Skill 查询准入](../../agent/skills/dosql/Server/lib/database-operation-executor.mjs#L477-L483) · [执行器回归套件](../../agent/skills/dosql/Server/lib/database-operation-executor.test.mjs) | 已发布；v0.3.21 执行器套件 19 项通过。另用合成适配器定向验证：普通只读查询调用适配器一次，含 INTO 和含可执行注释的两种输入均在调用前被拒绝（各零次）。未连接数据库。 |
 | MongoDB 文档校验 | 在解码后区分键和字面值 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
 | DoSQL 部分提交 | 结果未知时保留已知的部分提交证据 | [handler_ws.go](../../agent/internal/server/handler_ws.go) | 已发布，Agent CI 通过 |
 | Helm 补偿回滚 | 等待回滚并回读 live release 状态 | [helm_interrupt_test.go](../../agent/internal/server/helm_interrupt_test.go) | 已发布 |
@@ -59,7 +59,9 @@
 
 ## 实际服务验收
 
-只读回读确认，`gw-test` 在线，Agent 报告的提交为 `e1d2ba7c24b4283efe7a1d2c0c1fa19bba960358`。部署与合成凭证验收待确认环境范围，测试目标与其他实例共用 Gateway。
+2026-11-22 10:21（Asia/Shanghai）只读回读：`gw-test` 指向 `doops-zyj/zyj-test`，Agent 报告 `e1d2ba7c24b4283efe7a1d2c0c1fa19bba960358`，与 v0.3.21 发布提交不符。当时有 1 个活动 Gateway 操作，排队为 0。本次未变更共享服务。部署及在线合成凭证验收仍待确认维护范围或指定隔离目标。
+
+同日从 v0.3.21 标签导出源码（不使用当前开发工作区），禁用 Go 测试缓存，复跑并确认以下四个用例均执行且通过：`TestModelProviderCleanupRecoversInterruptedDelivery`、`TestRegistryOwnershipWriteFailureRestoresAuthfile`、`TestRegistryAuthfileCleanupKeepsLiveVersion`、`TestCredentialResourceRevocationRetryAfterRevoking`。这是发布版本的本地回归证据，不是共享服务验收。
 
 | 验收项 | 需记录的证据 |
 | --- | --- |

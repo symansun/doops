@@ -11,6 +11,7 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 
 | Need | Command | Notes |
 | :--- | :--- | :--- |
+| Find inventory machines | `doops machines --target <gateway-target> [--tag <tag>]` | Repeat `--tag` for exact AND matching. The route selects the Gateway login, not a destination host. JSON output is machine metadata only. |
 | List configured targets | `doops list` | Local config only; not live gateway state. |
 | Copy newly online targets into local routes | `doops sync [--target <gateway-target>]` | Adds live targets this login can use and that are missing locally. Does not rename existing routes or remove offline ones. |
 | List live gateway agents | `doops -session <s> targets --target <gateway-target>` | Checks only that configured route. It does not list or save the Gateway's other agents. |
@@ -23,7 +24,10 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | Build an OCI image | `doops -session <s> image build --target <t> --context <remote-dir> --output oci --output-path <remote-file>` | Generic BuildKit build; supports `--platform` and `--output image --image <ref> --push` for a registry push. |
 | Copy an OCI image | `doops -session <s> image copy --target <t> --source <ref> --destination <ref>` | Generic Skopeo transport-to-transport copy with optional authfiles and raw manifest digest verification. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
-| Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One RPC waits for the Agent task's terminal result; no task-status polling or command retries. |
+| Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | Submits a Gateway-hosted detached task (requires `detachedBackground`); Ctrl-C releases the stream without stopping the task; the Gateway enforces the maximum task lifetime. |
+| List own background tasks | `doops task list --target <t>` | Owner-scoped detached tasks on the target; no admin override. |
+| Inspect a background task | `doops task status --target <t> --id <audit-id> [--follow]` | Shows status and captured output; `--follow` polls until terminal. |
+| Stop a background task | `doops task stop --target <t> --id <audit-id>` | Acknowledged stop; run `task status` for the terminal result. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
 | Run a release | `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'` | Natural-language release with mutation authorization. |
 | DoSql read-only query or scan | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '<request>'` | Automatically binds every active database credential on the selected Gateway target; `--database` picks among several. No local connection file is read. |

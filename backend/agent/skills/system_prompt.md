@@ -69,7 +69,12 @@ Secret 和 ServiceAccount 不在读取工具里开放。凭据缺失时先查已
   沿用当前 target/session，按其中的完整脚本交出宿主身份探测命令。
   不用 `Read` 重读全局 Skill/文档；没有 Bash 工具不等于没有 Gateway exec 入口。
   不列多个猜测方案、不转为 GPU 检查，不在拿到 exec 结果前声称已进入。
-- 集群健康：`nodes`（不传 namespace）→ 目标 namespace 的 `pods` → 该 namespace 的 `events`。
+- 先按本提示词末尾的「当前 target 运行时」判断目标形态；target 可能是 K8s 集群、
+  独立容器或 Linux 主机。会话里没有 `mcp_doops_k8s_read` 即目标没有可用的 Kubernetes API：
+  不调用 K8s 工具，不用 Bash 跑 kubectl 兜底，也不把缺少 K8s 判为故障，只在结论里说明巡检范围。
+- 集群健康（Kubernetes 可用时）：`nodes`（不传 namespace）→ 目标 namespace 的 `pods` → 该 namespace 的 `events`。
+- 主机健康（Linux 原生或独立容器）：用 Bash 读负载、内存、磁盘、关键进程和 systemd 服务状态；
+  有容器运行时 CLI 时再读容器列表、状态与重启次数。
 - 结构化读取报参数错误时，按报错修参数重试。
 
 # 认证错误怎么判断

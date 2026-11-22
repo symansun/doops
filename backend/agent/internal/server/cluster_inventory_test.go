@@ -245,6 +245,45 @@ esac
 
 // Exercise kubectl's REST mapper and JSONPath printer with a local-only API.
 // The HTTP/Agent tests above also run on hosts without kubectl installed.
+func TestPendingClusterVerifiedAttach(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	applyInventoryMigration(t, f)
+	migration, err := os.ReadFile("../../../docs/migrations/asset_catalog.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.store.db.Exec(string(migration)); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err = os.WriteFile(filepath.Join(root, "kubectl"), []byte("#!/bin/sh\nprintf 'namespaces-begin\\nkube-system\\tsynthetic-uid\\nreports\\treports-uid\\nnamespaces-end\\n'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	inventoryTestAgent(t, f, "local")
+	grant := ScopeGrant{Cluster: "dev", Instance: "local"}
+	alice := f.user(t, "profile-owner", grant)
+	bob := f.user(t, "another-reader", grant)
+	var profile struct{ ID string }
+	if err = json.Unmarshal(f.http(t, alice, "POST", "/v1/assets/cluster-profiles", `{"op":"create","name":"Pending cluster"}`, 200), &profile); err != nil || profile.ID == "" {
+		t.Fatal("profile creation failed")
+	}
+	attach := `{"action":"attach","asset_id":"` + profile.ID + `","name":"Pending cluster","cluster":"dev","instance":"local"}`
+	f.http(t, bob, "POST", inventoryPath, attach, 409)
+	if strings.Contains(string(f.http(t, bob, "GET", "/v1/assets/cluster-profiles", "", 200)), profile.ID) {
+		t.Fatal("pending profile disclosed")
+	}
+	f.http(t, alice, "POST", inventoryPath, attach, 200)
+	got := getTestInventory(t, f, bob)
+	if len(got) != 1 || got[0].AssetID != profile.ID || len(got[0].Namespaces) != 2 {
+		t.Fatal("shared verified source missing")
+	}
+	if !strings.Contains(string(f.http(t, bob, "GET", "/v1/assets/cluster-profiles", "", 200)), profile.ID) {
+		t.Fatal("authorized peer cannot see shared profile")
+	}
+	f.http(t, alice, "POST", inventoryPath, attach, 409)
+}
+
 func TestClusterInventoryRealKubectl(t *testing.T) {
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		t.Skip("kubectl executable required for REST/JSONPath integration")

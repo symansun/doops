@@ -6,7 +6,7 @@ import { callTool, extractText, type Session, type Target, type ToolCancel } fro
 import { TOOLS } from "@/lib/gateway"
 import { addAgentRunNote, addAgentRunOutput, addAgentRunResult, startAgentRun, type AgentRun, type AgentRunNote } from "@/lib/agent-output"
 import { AgentRunOutput } from "@/components/agent-run-output"
-import { Button, Input, Select, SegmentedControl, Textarea } from "./ui"
+import { Button, Input, Select, SegmentedControl, StatusBanner, Textarea } from "./ui"
 import { WebsiteInventory } from "./website-inventory"
 
 type WebsiteMode = "check" | "plan" | "apply"
@@ -21,8 +21,9 @@ export function WebsitePanel({
   session,
   target,
   sessionId,
-  onRunningChange,
+  onRunningChange, initialDomain,
 }: {
+  initialDomain?: string
   session: Session
   target: Target
   sessionId: string
@@ -32,7 +33,7 @@ export function WebsitePanel({
   const [runtimeMode, setRuntimeMode] = useState<"host" | "docker">("host")
   const [request, setRequest] = useState("")
   const [siteID, setSiteID] = useState("")
-  const [domain, setDomain] = useState("")
+  const [domain, setDomain] = useState(initialDomain ?? "")
   const [dist, setDist] = useState("")
   const [credentials, setCredentials] = useState("")
   const [agentRun, setAgentRun] = useState<AgentRun | null>(null)
@@ -171,7 +172,7 @@ export function WebsitePanel({
           {mode === "apply" && (
             <Input aria-label="受管凭据" value={credentials} onChange={(event) => setCredentials(event.target.value)} disabled={running} placeholder="受管凭据资源名，可填写多个，用空格分隔" />
           )}
-          {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+          {error && <StatusBanner tone="error">{error}</StatusBanner>}
           <div className="flex items-center justify-end gap-2">
             {running || stopPending ? <Button type="button" onClick={stop} disabled={stopPending} variant="danger-outline"><Square aria-hidden="true" className="size-3.5" /> {stopPending ? "停止中…" : "停止"}</Button> : <Button type="button" onClick={() => void run()} disabled={!request.trim()} variant="primary"><Send aria-hidden="true" className="size-3.5" /> {mode === "apply" ? "提交受控变更" : "运行 DoWeb"}</Button>}
           </div>

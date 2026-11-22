@@ -30,6 +30,8 @@ export type RpcEvent =
   | { type: "output"; data: string; session?: string; kind?: string }
   | { type: "result"; result: unknown }
   | { type: "error"; error: string; code?: number; data?: unknown }
+  | { type: "capabilities"; capabilities: unknown }
+  | { type: "background_task"; audit_id: number; operation_id: string }
   | { type: "done" }
 
 export type ToolCancel = () => Promise<void>
@@ -284,7 +286,7 @@ export async function callTool(
   function receive(line: string) {
     let event: RpcEvent
     try { event = JSON.parse(line) as RpcEvent } catch { throw new Error("运维服务返回了无效事件") }
-    if (!event || !["open", "output", "result", "error", "done"].includes(event.type)) throw new Error("运维服务返回了未知事件")
+    if (!event || !["open", "output", "result", "error", "capabilities", "background_task", "done"].includes(event.type)) throw new Error("运维服务返回了未知事件")
     if (event.type === "result") {
       terminal = true
       if ((event.result as { isError?: boolean })?.isError) {

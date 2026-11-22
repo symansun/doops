@@ -47,6 +47,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 可用命令:
   list        列出已配置的 Gateway target 路由
   sync        把当前登录能看到的在线 target 补进本机路由；不改已有路由，不删除离线路由
+  machines    搜索当前登录在 Gateway 可见的机器台账（可按多个标签过滤，JSON 输出）
   targets     查看 Gateway 操作状态；--admission 回读 do-agent 内部名额与队列
   capabilities 检查 target Agent 的协议能力
   exec        在目标 Agent 进程目录执行 Shell 命令；工作目录请显式 cd
@@ -63,6 +64,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   registry    通用 OCI 镜像 registry sync（DoOps 目标机执行）
   version     查看 DoOps 发布身份（release tag 和精确提交）
   guide       按场景打印有序命令（onboard/diagnose/release/credential/...）
+  task        查看或停止自己通过 exec --bg 提交的后台任务 (list/status/stop)
   history     查看本地操作历史，不含 ask 或 exec 正文
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
@@ -172,6 +174,13 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 
+	case "task":
+		os.Exit(runTaskCommand(cmdArgs, servers, configErr, os.Stdout))
+	case "machines":
+		if err := runMachines(cmdArgs, servers, configErr, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
 	case "targets":
 		var target string
 		var admission bool
@@ -425,7 +434,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		switch command {
 		case "exec":
 			subFlag.StringVar(&cmdStr, "cmd", "", "Command to execute")
-			subFlag.BoolVar(&background, "bg", false, "Run through one streaming background task RPC until the process stops; requires executionLifecycle; no status polling or task retries")
+			subFlag.BoolVar(&background, "bg", false, "Run as a detached background task hosted by the Gateway (requires executionLifecycle + detachedBackground); Ctrl-C releases the stream without stopping the task; the Gateway enforces the maximum task lifetime")
 		case "ssh":
 			subFlag.StringVar(&sshHost, "host", "", "SSH destination, for example ops@app.internal")
 			subFlag.Var(&sshOptions, "option", "Allowed SSH flag or key=value (repeatable, e.g. --option=BatchMode=yes)")
@@ -533,7 +542,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			server.Name, endpoint, server.Use)
 
 		if command == "exec" && background {
-			if err := client.ExecBg(cmdStr); err != nil {
+			if err := client.ExecBg(cmdStr, server.Name); err != nil {
+				var detached *detachedExitError
+				if errors.As(err, &detached) {
+					os.Exit(detached.code)
+				}
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
 			}

@@ -6,6 +6,7 @@ import { callTool, extractText, type Session, type Target, type ToolCancel } fro
 import { TOOLS } from "@/lib/gateway"
 import { addAgentRunNote, addAgentRunOutput, addAgentRunResult, startAgentRun, type AgentRun, type AgentRunNote } from "@/lib/agent-output"
 import { AgentRunOutput } from "@/components/agent-run-output"
+import { Button, Input, SegmentedControl, StatusBanner, Textarea } from "./ui"
 import { DatabaseInventory, type DatabaseCandidate } from "./database-inventory"
 import { DatabaseExplorer } from "./database-explorer"
 
@@ -22,8 +23,9 @@ export function DatabasePanel({
   session,
   target,
   sessionId,
-  onRunningChange,
+  onRunningChange, initialHint,
 }: {
+  initialHint?: string
   session: Session
   target: Target
   sessionId: string
@@ -31,7 +33,7 @@ export function DatabasePanel({
 }) {
   const [mode, setMode] = useState<DatabaseMode>("query")
   const [request, setRequest] = useState("")
-  const [databaseHint, setDatabaseHint] = useState("")
+  const [databaseHint, setDatabaseHint] = useState(initialHint ?? "")
   const [agentRun, setAgentRun] = useState<AgentRun | null>(null)
   const [running, setRunning] = useState(false)
   const [selectedAsset, setSelectedAsset] = useState<DatabaseCandidate | null>(null)
@@ -131,74 +133,71 @@ export function DatabasePanel({
       <details className="card-surface mt-4 p-4" ref={operationsRef}>
         <summary className="cursor-pointer text-sm font-semibold">数据库操作</summary>
         <fieldset disabled={sqlRunning} className="mt-4 flex min-w-0 flex-col gap-3">
-          <div className="flex w-fit flex-wrap items-center gap-1 rounded-md border bg-background p-0.5" role="group" aria-label="数据库操作模式">
-            {(["query", "discover", "plan"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={mode === value}
-                disabled={running}
-                onClick={() => setMode(value)}
-                className={`rounded px-2 py-1 text-xs transition-colors ${mode === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                {modeLabel(value)}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            value={mode}
+            disabled={running}
+            ariaLabel="数据库操作模式"
+            onChange={setMode}
+            className="w-fit"
+            options={(["query", "discover", "plan"] as const).map((value) => ({
+              value,
+              label: modeLabel(value),
+            }))}
+          />
           <div className="flex flex-wrap gap-2">
             {QUICK_REQUESTS.map((item) => (
-              <button
+              <Button
                 key={item.label}
                 type="button"
+                size="sm"
                 disabled={running}
                 onClick={() => {
                   setMode(item.mode)
                   setRequest(item.request)
                   setError("")
                 }}
-                className="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-50"
+                className="text-muted-foreground hover:border-primary/50 hover:text-foreground"
               >
                 {item.label}
-              </button>
+              </Button>
             ))}
           </div>
 
           <div className="grid gap-2">
             <label className="flex min-w-0 flex-col gap-1.5">
               <span className="text-xs font-medium text-foreground">数据库提示</span>
-              <input
+              <Input
                 value={databaseHint}
                 onChange={(event) => setDatabaseHint(event.target.value)}
                 disabled={running}
                 placeholder="数据库名称或资产提示（可选）"
-                className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring disabled:opacity-60"
               />
             </label>
           </div>
 
           <label className="flex min-h-32 grow shrink-0 flex-col gap-1.5">
             <span className="text-xs font-medium text-foreground">操作需求</span>
-            <textarea
+            <Textarea
               ref={requestRef}
               value={request}
               onChange={(event) => setRequest(event.target.value)}
               disabled={running}
               placeholder="描述数据库、环境和要查询或计划的业务目标，不要粘贴密码或连接串。"
-              className="min-h-32 flex-1 resize-y rounded-md border bg-background px-3 py-2 text-sm leading-6 text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20 disabled:opacity-60"
+              className="min-h-32 flex-1 resize-y leading-6"
             />
           </label>
 
-          {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+          {error && <StatusBanner tone="error">{error}</StatusBanner>}
 
           <div className="flex items-center justify-end gap-2">
             {running || stopPending ? (
-              <button type="button" onClick={stop} disabled={stopPending} className="flex items-center gap-1.5 rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-60">
+              <Button type="button" variant="danger-outline" onClick={stop} disabled={stopPending}>
                 <Square aria-hidden="true" className="size-3.5" /> {stopPending ? "停止中…" : "停止"}
-              </button>
+              </Button>
             ) : (
-              <button type="button" onClick={() => void run()} disabled={!request.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">
+              <Button type="button" variant="primary" onClick={() => void run()} disabled={!request.trim()}>
                 <Send aria-hidden="true" className="size-3.5" /> 运行 DoSql
-              </button>
+              </Button>
             )}
           </div>
 

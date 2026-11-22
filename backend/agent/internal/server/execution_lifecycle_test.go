@@ -162,6 +162,7 @@ type executionLifecycleCall struct {
 	id      int64
 	name    string
 	session string
+	args    map[string]interface{}
 }
 
 type executionLifecycleAgent struct {
@@ -216,7 +217,7 @@ func (f *executionLifecycleFixture) agentWithInitialize(t *testing.T, initialize
 				name, _ := params["name"].(string)
 				session, _ := args["session_id"].(string)
 				select {
-				case agent.calls <- executionLifecycleCall{id: id, name: name, session: session}:
+				case agent.calls <- executionLifecycleCall{id: id, name: name, session: session, args: args}:
 				case <-stop:
 					return
 				}

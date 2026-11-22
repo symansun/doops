@@ -26,7 +26,7 @@ import {
   type CredentialVerificationResponse,
   type CredentialVersion,
 } from "@/lib/credentials"
-import { SegmentedControl, Button, Select, Input, Textarea } from "./ui"
+import { Badge, Button, Input, Modal, SegmentedControl, Select, StatusBanner, Textarea } from "./ui"
 import {
   BanIcon,
   CheckIcon,
@@ -84,8 +84,8 @@ function fmtTime(value?: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false })
 }
 
-export function CredentialPanel({ session, target }: { session: Session; target: Target }) {
-  const [view, setView] = useState<"target" | "managed">("target")
+export function CredentialPanel({ session, target, initialView = "target" }: { session: Session; target?: Target; initialView?: "target" | "managed" }) {
+  const [view, setView] = useState<"target" | "managed">(target ? initialView : "managed")
   const [rows, setRows] = useState<CredentialResource[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -170,7 +170,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
     // The target poll replaces the object on every heartbeat; reload only when
     // the target itself changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, target.cluster, target.instance, view])
+  }, [session, target?.cluster, target?.instance, view])
 
   useEffect(() => {
     load()
@@ -272,11 +272,11 @@ export function CredentialPanel({ session, target }: { session: Session; target:
             <h2 className="text-sm font-semibold text-foreground">凭据资源</h2>
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {target.cluster}/{target.instance} · 操作权限包含凭据使用权限
+            {target ? target.cluster + "/" + target.instance + " · 操作权限包含凭据使用权限" : "我管理的凭据 · 绑定或导入需先选择目标"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <SegmentedControl
+          {target && <SegmentedControl
             value={view}
             onChange={setView}
             ariaLabel="凭据范围"
@@ -284,39 +284,42 @@ export function CredentialPanel({ session, target }: { session: Session; target:
               { value: "target", label: "当前目标可用" },
               { value: "managed", label: "我管理的" },
             ]}
-          />
-          <button
+          />}
+          <Button
             onClick={load}
             disabled={loading}
             title="刷新凭据"
-            className="flex h-8 w-8 items-center justify-center rounded-md border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            aria-label="刷新凭据"
+            size="sm"
+            icon
           >
             <RefreshIcon width={15} height={15} className={loading ? "animate-spin" : ""} />
-          </button>
-          <CredentialBundleButton session={session} target={target} />
-          <button
+          </Button>
+          {target && <CredentialBundleButton session={session} target={target} />}
+          <Button
             onClick={() => {
               setView("managed")
               setShowCreate(true)
             }}
             disabled={session.demo}
             title={session.demo ? "演示模式不执行凭据写操作" : "新建凭据"}
-            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            variant="primary"
+            size="sm"
           >
             <PlusIcon width={14} height={14} /> 新建凭据
-          </button>
+          </Button>
         </div>
       </div>
 
       {error && (
-        <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+        <StatusBanner tone="error" compact className="rounded-none border-x-0 border-t-0 px-4">
           {error}
-        </div>
+        </StatusBanner>
       )}
       {notice && (
-        <div className="flex items-center gap-2 border-b border-success/30 bg-success/10 px-4 py-2 text-xs text-success">
+        <StatusBanner tone="success" compact className="flex items-center gap-2 rounded-none border-x-0 border-t-0 px-4">
           <CheckIcon width={14} height={14} /> {notice}
-        </div>
+        </StatusBanner>
       )}
       {showCreate && (
         <CreateCredentialForm
@@ -426,7 +429,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                 </td>
                 <td className="sticky right-0 z-10 border-l border-border/60 bg-background px-3 py-3">
                   <div className="flex flex-wrap justify-end gap-1.5 [&>button]:whitespace-nowrap">
-                    {view === "managed" && resource.state === "active" && canImportFromSecret(resource.type) && (
+                    {target && view === "managed" && resource.state === "active" && canImportFromSecret(resource.type) && (
                       <Button
                         onClick={() => setAction({ kind: "import", credential: resource })}
                         disabled={mutating}
@@ -453,33 +456,35 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                               查看版本
                             </Button>
                             {version.state === "staged" && (
-                              <>
-                                <button
-                                  onClick={() => promote(resource, version)}
-                                  disabled={mutating}
-                                  className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                                >
-                                  激活
-                                </button>
-                              </>
+                              <Button
+                                onClick={() => promote(resource, version)}
+                                disabled={mutating}
+                                variant="primary"
+                                size="sm"
+                              >
+                                激活
+                              </Button>
                             )}
                           </>
                         )}
                         <Button
                           onClick={() => setAction({ kind: "binding", credential: resource })}
-                          disabled={mutating}
+                          disabled={!target || mutating}
                           size="sm"
                         >
                           <ShieldIcon width={12} height={12} /> 绑定目标
                         </Button>
-                        <button
+                        <Button
                           onClick={() => revoke(resource)}
                           disabled={mutating}
                           title="吊销凭据"
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/15 hover:text-destructive disabled:opacity-50"
+                          aria-label="吊销凭据"
+                          variant="danger-outline"
+                          size="sm"
+                          icon
                         >
                           <BanIcon width={14} height={14} />
-                        </button>
+                        </Button>
                       </>
                     )}
                   </div>
@@ -515,7 +520,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           onError={setError}
         />
       )}
-      {action?.kind === "import" && (
+      {target && action?.kind === "import" && (
         <SecretImportDialog
           session={session}
           target={target}
@@ -529,7 +534,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           onError={setError}
         />
       )}
-      {action?.kind === "binding" && (
+      {target && action?.kind === "binding" && (
         <BindingDialog
           session={session}
           target={target}
@@ -721,33 +726,30 @@ function BindingSummary({
         <div key={binding.id} className="flex flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-mono text-[11px] text-muted-foreground">{binding.id}</span>
-            <span
-              className={`rounded px-1.5 py-0.5 ${
-                binding.state === "active"
-                  ? "bg-success/15 text-success"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
+            <Badge variant={binding.state === "active" ? "success" : "default"}>
               {binding.state}
-            </span>
+            </Badge>
             {binding.state === "active" && !disabled && version?.state === "staged" && (
-              <button
+              <Button
                 onClick={() => onVerify(binding)}
                 disabled={busy}
-                className="rounded border px-1.5 py-0.5 text-[11px] text-foreground hover:bg-muted disabled:opacity-50"
+                size="sm"
               >
                 验证暂存
-              </button>
+              </Button>
             )}
             {binding.state === "active" && !disabled && (
-              <button
+              <Button
                 onClick={() => onRevoke(binding)}
                 disabled={busy}
                 title="解除绑定"
-                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive disabled:opacity-50"
+                aria-label="解除绑定"
+                variant="danger-outline"
+                size="sm"
+                icon
               >
                 <BanIcon width={12} height={12} />
-              </button>
+              </Button>
             )}
           </div>
           <div>
@@ -912,24 +914,9 @@ function DialogFrame({
   onClose: () => void
 }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div className="max-h-[90dvh] w-full max-w-xl overflow-auto rounded-lg border bg-card shadow-xl">
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-          <button
-            onClick={onClose}
-            className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-          >
-            关闭
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
+    <Modal title={title} size="lg" onClose={onClose} bodyClassName="p-0">
+      {children}
+    </Modal>
   )
 }
 

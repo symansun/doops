@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { consoleFetch } from "@/lib/network-error"
-import { Button, Input, Select } from "./ui"
+import { Button, Checkbox, Input, Select } from "./ui"
 
 type Asset = { asset_id: string; cluster: string; instance: string; cluster_id: string }
 type Plan = {
@@ -326,12 +326,11 @@ function InspectionWorkspace({
                   {!data.assets.length && <p>没有已绑定目标的可见资产。</p>}
                   <div className="flex flex-wrap gap-3">
                     {data.assets.map((a) => (
-                      <label key={assetKey(a)}>
-                        <input
-                          type="checkbox"
+                      <label key={assetKey(a)} className="inline-flex items-center gap-1.5 text-sm">
+                        <Checkbox
                           checked={selection.includes(assetKey(a))}
                           onChange={() => setSelection(flip(selection, assetKey(a)))}
-                        />{" "}
+                        />
                         {a.asset_id} · {a.cluster}/{a.instance}
                         {targets.some(
                           (t) =>
@@ -349,12 +348,11 @@ function InspectionWorkspace({
                     {Object.entries(data.checks)
                       .sort()
                       .map(([id, label]) => (
-                        <label key={id}>
-                          <input
-                            type="checkbox"
+                        <label key={id} className="inline-flex items-center gap-1.5 text-sm">
+                          <Checkbox
                             checked={checks.includes(id)}
                             onChange={() => setChecks(flip(checks, id))}
-                          />{" "}
+                          />
                           {label}
                         </label>
                       ))}

@@ -166,6 +166,7 @@ export function auditQueryParams(input: AuditQueryInput): AuditQueryPlan {
 // gateway 目标动作工具名
 export const TOOLS = {
   shell: "doops_shell",
+  bg: "doops_bg",
   prompt: "doops_agent_prompt",
   fileRead: "doops_file_read",
   fileWrite: "doops_file_write",
@@ -186,12 +187,15 @@ export function toWsBase(gateway: string): string {
 }
 
 export function resolveDefaultGateway(savedGateway: string | null, currentOrigin: string): string {
+  const localConsole = ["http://127.0.0.1:3000", "http://localhost:3000", "http://[::1]:3000"].includes(currentOrigin)
+  const fallback = localConsole ? "http://127.0.0.1:42222" : currentOrigin
   const saved = savedGateway?.trim()
-  if (!saved) return currentOrigin
+  if (!saved) return fallback
 
   try {
     const current = new URL(currentOrigin)
     const candidate = new URL(saved.includes("://") ? saved : `http://${saved}`)
+    if (localConsole && candidate.origin === current.origin) return fallback
     if (
       current.protocol === "https:" &&
       candidate.protocol !== "https:" &&
@@ -200,7 +204,7 @@ export function resolveDefaultGateway(savedGateway: string | null, currentOrigin
       return current.origin
     }
   } catch {
-    return currentOrigin
+    return fallback
   }
 
   return saved

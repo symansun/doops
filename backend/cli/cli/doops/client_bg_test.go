@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +23,12 @@ func agentInitializeResult() map[string]interface{} {
 		"capabilities": map[string]interface{}{
 			"protocols": map[string]interface{}{
 				"executionLifecycle": executionLifecycleCapability(),
+			},
+			"gatewayProtocols": map[string]interface{}{
+				"detachedBackground": map[string]interface{}{
+					"schemaVersion": "doops.sh/detached-background/v1",
+					"maxDuration":   "24h0m0s",
+				},
 			},
 		},
 	}
@@ -219,9 +226,14 @@ func TestExecBgCLIStreamsOneRPCUntilStopped(t *testing.T) {
 			params, _ := req["params"].(map[string]interface{})
 			args, _ := params["arguments"].(map[string]interface{})
 			if req["method"] != "tools/call" || params["name"] != "doops_bg" ||
-				args["command"] != "sleep 1" || args["session_id"] != "bg-stream" {
+				args["command"] != "sleep 1" || args["session_id"] != "bg-stream" ||
+				args["detach"] != true {
 				t.Errorf("unexpected tool request: %#v", req)
 			}
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0", "method": "notifications/doops/background_task",
+				"params": map[string]interface{}{"request_id": req["id"], "audit_id": 42, "operation_id": "op-test"},
+			})
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0", "method": "notifications/message",
 				"params": map[string]interface{}{"request_id": req["id"], "sessionID": "bg-stream", "data": "TaskID: bg-1\nworking\n"},
@@ -255,23 +267,34 @@ func TestExecBgCLIStreamsOneRPCUntilStopped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command.Stderr = command.Stdout
+	stderr, err := command.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
 	lines := make(chan string, 32)
 	done := make(chan error, 1)
 	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			lines <- scanner.Text()
+		var scanned sync.WaitGroup
+		for _, pipe := range []io.Reader{stdout, stderr} {
+			scanned.Add(1)
+			go func(r io.Reader) {
+				defer scanned.Done()
+				scanner := bufio.NewScanner(r)
+				for scanner.Scan() {
+					lines <- scanner.Text()
+				}
+			}(pipe)
 		}
+		scanned.Wait()
 		close(lines)
 		done <- command.Wait()
 	}()
 	var output strings.Builder
-	seenTask, seenProgress := false, false
-	for !seenTask || !seenProgress {
+	seenTask, seenProgress, seenNotice := false, false, false
+	for !seenTask || !seenProgress || !seenNotice {
 		select {
 		case line, ok := <-lines:
 			if !ok {
@@ -280,6 +303,7 @@ func TestExecBgCLIStreamsOneRPCUntilStopped(t *testing.T) {
 			output.WriteString(line + "\n")
 			seenTask = seenTask || line == "TaskID: bg-1"
 			seenProgress = seenProgress || line == "working"
+			seenNotice = seenNotice || line == "Background task: audit 42"
 			if strings.Contains(line, "Task complete") {
 				t.Fatalf("completion was reported before stopped: %s", output.String())
 			}
@@ -317,8 +341,7 @@ func TestExecBgReturnsStreamingErrorsWithoutPollingOrRetry(t *testing.T) {
 		{"tool_error", "Task failed.\nTaskID: bg-1\nExitCode: 17"},
 		{"rpc_error", "remote error: execution_outcome_unknown"},
 		{"canceled", "remote error: operation canceled"},
-		{"disconnect", "connection lost: WS connection lost"},
-		{"timeout", "remote error: execution_outcome_unknown"},
+		{"disconnect", "detached background task released (exit 1)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls, connections atomic.Int32
@@ -344,20 +367,8 @@ func TestExecBgReturnsStreamingErrorsWithoutPollingOrRetry(t *testing.T) {
 						continue
 					}
 					if req["method"] == "tools/cancel" {
-						if tc.name != "timeout" {
-							t.Errorf("unexpected cancellation request: %#v", req)
-							return
-						}
-						params, _ := req["params"].(map[string]interface{})
-						_ = conn.WriteJSON(map[string]interface{}{
-							"jsonrpc": "2.0", "id": req["id"],
-							"result": map[string]interface{}{"canceled": true},
-						})
-						_ = conn.WriteJSON(map[string]interface{}{
-							"jsonrpc": "2.0", "id": params["id"],
-							"error": map[string]interface{}{"code": -32008, "message": "execution_outcome_unknown"},
-						})
-						continue
+						t.Errorf("detached call must never send tools/cancel: %#v", req)
+						return
 					}
 					calls.Add(1)
 					params, _ := req["params"].(map[string]interface{})

@@ -46,40 +46,40 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 }
 
 func TestDoagentAllowedToolsUsesPermissionEngineForDiagnostics(t *testing.T) {
-	ordinary := doagentAllowedTools(false, "")
+	ordinary := doagentAllowedTools(false, "", true)
 	wantOrdinary := []string{"Read", "glob", "grep", "Skill", "Bash", "mcp_doops_k8s_read", "mcp_doops_web_read"}
 	if !reflect.DeepEqual(ordinary, wantOrdinary) {
 		t.Fatalf("ordinary prompt tool directory = %#v, want %#v", ordinary, wantOrdinary)
 	}
 
-	apply := doagentAllowedTools(true, "")
+	apply := doagentAllowedTools(true, "", true)
 	wantApply := []string{"Read", "glob", "grep", "Skill", "mcp_doops_k8s_read", "mcp_doops_web_read", "mcp_doops_helm"}
 	if !reflect.DeepEqual(apply, wantApply) {
 		t.Fatalf("apply prompt tool directory = %#v, want %#v", apply, wantApply)
 	}
 	for _, skill := range []string{"k8s", "image-build"} {
-		tools := doagentAllowedTools(true, skill)
+		tools := doagentAllowedTools(true, skill, true)
 		if !sliceContainsString(tools, "mcp_doops_helm") || sliceContainsString(tools, "mcp_doops_web") ||
 			sliceContainsString(tools, "Bash") {
 			t.Fatalf("Helm skill %q cannot execute its authorized task: %#v", skill, tools)
 		}
 	}
-	website := doagentAllowedTools(true, "doweb")
+	website := doagentAllowedTools(true, "doweb", true)
 	if !sliceContainsString(website, "mcp_doops_web") || sliceContainsString(website, "mcp_doops_helm") {
 		t.Fatalf("website prompt did not retain its domain boundary: %#v", website)
 	}
-	databaseRead := doagentAllowedTools(false, "dosql")
+	databaseRead := doagentAllowedTools(false, "dosql", true)
 	if !sliceContainsString(databaseRead, "mcp_dosql_read") {
 		t.Fatalf("database read prompt boundary is unsafe: %#v", databaseRead)
 	}
-	databaseApply := doagentAllowedTools(true, "dosql")
+	databaseApply := doagentAllowedTools(true, "dosql", true)
 	if !sliceContainsString(databaseApply, "mcp_dosql_read") ||
 		sliceContainsString(databaseApply, "mcp_doops_helm") || sliceContainsString(databaseApply, "mcp_doops_web") {
 		t.Fatalf("database apply prompt boundary is unsafe: %#v", databaseApply)
 	}
 	for _, skill := range []string{"dosql", "unknown", " doweb "} {
 		for _, tool := range []string{"mcp_doops_web", "mcp_doops_helm"} {
-			if sliceContainsString(doagentAllowedTools(true, skill), tool) {
+			if sliceContainsString(doagentAllowedTools(true, skill, true), tool) {
 				t.Fatalf("skill %q gained unrelated mutation tool %q", skill, tool)
 			}
 		}

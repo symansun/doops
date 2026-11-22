@@ -144,7 +144,11 @@ func (s *GatewayStore) readMachineInventory(r *http.Request, auth TokenAuth) (an
 		}
 		return decodeInventoryReceipt(receipt, batchID, attemptID)
 	}
-	machines, err := listInventoryMachines(tx, auth)
+	tags, err := normalizeMachineTags(query["tag"])
+	if err != nil {
+		return nil, err
+	}
+	machines, err := listInventoryMachines(tx, auth, tags...)
 	if err != nil {
 		return nil, err
 	}

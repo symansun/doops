@@ -49,9 +49,9 @@ export function reconcileTargets(previous: readonly Target[], next: readonly Tar
 // same object while its content is unchanged. An in-flight command keeps its
 // target even if a poll temporarily omits it, so the command owner stays mounted.
 export function reconcileSelected(current: Target | null, targets: readonly Target[], commandRunning = false): Target | null {
-  if (!current) return targets[0] ?? null
+  if (!current) return null
   const still = targets.find((target) => target.key === current.key)
-  if (!still) return commandRunning ? current : targets[0] ?? null
+  if (!still) return commandRunning ? current : null
   return sameTarget(current, still) ? current : still
 }
 
@@ -59,6 +59,16 @@ export function reconcileSelected(current: Target | null, targets: readonly Targ
 // busy and sessions change between polls without changing the target.
 export function targetIdentity(target: Pick<Target, "cluster" | "instance">): string {
   return `${target.cluster}/${target.instance}`
+}
+
+export type TargetRef = Pick<Target, "cluster" | "instance">
+
+export function workspaceTargets(online: Target[], registered: readonly TargetRef[]): Target[] {
+  const connected = new Set(online.map(targetIdentity))
+  const offline = registered.filter(ref => !connected.has(targetIdentity(ref))).map(ref => ({
+    ...ref, key: targetIdentity(ref), status: "offline",
+  }))
+  return offline.length ? [...online, ...offline] : online
 }
 
 export type RefreshTrigger = "user" | "background"

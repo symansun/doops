@@ -114,6 +114,11 @@ export async function POST(req: Request) {
     cluster,
   )}&instance=${encodeURIComponent(instance)}`
 
+  // A detached doops_bg is Gateway-hosted: aborting this stream closes the
+  // upstream socket without tools/cancel. Explicit stop uses the
+  // /api/background-tasks/<id>/cancel endpoint.
+  const detached = tool === "doops_bg" && args.detach === true
+
   const encoder = new TextEncoder()
   let requestCancellation = () => {}
   let cancellationRequested = false
@@ -202,6 +207,12 @@ export async function POST(req: Request) {
       }
       requestCancellation = () => {
         if (terminal) return
+        if (detached) {
+          terminal = true
+          try { ws?.close() } catch { /* noop */ }
+          finish()
+          return
+        }
         cancellationRequested = true
         clearExecutionTimer()
         if (!dispatched) {
@@ -278,6 +289,7 @@ export async function POST(req: Request) {
               return
             }
           }
+          send({ type: "capabilities", capabilities: msg.result?.capabilities })
           ws.send(
             JSON.stringify({
               jsonrpc: "2.0",
@@ -289,6 +301,13 @@ export async function POST(req: Request) {
           dispatched = true
           armExecutionTimer()
           sendCancel()
+          return
+        }
+
+        // Gateway 托管后台任务的回执：audit_id 供「后台任务」页查询/停止。
+        if (msg.method === "notifications/doops/background_task") {
+          if (msg.params?.request_id !== callId) return
+          send({ type: "background_task", audit_id: msg.params?.audit_id, operation_id: msg.params?.operation_id })
           return
         }
 

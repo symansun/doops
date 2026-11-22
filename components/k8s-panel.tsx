@@ -23,6 +23,7 @@ import {
   type K8sOperation,
 } from "@/lib/k8s"
 import type { K8sOverviewKey, K8sResource } from "@/lib/k8s-overview"
+import { Button, Checkbox, Input, Select, StatusBanner } from "./ui"
 import { K8sResourceOverview } from "./k8s-resource-overview"
 
 const READ_OPERATIONS = (Object.keys(K8S_OPERATIONS) as K8sOperation[]).filter((op) => !K8S_OPERATIONS[op].mutation)
@@ -52,9 +53,6 @@ const RESOURCE_PLACEHOLDER: Partial<Record<K8sOperation, string>> = {
 
 // Raw output kept for explaining a failure; kubectl prints its error near the end.
 const FAILURE_EVIDENCE_CHARS = 16_000
-
-const inputClass =
-  "min-w-0 rounded-xl border border-border/70 bg-background/60 px-3.5 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground/80 hover:border-border focus:border-primary/60 focus:bg-background focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
 
 // The panel unmounts when the tab changes. The form is kept for the same login
 // and target only, so reopening the tab on another target or after another
@@ -223,56 +221,56 @@ export function K8sPanel({
 
           <div className="grid gap-2 sm:grid-cols-3">
             {uses("kind") && (input.operation === "top" ? (
-              <select aria-label="资源类型" value={input.kind} disabled={disabled} onChange={(e) => update({ kind: e.target.value })} className={inputClass}>
+              <Select aria-label="资源类型" value={input.kind} disabled={disabled} onChange={(e) => update({ kind: e.target.value })}>
                 <option value="pods">pods</option>
                 <option value="nodes">nodes</option>
-              </select>
+              </Select>
             ) : (
-              <input aria-label="资源类型" value={input.kind} disabled={disabled} onChange={(e) => update({ kind: e.target.value })} placeholder="资源类型，如 pods、deployment" className={inputClass} />
+              <Input aria-label="资源类型" value={input.kind} disabled={disabled} onChange={(e) => update({ kind: e.target.value })} placeholder="资源类型，如 pods、deployment" className="font-mono" />
             ))}
             {uses("name") && (
-              <input aria-label={NAME_LABEL[input.operation] || "名称"} value={input.name} disabled={disabled} onChange={(e) => update({ name: e.target.value })} placeholder={NAME_LABEL[input.operation] || "名称"} className={inputClass} />
+              <Input aria-label={NAME_LABEL[input.operation] || "名称"} value={input.name} disabled={disabled} onChange={(e) => update({ name: e.target.value })} placeholder={NAME_LABEL[input.operation] || "名称"} className="font-mono" />
             )}
             {uses("resource") && (
-              <input aria-label="资源 kind/name" value={input.resource} disabled={disabled} onChange={(e) => update({ resource: e.target.value })} placeholder={RESOURCE_PLACEHOLDER[input.operation] || "kind/name"} className={inputClass} />
+              <Input aria-label="资源 kind/name" value={input.resource} disabled={disabled} onChange={(e) => update({ resource: e.target.value })} placeholder={RESOURCE_PLACEHOLDER[input.operation] || "kind/name"} className="font-mono" />
             )}
             {uses("namespace") && (
-              <input aria-label="命名空间" value={input.namespace} disabled={disabled || input.allNamespaces} onChange={(e) => update({ namespace: e.target.value })} placeholder={helmRelease ? "命名空间（必填）" : "命名空间（留空为 Agent 默认）"} className={inputClass} />
+              <Input aria-label="命名空间" value={input.namespace} disabled={disabled || input.allNamespaces} onChange={(e) => update({ namespace: e.target.value })} placeholder={helmRelease ? "命名空间（必填）" : "命名空间（留空为 Agent 默认）"} className="font-mono" />
             )}
             {uses("selector") && (
-              <input aria-label="标签选择器" value={input.selector} disabled={disabled} onChange={(e) => update({ selector: e.target.value })} placeholder="标签选择器，如 app=api" className={inputClass} />
+              <Input aria-label="标签选择器" value={input.selector} disabled={disabled} onChange={(e) => update({ selector: e.target.value })} placeholder="标签选择器，如 app=api" className="font-mono" />
             )}
             {uses("output") && (
-              <select aria-label="输出格式" value={OUTPUT_OPTIONS.includes(input.output) ? input.output : ""} disabled={disabled} onChange={(e) => update({ output: e.target.value })} className={inputClass}>
+              <Select aria-label="输出格式" value={OUTPUT_OPTIONS.includes(input.output) ? input.output : ""} disabled={disabled} onChange={(e) => update({ output: e.target.value })}>
                 {OUTPUT_OPTIONS.map((value) => <option key={value} value={value}>{value ? `输出 ${value}` : "默认输出"}</option>)}
-              </select>
+              </Select>
             )}
             {uses("container") && (
-              <input aria-label="容器" value={input.container} disabled={disabled} onChange={(e) => update({ container: e.target.value })} placeholder="容器（可选）" className={inputClass} />
+              <Input aria-label="容器" value={input.container} disabled={disabled} onChange={(e) => update({ container: e.target.value })} placeholder="容器（可选）" className="font-mono" />
             )}
             {uses("tail") && (
-              <input aria-label="日志行数" inputMode="numeric" value={input.tail} disabled={disabled} onChange={(e) => update({ tail: e.target.value })} placeholder="最近行数（留空为全部）" className={inputClass} />
+              <Input aria-label="日志行数" inputMode="numeric" value={input.tail} disabled={disabled} onChange={(e) => update({ tail: e.target.value })} placeholder="最近行数（留空为全部）" className="font-mono" />
             )}
             {uses("since") && (
-              <input aria-label="时间范围" value={input.since} disabled={disabled} onChange={(e) => update({ since: e.target.value })} placeholder="时间范围，如 10m" className={inputClass} />
+              <Input aria-label="时间范围" value={input.since} disabled={disabled} onChange={(e) => update({ since: e.target.value })} placeholder="时间范围，如 10m" className="font-mono" />
             )}
             {uses("timeout") && (
-              <input aria-label="超时" value={input.timeout} disabled={disabled} onChange={(e) => update({ timeout: e.target.value })} placeholder="超时，如 120s" className={inputClass} />
+              <Input aria-label="超时" value={input.timeout} disabled={disabled} onChange={(e) => update({ timeout: e.target.value })} placeholder="超时，如 120s" className="font-mono" />
             )}
             {uses("replicas") && (
-              <input aria-label="副本数" inputMode="numeric" value={input.replicas} disabled={disabled} onChange={(e) => update({ replicas: e.target.value })} placeholder="副本数" className={inputClass} />
+              <Input aria-label="副本数" inputMode="numeric" value={input.replicas} disabled={disabled} onChange={(e) => update({ replicas: e.target.value })} placeholder="副本数" className="font-mono" />
             )}
           </div>
           <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
             {uses("allNamespaces") && (
               <label className="flex items-center gap-1.5">
-                <input type="checkbox" checked={input.allNamespaces} disabled={disabled} onChange={(e) => update({ allNamespaces: e.target.checked, namespace: e.target.checked ? "" : input.namespace })} />
+                <Checkbox checked={input.allNamespaces} disabled={disabled} onChange={(e) => update({ allNamespaces: e.target.checked, namespace: e.target.checked ? "" : input.namespace })} />
                 全部命名空间（-A）
               </label>
             )}
             {uses("previous") && (
               <label className="flex items-center gap-1.5">
-                <input type="checkbox" checked={input.previous} disabled={disabled} onChange={(e) => update({ previous: e.target.checked })} />
+                <Checkbox checked={input.previous} disabled={disabled} onChange={(e) => update({ previous: e.target.checked })} />
                 上一个容器实例（--previous）
               </label>
             )}
@@ -281,18 +279,30 @@ export function K8sPanel({
           {(input.operation === "get" || input.operation === "describe") && <p className="text-xs text-muted-foreground">Secret 与 ServiceAccount 不开放读取。</p>}
 
           <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={(event) => { if (event.detail <= 1) void run() }} disabled={disabled} className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-semibold shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 ${mutation ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"}`}>
+            <Button
+              type="button"
+              size="sm"
+              variant={mutation ? "danger" : "primary"}
+              onClick={(event) => { if (event.detail <= 1) void run() }}
+              disabled={disabled}
+            >
               <Play aria-hidden="true" className="size-3.5 shrink-0" /> 执行
-            </button>
+            </Button>
             {running && (
-              <button type="button" onClick={stop} disabled={stopPending || !cancelRef.current} className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border/70 bg-card/40 px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-foreground/25 disabled:opacity-50">
+              <Button
+                type="button"
+                size="sm"
+                onClick={stop}
+                disabled={stopPending || !cancelRef.current}
+                className="ml-auto"
+              >
                 <Square aria-hidden="true" className="size-3.5 shrink-0" /> {stopPending ? "正在停止" : "停止"}
-              </button>
+              </Button>
             )}
           </div>
-          {error && <p role="alert" className="min-w-0 shrink-0 text-xs text-destructive [overflow-wrap:anywhere]">{error}</p>}
+          {error && <StatusBanner tone="error" role="alert" compact className="min-w-0 shrink-0 [overflow-wrap:anywhere]">{error}</StatusBanner>}
 
-          <pre ref={logRef} aria-label="执行输出" className="min-h-48 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-border/60 bg-background/60 p-3.5 font-mono text-xs">
+          <pre ref={logRef} aria-label="执行输出" className="min-h-48 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-background/60 p-3.5 font-mono text-xs">
             {log.entries.length === 0 ? <span className="text-muted-foreground">选择操作并执行，输出显示在这里。</span> : (
               <>
                 {log.dropped > 0 && (
@@ -331,24 +341,17 @@ function OperationGroup({
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={title}>
       <span className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{title}</span>
       {operations.map((operation) => (
-        <button
+        <Button
           key={operation}
           type="button"
+          size="sm"
+          variant={active === operation ? (danger ? "danger" : "primary") : (danger ? "danger-outline" : "default")}
           aria-pressed={active === operation}
           disabled={disabled}
           onClick={() => onSelect(operation)}
-          className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
-            active === operation
-              ? danger
-                ? "border-transparent bg-destructive text-destructive-foreground shadow-sm"
-                : "border-transparent bg-primary text-primary-foreground shadow-sm"
-              : danger
-                ? "border-border/60 bg-card/40 text-destructive hover:border-destructive/60"
-                : "border-border/60 bg-card/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
-          }`}
         >
           {K8S_OPERATIONS[operation].label}
-        </button>
+        </Button>
       ))}
     </div>
   )

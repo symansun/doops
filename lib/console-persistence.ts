@@ -76,9 +76,9 @@ export function validTargetKey(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 256 && !CONTROL.test(value)
 }
 
-// A token login carries no username, so every token user on one Gateway would
-// share the same key and inherit the previous user's target and session. Such
-// a login keeps nothing.
+// Both password login and token import resolve `username` through `GET /v1/auth/me`.
+// If a session ever lacks a username, persist nothing so distinct accounts on one
+// Gateway cannot share a storage key.
 export function persistsScope(scope: StorageScope): boolean {
   return Boolean(scope.username?.trim())
 }
@@ -87,6 +87,10 @@ export function saveSelection(storage: StorageLike | null, scope: StorageScope, 
   if (!persistsScope(scope)) return
   if (!validTargetKey(selection.targetKey) || !validSessionId(selection.sessionId)) return
   writeStored(storage, selectionKey(scope), { targetKey: selection.targetKey, sessionId: selection.sessionId })
+}
+
+export function clearSelection(storage: StorageLike | null, scope: StorageScope): void {
+  writeStored(storage, selectionKey(scope), null)
 }
 
 export function loadSelection(storage: StorageLike | null, scope: StorageScope): ConsoleSelection | null {
@@ -107,15 +111,14 @@ export interface RestoredSelection {
 }
 
 export function restoreSelection(saved: ConsoleSelection | null, targets: readonly Target[]): RestoredSelection {
-  const first = targets[0] ?? null
-  if (!saved) return { selected: first, sessionId: null, notice: "" }
+  if (!saved) return { selected: null, sessionId: null, notice: "" }
   const match = targets.find((target) => target.key === saved.targetKey)
   if (match) return { selected: match, sessionId: saved.sessionId, notice: "" }
   const reason = `上次选中的目标 ${saved.targetKey} 当前不在可用目标列表中（可能已离线或已取消授权）`
   return {
-    selected: first,
+    selected: null,
     sessionId: null,
-    notice: first ? `${reason}，已切换到 ${first.key} 并开启新会话` : `${reason}，当前没有可用目标`,
+    notice: targets.length ? `${reason}，请重新选择 Agent` : `${reason}，当前没有可用目标`,
   }
 }
 
@@ -333,9 +336,8 @@ function deployReceipt(value: unknown): DeployReceipt | undefined {
   return { sessionId, status }
 }
 
-// A token login stores nothing (persistsScope), yet a running release must stay visible after switching views. Its
-// entries live in memory only, keyed by that login's session object, so the next login in the tab, by any account,
-// starts empty (the same approach as createK8sFormStore in k8s.ts).
+// When `persistsScope` is false (e.g. a session with no resolved username), a running release still stays visible
+// across view switches via an in-memory WeakMap keyed by that session object, so the next login starts empty.
 const memoryDeployEntries = new WeakMap<object, DeployEntry[]>()
 
 function readDeployEntries(storage: StorageLike | null, scope: StorageScope): DeployEntry[] {

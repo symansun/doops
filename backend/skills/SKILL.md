@@ -71,6 +71,8 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | 本地历史 | `doops history`（本机操作历史，不含 ask 或 exec 正文） |
 | 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（须 `hostAccess.enabled=true`） |
 | 长任务 | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` |
+| 后台任务 | `doops task list --target <t>`；`doops task status --target <t> --id <audit-id> [--follow]`；`doops task stop --target <t> --id <audit-id>` |
+| 按标签找机器 | `doops machines --target <t> [--tag <tag>]`（可重复 `--tag`，取交集；仅返回当前 Gateway 登录可见的资产元数据，不取登录密码） |
 | 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd>`（命令后可追加参数） |
 | 诊断分析 | `doops -session <s> ask --target <t> --msg '只读检查 <对象与问题>，禁止变更；返回证据与结论'` |
 | 业务发布 | `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'` |

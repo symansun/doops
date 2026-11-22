@@ -1,6 +1,6 @@
 "use client"
 
-import { Input, Select } from "./ui"
+import { Badge, Button, Checkbox, Input, Select, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
 import {
@@ -204,7 +204,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
         </div>
         <div className="flex items-center gap-2">
           {!blocked && (
-            <button
+            <Button
               onClick={() => {
                 setError("")
                 setNotice("")
@@ -215,34 +215,35 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                 }
               }}
               disabled={busy}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+              variant="primary"
+              size="sm"
             >
               <PlusIcon width={14} height={14} /> 新建路由
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             onClick={() => {
               setError("")
               setNotice("")
               load()
             }}
             disabled={loading || busy}
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            size="sm"
           >
             <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} /> 刷新
-          </button>
+          </Button>
         </div>
       </div>
 
       {error && (
-        <div className="mx-4 mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        <StatusBanner tone="error" compact className="mx-4 mt-3">
           {error}
-        </div>
+        </StatusBanner>
       )}
       {notice && !blocked && (
-        <div className="mx-4 mt-3 rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-xs text-foreground">
+        <StatusBanner tone="success" compact className="mx-4 mt-3">
           {notice}
-        </div>
+        </StatusBanner>
       )}
 
       {blocked ? (
@@ -315,8 +316,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                   />
                 </label>
                 <label className="flex items-center gap-1.5 pb-2 text-xs text-foreground">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={form.enabled}
                     onChange={(e) => patch({ enabled: e.target.checked })}
                   />
@@ -328,60 +328,61 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                 域名只填主机名，不带协议、端口和路径；上游是该 Agent 所在网络可访问的 http(s) 地址，不能带账号密码、查询参数或锚点。
               </p>
               <div className="flex gap-2">
-                <button
+                <Button
                   onClick={submit}
                   disabled={busy}
-                  className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
+                  variant="primary"
+                  size="sm"
                 >
                   {busy ? "保存中…" : "保存"}
-                </button>
-                <button
+                </Button>
+                <Button
                   onClick={closeForm}
                   disabled={busy}
-                  className="rounded-lg border px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
+                  size="sm"
                 >
                   取消
-                </button>
+                </Button>
               </div>
             </div>
           )}
 
-          <div className="overflow-x-auto p-4">
-            <table className="w-full min-w-[900px] border-collapse text-sm">
-              <thead>
-                <tr className="border-b text-left text-xs text-muted-foreground">
-                  <th className="px-3 py-2 font-medium">域名</th>
-                  <th className="px-3 py-2 font-medium">目标</th>
-                  <th className="px-3 py-2 font-medium">上游</th>
-                  <th className="px-3 py-2 font-medium">状态</th>
-                  <th className="px-3 py-2 font-medium">更新时间</th>
-                  <th className="px-3 py-2 font-medium text-right">操作</th>
+          <div className="p-4">
+            <Table className="min-w-[900px]">
+              <TableHeader>
+                <tr>
+                  <TableHead>域名</TableHead>
+                  <TableHead>目标</TableHead>
+                  <TableHead>上游</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>更新时间</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
                 </tr>
-              </thead>
-              <tbody>
+              </TableHeader>
+              <TableBody>
                 {listState === "rows" &&
                   rows.map((r) => {
                     const badge = TARGET_BADGE[proxyRouteTargetStatus(r, instances)]
                     return (
-                      <tr key={r.id} className="border-b border-border/50">
-                        <td className="px-3 py-2.5">
+                      <TableRow key={r.id}>
+                        <TableCell>
                           <div className="font-medium text-foreground">{r.host}</div>
                           <div className="font-mono text-[11px] text-muted-foreground">{r.id}</div>
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
                           {r.cluster}/{r.instance}
-                          {badge && <span className="ml-1.5 font-sans text-warning">（{badge}）</span>}
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{r.upstream}</td>
-                        <td className="px-3 py-2.5">
-                          <span className={`text-xs ${r.enabled ? "text-success" : "text-muted-foreground"}`}>
+                          {badge && <Badge variant="warning" className="ml-1.5 font-sans">{badge}</Badge>}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{r.upstream}</TableCell>
+                        <TableCell>
+                          <Badge variant={r.enabled ? "success" : "default"}>
                             {r.enabled ? "启用" : "已停用"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(r.updated_at)}</td>
-                        <td className="px-3 py-2.5">
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{fmtTime(r.updated_at)}</TableCell>
+                        <TableCell>
                           <div className="flex justify-end gap-1.5">
-                            <button
+                            <Button
                               onClick={() => {
                                 setError("")
                                 setNotice("")
@@ -389,41 +390,42 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                                 setForm(proxyRouteForm(r))
                               }}
                               disabled={busy}
-                              className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
+                              size="sm"
                             >
                               编辑
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                               onClick={() => toggle(r)}
                               disabled={busy}
-                              className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
+                              size="sm"
                             >
                               {r.enabled ? <BanIcon width={12} height={12} /> : <CheckIcon width={12} height={12} />}
                               {r.enabled ? "停用" : "启用"}
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                               onClick={() => remove(r)}
                               disabled={busy}
-                              className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-destructive transition-colors hover:bg-muted disabled:opacity-40"
+                              variant="danger-outline"
+                              size="sm"
                             >
                               <TrashIcon width={12} height={12} /> 删除
-                            </button>
+                            </Button>
                           </div>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     )
                   })}
                 {listState !== "rows" && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
                       {listState === "loading" && "加载中…"}
                       {listState === "empty" && "暂无代理路由"}
                       {listState === "error" && "未能加载代理路由，请点击刷新重试"}
-                    </td>
+                    </TableCell>
                   </tr>
                 )}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         </>
       )}

@@ -10,7 +10,7 @@
 2. [集群来源与命名空间](migrations/cluster_inventory.sql)
 3. [Node 与机器关联](migrations/inventory_node_links.sql)
 
-已有机器台账升级时，需重新执行幂等的机器迁移以创建机器账号关联表。Gateway 需配置并持续保管原有 `DOOPS_GATEWAY_SECRET_KEY`，接入页面和 Gateway 间使用受保护的连接；本机测试可使用回环地址。
+已有机器台账升级时，需重新执行幂等的机器迁移以创建机器账号关联表和标签索引表 `inventory_machine_tags`。Gateway 需配置并持续保管原有 `DOOPS_GATEWAY_SECRET_KEY`，接入页面和 Gateway 间使用受保护的连接；本机测试可使用回环地址。
 4. [业务系统与部署关系](migrations/business_inventory.sql)
 5. [服务器服役状态与覆盖率基线](migrations/asset_coverage.sql)
 6. [监控样本与规则](migrations/asset_monitor.sql)
@@ -18,15 +18,28 @@
 8. [集群盘点底册及冻结版本](migrations/asset_coverage_registers.sql)
 9. [工作负载运行快照及绑定](migrations/asset_runtime_topology.sql)
 10. [机器指纹绑定及诊断样本](migrations/machine_diagnostics.sql)
+11. [Agent 资产分配](migrations/agent_asset_scope.sql)
+12. [旧版个人资产登记](migrations/personal_asset_records.sql)
+13. [业务资产台账与集群基本资料](migrations/asset_catalog.sql)
 
 升级已有 GPU 监控库时，按 [设备维度迁移说明](migrations/asset_monitor_devices.sql) 在专用数据库连接上执行迁移。新建库直接使用当前的 `asset_monitor.sql`。已有机器诊断库可重跑 `machine_diagnostics.sql` 增加隧道采样记录。所有迁移均按环境留存执行回执。
 
+`GET /v1/assets/machines?tag=prod&tag=gateway` 返回同时匹配全部标签、当前账号有权查看的机器。管理员可在 create/update 的 `machine.tags` 传字符串数组；不传保留旧值，`[]` 清除，更新必须携带 `expected_revision`。每台限 20 个标签，每项最多 32 个字符，可用中英文、数字、点、横线及下划线，自动去首尾空白、转小写和去重。CSV 重新导入不覆盖标签。
+
 逐项核对目标数据库的迁移记录。`asset_coverage.sql` 包含一次性列变更。回滚需要使用本次变更前的数据库备份，并评估备份时点之后的资产写入。
 
-`GET` 请求按登录身份返回可见记录。平台管理员维护资产。普通用户的机器、集群和 Node 关系按目标授权过滤，关系两端都可见才会展示。去掉目标授权后，后续查询立即采用新的可见范围。写入沿用 Gateway 身份和审计。
+个人登记接口 `GET /v1/assets/records?kind=database` 返回当前账号此类型的 `records`。类型为 `database`、`website`、`k8s`、`vm` 或 `image`。`POST /v1/assets/records` 使用 `op`（`create`、`update`、`delete`）、`kind`、`id`、`name`、`environment` 和 `revision`；更新和删除必须使用当前版本，冲突返回 409。记录所有者取自登录身份，不能指定；接口不维护凭据，也不连接或变更运行资源。
+
+`GET /v1/assets/catalog?kind=database|website|image` 返回当前可见的 `records`。POST 的 `op=create/update/delete` 分别创建、修改、移除台账元数据，更新及移除需传 `id` 与 `revision`。`details` 按类型分别为 `engine,host,port,database`、`scheme,domain,path`、`registry,repository,version`，不接收认证材料。未绑定目标只对创建者可见，绑定后按目标授权共享；同一范围内不可重复登记相同资源标识。
+
+`GET /v1/assets/cluster-profiles` 返回可见集群基本资料；POST 接受 `create/update/delete/unlink`。待接入资料确认关联使用集群接口 `action=attach`，要求是创建者、具有对应目标授权且来源尚未纳管，仍执行现场验证。删除已纳管的资料须先解除来源关联。
+
+其他台账的 `GET` 请求按登录身份返回可见记录。平台管理员维护平台台账。普通用户的机器、集群和 Node 关系按目标授权过滤，关系两端都可见才会展示。去掉目标授权后，后续查询立即采用新的可见范围。写入沿用 Gateway 身份和审计。
 
 | 接口 | 请求和回执 |
 | --- | --- |
+| `GET /v1/assets/workspace` | `view=directory` 列出当前用户获授权的已登记 Agent。按 `cluster,instance` 查询工作区，返回台账直接关联及平台分配的资产元数据。管理员可用 `view=targets` 选择目标，再以 `view=manage` 和具体目标核对全台账分配状态。 |
+| `POST /v1/assets/workspace` | 平台管理员提交具体 `cluster,instance,kind,asset_id,assigned`。类型为 `machine`、`cluster` 或 `system`。逐资产分配和撤销与成功审计在同一事务提交。凭据使用仍由目标已有绑定决定。 |
 | `GET /v1/assets/machines` | `machines` 数组包含资产编号、规格、宿主、目标和版本。管理员用 `?batch_id=…` 查最近一次 CSV 确认的回执，以 `attempt_id` 指定历史回执。 |
 | `POST /v1/assets/machines` | `action=create/update` 提交 `machine`，编辑还需 `expected_revision`。版本冲突返回 409。`action=preview` 提交 `csv` 字符串并取得 `preview_token`。`action=import` 提交相同内容和该标识。若确认时行的导入结果已变化，返回 409，重新预览后再确认。两步的 `scope` 应反映转换前的导入要求；省略时沿用 `machine_metadata`。`machine_and_credentials` 接受 `username,password` 两列，并在确认事务中保存机器、加密的凭据及其关联。仅给已存在资产补录时，使用 `asset_id,username,password`。`credential_result.expected` 是本批待写凭据数，`saved` 是实际写入数，`existing` 是已保存且内容一致的凭据数。变更预览、数据冲突或凭据存储不可用时不会部分确认。台账模式和历史台账回执仍报告本批保存的机器凭据为 0。 |
 | `GET /v1/assets/clusters` | `clusters` 按可见来源返回集群编号、来源目标及 `namespaces`。同一资产编号可以有多个已验证来源，每个来源维护自己的观测范围。 |
@@ -477,7 +490,11 @@ Agent 在 `capabilities.protocols.executionLifecycle` 声明
 `schemaVersion=doops.sh/execution-lifecycle/v1`，且 `terminalResponse`、
 `backgroundLifetime`、`promptCancellation` 必须全部为布尔 `true`，不得缺字段或额外字段。
 CLI 和 Gateway（包括内部调度调用）在后台任务派发前校验，不满足则拒绝且不占执行锁。
-`backgroundLifetime` 表示任务受控并等待原始 RPC 终态，不承诺跨断连存活。
+`backgroundLifetime` 表示任务受控并等待原始 RPC 终态。`doops_bg` 可加
+`arguments.detach: true` 请求 Gateway 托管：Gateway 在 `gatewayProtocols.detachedBackground`
+宣告 `maxDuration`（默认 `24h0m0s`），审计建立后发送
+`notifications/doops/background_task`（含 `audit_id`、`operation_id`），此后发起连接断连
+不再取消任务，任务运行至真实终态或 `maxDuration`。
 终态、取消和未知结果仍由 Gateway 统一处理。workspace 写入等本地操作缺失终态时同样
 如实保留未知结果；执行结束及连接清理后释放 lease。审计持久化失败报告
 `audit_completion_failed` 并独立重试原始终态，不保留执行锁；历史未知审计不参与新任务准入。
@@ -594,6 +611,20 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 在进程及其进程组终止后才返回最终结果；CLI 使用一次流式 RPC，不轮询或重试任务。
 `doops_task_status` 可独立查询已有任务日志；终态无法确认时返回
 `execution_outcome_unknown`，状态查询显示 `unknown`，不得把提交成功当成执行完成。
+
+`detach: true`（仅 `doops_bg` 支持；其他工具携带返回 `-32602`）把任务交给 Gateway 托管：
+审计建立后、Agent 派发前，发起连接收到
+`{"jsonrpc":"2.0","method":"notifications/doops/background_task","params":{"request_id":<id>,"audit_id":<int>,"operation_id":"op-..."}}`。
+Gateway 持有 Agent RPC、lease 与审计直到真实终态；`detach` 在转发前剥离，Agent 参数不变。
+发起者本人可用登录 token 访问：
+
+- `GET /v1/background-tasks?cluster=<c>&instance=<i>` → `{"tasks":[{...}]}`（无 `output` 字段，新任务在前）
+- `GET /v1/background-tasks/<audit_id>` → 任务视图加 `output`（最后 64 KiB 脱敏输出）；不存在、非本人或授权失效返回 `404 {"error":"background_task_not_found"}`
+- `POST /v1/background-tasks/<audit_id>/cancel` → 运行中返回 `202 {"audit_id":N,"cancel_requested":true}`（仅 ACK，等待真实终态）；已终态返回 `409 {"error":"background_task_finished"}`
+
+任务视图字段：`audit_id`、`operation_id`、`cluster`、`instance`、`session`、
+`command_summary`、`status`、`started_at`、`finished_at`、`task_id`、`cancel_requested`。
+注册表保存在 Gateway 内存中，重启后任务记录消失；Agent 隧道断开按既有规则结束任务。
 
 参数：
 

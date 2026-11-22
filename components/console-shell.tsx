@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { Menu } from "lucide-react"
 import dynamic from "next/dynamic"
 import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -9,13 +10,16 @@ import { isLostGatewaySession } from "@/lib/gateway-auth"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
-import { errorAfterRefresh, reconcileSelected, reconcileTargets, type RefreshTrigger } from "@/lib/console-refresh"
+import { errorAfterRefresh, reconcileSelected, reconcileTargets, workspaceTargets, type TargetRef, type RefreshTrigger } from "@/lib/console-refresh"
+import { assetRequest } from "@/lib/assets"
 import { displayUserName } from "@/lib/session-display"
 import { NETWORK_FAILURE_MESSAGE, subscribeNetworkStatus } from "@/lib/network-error"
-import { consoleViewEntries, credentialsDestination, type ConsoleView, type ConsoleViewEntry } from "@/lib/console-views"
+import { CONSOLE_HOME, assetKinds, credentialsDestination, targetTabLabel, type CatalogKind, type AssetArea, type ConsoleNavEntry, type ConsoleView, type DeploySection, type TargetTab as Tab } from "@/lib/console-views"
+import { buildConsoleSearch, parseConsoleSearch } from "@/lib/console-url"
 import {
   browserSessionStorage,
   clearConsoleState,
+  clearSelection,
   commandJournal,
   consoleScopeKey,
   loadSelection,
@@ -37,7 +41,8 @@ import {
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
-import { nextTerminalPrefill, prefillToApply, targetSwitchBlocker, type TerminalPrefill } from "@/lib/shell-blocks"
+import { BackgroundTasksPanel } from "./background-tasks-panel"
+import { navigationBlocker, nextTerminalPrefill, prefillToApply, targetSwitchBlocker, TERMINAL_RUNNING_MESSAGE, type TerminalPrefill } from "@/lib/shell-blocks"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
 import { FilesPanel } from "./files-panel"
@@ -48,22 +53,25 @@ import { K8sPanel } from "./k8s-panel"
 import { ImagePanel } from "./image-panel"
 import { AuditPanel } from "./audit-panel"
 import { CredentialPanel } from "./credential-panel"
-import { AdminConsole } from "./admin-console"
+import { ResourceCatalogPanel, resourceAddress, type CatalogRow } from "./resource-catalog-panel"
+import { LegacyAssetNotes } from "./legacy-asset-notes"
 import { AssetInventory, assetReturnLabel, type AssetPage } from "./asset-inventory"
-import { DashboardPanel } from "./dashboard-panel"
-import { DeployView, type DeploySection } from "./deploy-view"
-import { TargetToolsNav, type TargetTab as Tab } from "./console-target-nav"
+import { AgentAssets, AgentDirectory } from "./agent-asset-scope"
+import { AgentMonitor } from "./asset-monitor-panel"
+import { CurrentMachineSection, DashboardPanel } from "./dashboard-panel"
+import { NodeInfoCard } from "./node-info-card"
+import { DeployView } from "./deploy-view"
+import { ConsoleNav } from "./console-nav"
+import { SessionInput } from "./session-input"
 import { OnboardingGuide } from "./onboarding-guide"
 import { WhatsNewDialog, type WhatsNewMode } from "./whats-new-dialog"
-import { Button, Input } from "./ui"
+import { Button, StatusBanner } from "./ui"
 import {
   SparkIcon,
   HistoryIcon,
   LogoutIcon,
   ServerIcon,
-  ShieldIcon,
   HelpIcon,
-  RocketIcon,
 } from "./icons"
 import { BrandLockup } from "./brand"
 
@@ -76,7 +84,6 @@ const GW_KEY = "doops.gateway"
 const LEGACY_DEMO_KEY = "doops.demo"
 const ONBOARD_KEY = "doops.onboarded"
 const DEMO_ENABLED = isDemoAllowed()
-const TERMINAL_RUNNING_MESSAGE = "终端命令仍在执行，请先等待结束或停止命令，再切换目标、会话或页面"
 
 // 「更新内容」的已读版本和「今天不再弹出」只写本机 localStorage。隐私模式或禁用
 // 存储时访问会抛错，按首次访问处理：手动入口仍然可用，只是每次都不弹出。
@@ -88,6 +95,17 @@ function browserLocalStorage(): StorageLike | null {
   }
 }
 
+// Gateway 地址和引导状态只是便利项：存储不可用时照常登录和使用，只是不记住。
+function readLocal(key: string): string | null {
+  try { return browserLocalStorage()?.getItem(key) ?? null } catch { return null }
+}
+function writeLocal(key: string, value: string) {
+  try { browserLocalStorage()?.setItem(key, value) } catch { /* not persisted */ }
+}
+function removeLocal(key: string) {
+  try { browserLocalStorage()?.removeItem(key) } catch { /* nothing to remove */ }
+}
+
 type WhatsNewOpen = {
   mode: WhatsNewMode
   /** The version seen before this open; the dialog's "since" range starts after it. */
@@ -97,10 +115,17 @@ type WhatsNewOpen = {
 }
 
 export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[] }) {
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
   const [defaultGateway, setDefaultGateway] = useState("")
   const [targets, setTargets] = useState<Target[]>([])
+  const [registered, setRegistered] = useState<TargetRef[]>([])
+  const [directoryError, setDirectoryError] = useState("")
+  const directory = useMemo(() => workspaceTargets(targets, registered), [targets, registered])
+  const latestRefresh = useRef(0)
+  const refreshing = useRef(false)
   const [selected, setSelected] = useState<Target | null>(null)
+  const onlineSelected = selected?.status === "offline" ? null : selected
   const [sessionId, setSessionId] = useState(randomSession())
   const [tab, setTab] = useState<Tab>("overview")
   const [terminalPrefill, setTerminalPrefill] = useState<TerminalPrefill | null>(null)
@@ -112,11 +137,20 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     setTerminalPrefill((previous) => nextTerminalPrefill(previous, command))
     setTab("terminal")
   }, [])
-  const [view, setView] = useState<ConsoleView>("console")
+  const [view, setView] = useState<ConsoleView>(CONSOLE_HOME)
+  const pendingHomeTab = useRef<Tab | null>(null)
   const [deploySection, setDeploySection] = useState<DeploySection>("onboard")
+  const [catalogKind, setCatalogKind] = useState<CatalogKind>("database")
+  const [catalogContext, setCatalogContext] = useState<{row: CatalogRow; targetKey: string; sessionId: string; scope:string} | null>(null)
   const [assetNamespace, setAssetNamespace] = useState("")
   const [assetOrigin, setAssetOrigin] = useState<{ page: AssetPage; targetKey: string; scope: string } | null>(null)
-  const [assetEntry, setAssetEntry] = useState<AssetPage>()
+  const [assetPage, setAssetPage] = useState<AssetPage>({ section: "board" })
+  // 平台资产台账 reopens the section the user last read; the header owns the area.
+  const lastLedger = useRef<AssetPage>({ section: "machines" })
+  const urlInitializedRef = useRef(false)
+  const poppingHistoryRef = useRef(false)
+  const routeRef = useRef({ view, tab, assetPage, deploySection, catalogKind })
+  routeRef.current = { view, tab, assetPage, deploySection, catalogKind }
   const [authLoading, setAuthLoading] = useState(true)
   const [disconnecting, setDisconnecting] = useState(false)
   const [skillRunning, setSkillRunning] = useState(false)
@@ -126,6 +160,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     if (!running) setError((current) => current === TERMINAL_RUNNING_MESSAGE ? "" : current)
   }, [])
   const [execRunning, setExecRunning] = useState(false)
+  // Read by the popstate listener, which outlives the render that registered it.
+  const navLock = useRef({ skillRunning, execRunning })
+  navLock.current = { skillRunning, execRunning }
+  const navLockMessage = useRef("")
+  useEffect(() => {
+    if (!skillRunning && !execRunning) setError((current) => current && current === navLockMessage.current ? "" : current)
+  }, [skillRunning, execRunning])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   // A failed target poll is shown apart from operation errors and clears itself
@@ -209,13 +250,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   }, [autoOpenPending, session, showGuide, openWhatsNew])
 
   const codeWorkspace = useMemo(() => {
-    if (!session || !selected) return null
-    return createDoopsCodeWorkspace({ session, target: selected, sessionId })
-  }, [session, selected?.cluster, selected?.instance, sessionId])
+    if (!session || !onlineSelected) return null
+    return createDoopsCodeWorkspace({ session, target: onlineSelected, sessionId })
+  }, [session, onlineSelected?.cluster, onlineSelected?.instance, sessionId])
   const agentRuntime = useMemo(() => {
-    if (!session || !selected || !codeWorkspace) return null
-    return createDoopsAgentUiRuntime({ session, target: selected, sessionId, codeWorkspace })
-  }, [session, selected?.cluster, selected?.instance, sessionId, codeWorkspace])
+    if (!session || !onlineSelected || !codeWorkspace) return null
+    return createDoopsAgentUiRuntime({ session, target: onlineSelected, sessionId, codeWorkspace })
+  }, [session, onlineSelected?.cluster, onlineSelected?.instance, sessionId, codeWorkspace])
   const [openedAgentRuntime, setOpenedAgentRuntime] = useState<AgentSessionRuntime | null>(null)
   useEffect(() => {
     if (!agentRuntime || (view === "console" && tab === "ask")) setOpenedAgentRuntime(agentRuntime)
@@ -223,10 +264,10 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
 
   useEffect(() => {
     if (typeof window === "undefined") return
-    const saved = localStorage.getItem(GW_KEY)
+    const saved = readLocal(GW_KEY)
     setDefaultGateway(resolveDefaultGateway(saved, window.location.origin))
     if (!DEMO_ENABLED) {
-      localStorage.removeItem(LEGACY_DEMO_KEY)
+      removeLocal(LEGACY_DEMO_KEY)
     }
     // 演示模式只允许本地开发通过 URL 显式开启，不持久化 mock 会话。
     const params = new URLSearchParams(window.location.search)
@@ -235,7 +276,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       // ?demo=1&role=user 模拟普通用户界面，默认仍是管理员界面。
       const demoAdmin = params.get("role") !== "user"
       setSession({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true, isAdmin: demoAdmin })
-      if (localStorage.getItem(ONBOARD_KEY) !== "1") setShowGuide(true)
+      if (readLocal(ONBOARD_KEY) !== "1") setShowGuide(true)
       setAuthLoading(false)
       return
     }
@@ -244,7 +285,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     void restoreServerSession()
       .then((restored) => {
         if (!active || !restored) return
-        localStorage.setItem(GW_KEY, restored.gateway)
+        writeLocal(GW_KEY, restored.gateway)
         setDefaultGateway(restored.gateway)
         setSession(restored)
       })
@@ -264,16 +305,28 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   // asks for clears it.
   const refresh = useCallback(async (trigger: RefreshTrigger = "user") => {
     if (!session) return
+    if (refreshing.current && trigger === "background") return
+    refreshing.current = true
+    const request = ++latestRefresh.current
     setLoading(true)
     setError((current) => errorAfterRefresh(current, trigger))
     try {
-      const t = await fetchTargets(session)
+      const [t, catalog] = await Promise.all([
+        fetchTargets(session),
+        session.demo ? Promise.resolve({ targets: [], error: "" }) :
+          assetRequest<{ targets: TargetRef[] }>("workspace", undefined, new URLSearchParams({ view: "directory" }))
+            .then(({ targets }) => ({ targets, error: "" }), (err: Error) => ({ targets: [], error: err.message })),
+      ])
+      if (request !== latestRefresh.current) return
+      setRegistered(catalog.targets)
+      setDirectoryError(catalog.error)
       setTargets((previous) => reconcileTargets(previous, t))
       setTargetsError("")
+      const available = workspaceTargets(t, catalog.targets)
       const scopeKey = consoleScopeKey(session)
       if (restoredScope.current !== scopeKey) {
         restoredScope.current = scopeKey
-        const restored = restoreSelection(loadSelection(browserSessionStorage(), session), t)
+        const restored = restoreSelection(loadSelection(browserSessionStorage(), session), available)
         setSelected(restored.selected)
         if (restored.sessionId) setSessionId(restored.sessionId)
         setRestoreNotice(restored.notice)
@@ -283,9 +336,10 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           if (restored.selected) setTab("terminal")
         }
       } else {
-        setSelected((cur) => reconcileSelected(cur, t, terminalRunning.current))
+        setSelected(cur => reconcileSelected(cur, terminalRunning.current ? t : available, terminalRunning.current))
       }
     } catch (err) {
+      if (request !== latestRefresh.current) return
       if (isLostGatewaySession(err)) {
         try {
           if (!session.demo) await clearServerSession()
@@ -295,13 +349,18 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
         setSession(null)
         setTargets([])
         setSelected(null)
+        setRegistered([])
+        setDirectoryError("")
         setTargetsError("")
         setError((err as Error).message || "登录已过期，请重新登录")
         return
       }
       setTargetsError((err as Error).message)
     } finally {
-      setLoading(false)
+      if (request === latestRefresh.current) {
+        refreshing.current = false
+        setLoading(false)
+      }
     }
   }, [session])
 
@@ -309,7 +368,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     if (!session) return
     refresh("user")
     const id = setInterval(() => refresh("background"), 10000)
-    return () => clearInterval(id)
+    return () => { clearInterval(id); latestRefresh.current++ }
   }, [session, refresh])
 
   const clearInterruptedNotices = useCallback(() => setInterruptedNotices([]), [])
@@ -330,25 +389,83 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     saveSelection(browserSessionStorage(), session, { targetKey: selected.key, sessionId })
   }, [session, selected?.key, sessionId])
 
+  // Sync in-console route state with URL query params and browser Back/Forward history.
+  useEffect(() => {
+    if (!session || typeof window === "undefined") return
+    if (!urlInitializedRef.current) {
+      urlInitializedRef.current = true
+      const initial = parseConsoleSearch(window.location.search)
+      poppingHistoryRef.current = true
+      setView(initial.view)
+      setTab(initial.tab)
+      setAssetPage(initial.assetPage)
+      setDeploySection(initial.deploySection)
+      setCatalogKind(initial.catalogKind)
+      if (!selected && initial.view === "console") pendingHomeTab.current = initial.tab
+      return
+    }
+    if (poppingHistoryRef.current) {
+      poppingHistoryRef.current = false
+      return
+    }
+    const nextSearch = buildConsoleSearch(window.location.search, {
+      view,
+      tab,
+      assetPage,
+      deploySection,
+      catalogKind,
+    })
+    if (nextSearch !== window.location.search) {
+      window.history.pushState(null, "", `${window.location.pathname}${nextSearch}`)
+    }
+  }, [session, view, tab, assetPage, deploySection, catalogKind])
+
+  useEffect(() => {
+    if (!session || typeof window === "undefined") return
+    function onPopState() {
+      const blocker = navigationBlocker({ terminalRunning: terminalRunning.current, ...navLock.current })
+      if (blocker) {
+        navLockMessage.current = blocker
+        setError(blocker)
+        const lockedSearch = buildConsoleSearch(window.location.search, routeRef.current)
+        window.history.pushState(null, "", `${window.location.pathname}${lockedSearch}`)
+        return
+      }
+      const parsed = parseConsoleSearch(window.location.search)
+      poppingHistoryRef.current = true
+      setError("")
+      setView(parsed.view)
+      setTab(parsed.tab)
+      setAssetPage(parsed.assetPage)
+      setDeploySection(parsed.deploySection)
+      setCatalogKind(parsed.catalogKind)
+    }
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [session])
+
   function handleConnected(s: Session) {
-    setAssetEntry(undefined)
+    urlInitializedRef.current = true
+    setView(CONSOLE_HOME)
+    setTab("overview")
+    pendingHomeTab.current = null
+    setAssetPage({ section: "board" })
     setAssetOrigin(null)
     if (!s.demo) {
-      localStorage.setItem(GW_KEY, s.gateway)
-      localStorage.removeItem(LEGACY_DEMO_KEY)
+      writeLocal(GW_KEY, s.gateway)
+      removeLocal(LEGACY_DEMO_KEY)
     }
     setSession(s)
-    if (localStorage.getItem(ONBOARD_KEY) !== "1") setShowGuide(true)
+    if (readLocal(ONBOARD_KEY) !== "1") setShowGuide(true)
   }
 
   function closeGuide() {
     setShowGuide(false)
-    localStorage.setItem(ONBOARD_KEY, "1")
+    writeLocal(ONBOARD_KEY, "1")
   }
 
   function logout() {
     if (blockTerminalSwitch()) return
-    if (skillRunning) { setError("请先等待当前操作结束，再退出登录"); return }
     if (disconnecting) return
     setDisconnecting(true)
     const current = session
@@ -359,29 +476,82 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       } catch (err) {
         setError((err as Error).message)
       } finally {
-        localStorage.removeItem(LEGACY_DEMO_KEY)
+        removeLocal(LEGACY_DEMO_KEY)
         if (current) clearConsoleState(browserSessionStorage(), current)
+        urlInitializedRef.current = false
         restoredScope.current = ""
         setRestoreNotice("")
         setInterruptedNotices([])
         setSession(null)
         setTargets([])
         setSelected(null)
+        setRegistered([])
+        setDirectoryError("")
         setDisconnecting(false)
       }
     })()
+  }
+
+  function openAssetPage(next: AssetPage) {
+    if (next.section !== "board" && next.section !== "scope") lastLedger.current = next
+    setAssetPage(next)
+  }
+
+  // 平台监控 and 平台资产台账 are separate top-level entries; the ledger keeps the
+  // last section so switching between them does not reset the list state.
+  function openAssetArea(area: AssetArea): void {
+    openView("assets")
+    if (area === "machines") return openAssetPage({section:"machines"})
+    if (area === "board") return openAssetPage({ section: "board" })
+    if (area === "scope") return openAssetPage({ section: "scope" })
+    if (lastLedger.current.section === area) return openAssetPage(lastLedger.current)
+    if (area === "clusters") return openAssetPage({ section: "clusters", query: "", expanded: [] })
+    return openAssetPage({ section: "systems" })
+  }
+
+  function navigateEntry(entry: ConsoleNavEntry) {
+    const destination = entry.destination
+    if (destination.view === CONSOLE_HOME) return openView(CONSOLE_HOME)
+    if (destination.view === "assets") {
+      openAssetArea(destination.area)
+      return
+    }
+    if (destination.view === "deploy") {
+      openView("deploy")
+      return setDeploySection(destination.section)
+    }
+    if (destination.view === "admin") {
+      if (session && sessionIsAdmin(session) && !blockTerminalSwitch()) window.location.assign("/console/admin")
+      return
+    }
+    if (destination.view === "catalog") {
+      if (blockTerminalSwitch()) return
+      setCatalogKind(destination.kind)
+      return openView("catalog")
+    }
+    openView("console")
+    if (selected) {
+      selectTab(destination.tab)
+      return
+    }
+    // With no target picked the workspace shows the Agent directory. Keep the
+    // tool highlighted so the click visibly lands, and remember it for the
+    // target the user picks next.
+    pendingHomeTab.current = destination.tab
+    setTab(destination.tab)
   }
 
   // Switching views clears the operation error, like a refresh the user asked for.
   function openView(next: typeof view) {
     if (next !== view && blockTerminalSwitch()) return
     if (next !== view) {
+      pendingHomeTab.current = null
       if (next === "assets") {
-        setAssetEntry(session && assetOrigin?.scope === consoleScopeKey(session) && assetOrigin.targetKey === selected?.key ? assetOrigin.page : undefined)
+        openAssetPage(session && assetOrigin?.scope === consoleScopeKey(session) && assetOrigin.targetKey === selected?.key ? assetOrigin.page : { section: "board" })
       }
       setAssetOrigin(null)
     }
-    if (next === "deploy" && view !== "deploy") setDeploySection(selected ? "workload" : "onboard")
+    if (next === "deploy" && view !== "deploy") setDeploySection(onlineSelected ? "workload" : "onboard")
     setError("")
     setView(next)
   }
@@ -391,9 +561,12 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     setDeploySection("onboard")
   }
 
+  // 终端有命令在跑时，切换视图、目标或工具会中断那次执行，所以先拦下来告诉用户。
   function blockTerminalSwitch() {
-    if (!terminalRunning.current) return false
-    setError(TERMINAL_RUNNING_MESSAGE)
+    const blocker = navigationBlocker({ terminalRunning: terminalRunning.current, skillRunning, execRunning })
+    if (!blocker) return false
+    navLockMessage.current = blocker
+    setError(blocker)
     return true
   }
 
@@ -404,7 +577,8 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   }
 
   function changeSession(next: string) {
-    if (next !== sessionId && blockTerminalSwitch()) return
+    if (next === sessionId || blockTerminalSwitch()) return
+    if (agentRuntime && isDoopsAgentSessionBusy(agentRuntime.getSnapshot(sessionId))) { setError("请先停止当前 AI 任务，再切换会话"); return }
     setSessionId(next)
   }
 
@@ -428,6 +602,21 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     return true
   }
 
+  function openHomeTool(next: Tab) {
+    if (blockTerminalSwitch()) return
+    openView("console")
+    selectTab(next)
+    if (!selected) pendingHomeTab.current = next
+  }
+
+  function chooseWorkspaceTarget(target: Target) {
+    if (!selectTarget(target)) return
+    if (!selected && view === "console") {
+      setTab(pendingHomeTab.current ?? "overview")
+      pendingHomeTab.current = null
+    }
+  }
+
   if (authLoading || disconnecting) {
     return <main className="flex min-h-dvh items-center justify-center text-sm text-muted-foreground">{disconnecting ? "正在断开连接..." : "正在恢复登录会话..."}</main>
   }
@@ -438,45 +627,44 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
 
   // 只控制管理入口是否显示；管理接口的权限仍由 Gateway 检查。
   const isAdmin = sessionIsAdmin(session)
-  const viewEntries = consoleViewEntries(isAdmin)
   // "打开凭据" on the AI assistant and the release page: the credentials tab,
   // where a modelProvider credential is bound. Only admins get the link.
   const credentials = credentialsDestination(isAdmin)
   const openCredentials = credentials
-    ? () => {
-        openView(credentials.view)
-        selectTab(credentials.tab)
-      }
+    ? () => openHomeTool(credentials.tab)
     : undefined
 
   // K25：刷新后的「结果未知」提示固定在 shell 顶层渲染，不依赖终端标签页是否打开，
   // 也不依赖当次 /api/targets 是否返回目标；记录留在状态里，直到用户关闭横幅。
   const interruptedBanner = interruptedBannerView(interruptedNotices)
 
+  const resource = catalogContext && catalogContext.targetKey === selected?.key && catalogContext.sessionId === sessionId && catalogContext.row.kind === tab && catalogContext.scope === consoleScopeKey(session) ? catalogContext.row : null
   const fromAsset = view === "console" && assetOrigin?.scope === consoleScopeKey(session) && assetOrigin.targetKey === selected?.key && targets.some(t => t.key === selected.key && t.status !== "offline")
 
   return (
-    <div className="flex h-dvh w-full flex-col">
+    <div className="console-shell flex h-dvh w-full flex-col">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/50 bg-card/80 px-4 py-2.5 backdrop-blur">
-        <div className="flex min-w-0 flex-1 items-center gap-2 lg:flex-initial">
-          <Link href="/" aria-label="DoOps 首页" className="shrink-0 transition-opacity hover:opacity-90">
-            <BrandLockup height={22} />
-          </Link>
-          {/* From 640px up the view entries sit inline, as before. */}
-          <nav aria-label="主导航" className="ml-2 hidden shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5 sm:flex">
-            {viewEntries.map((entry) => (
-              <ViewButton
-                key={entry.id}
-                entry={entry}
-                active={view === entry.id}
-                disabled={skillRunning}
-                onSelect={openView}
-                className="px-2.5 py-1"
-              />
-            ))}
-          </nav>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <button type="button" className="console-menu-toggle md:hidden" aria-label="打开主菜单"
+          aria-haspopup="dialog" aria-expanded={mobileNavOpen} aria-controls={mobileNavOpen ? "console-nav-drawer" : undefined}
+          onClick={() => setMobileNavOpen(true)}><Menu size={20} aria-hidden="true" />菜单</button>
+        <Link href="/" aria-label="DoOps 首页" className="shrink-0 transition-opacity hover:opacity-90">
+          <BrandLockup height={34} />
+        </Link>
+        <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
+          <TargetSwitcher
+            targets={directory}
+            selected={selected}
+            onSelect={chooseWorkspaceTarget}
+            onViewAll={() => {
+              if (blockTerminalSwitch()) return
+              if (agentRuntime && isDoopsAgentSessionBusy(agentRuntime.getSnapshot(sessionId))) { setError("请等待当前 Agent 操作结束。"); return }
+              clearSelection(browserSessionStorage(), session)
+              setSelected(null); setAssetOrigin(null); setTab("overview"); setSessionId(randomSession())
+            }}
+            onRefresh={() => refresh("user")}
+            loading={loading}
+            isAdmin={isAdmin}
+          />
           <span className="hidden text-xs text-muted-foreground sm:inline">{displayUserName(session)}</span>
           <Link
             href="/blog"
@@ -484,7 +672,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
               if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && blockTerminalSwitch()) event.preventDefault()
             }}
             title="博客"
-            className="flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+            className="btn btn-sm"
           >
             <SparkIcon width={14} height={14} />
             <span className="hidden sm:inline">博客</span>
@@ -525,26 +713,18 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           </Button>
         </div>
       </header>
-      {/* Below 640px the view entries get a row of their own, so every one of
-          them stays visible without scrolling and nothing covers it. */}
-      <nav
-        aria-label="主导航"
-        data-testid="view-nav-narrow"
-        className="grid shrink-0 gap-1 border-b bg-card px-2 py-1.5 sm:hidden"
-        style={{ gridTemplateColumns: `repeat(${viewEntries.length}, minmax(0, 1fr))` }}
-      >
-        {viewEntries.map((entry) => (
-          <ViewButton
-            key={entry.id}
-            entry={entry}
-            active={view === entry.id}
-            disabled={skillRunning}
-            onSelect={openView}
-            className="justify-center border px-1 py-1.5"
-          />
-        ))}
-      </nav>
-
+      <div className="flex min-h-0 min-w-0 flex-1">
+      <ConsoleNav mobileOpen={mobileNavOpen} onDismiss={() => setMobileNavOpen(false)}
+        view={view}
+        tab={tab}
+        assetArea={assetPage.section}
+        deploySection={deploySection}
+        catalogKind={catalogKind}
+        isAdmin={isAdmin}
+        hasTarget={Boolean(onlineSelected)}
+        onNavigate={navigateEntry}
+      />
+      <div className="console-workspace flex min-h-0 min-w-0 flex-1 flex-col">
       {showGuide && <OnboardingGuide onClose={closeGuide} />}
 
       {whatsNewOpen && releaseVersion && changelog.length > 0 && (
@@ -558,97 +738,150 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       )}
 
       {offline && (
-        <div role="alert" data-testid="offline-banner" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
+        <StatusBanner tone="warning" role="alert" data-testid="offline-banner" className="shrink-0 rounded-none border-x-0 border-t-0 px-4">
           {NETWORK_FAILURE_MESSAGE}。网络恢复后此提示会自动消失，不会自动重试操作。
-        </div>
+        </StatusBanner>
       )}
       {interruptedBanner && (
-        <div role={interruptedBanner.role} data-testid="interrupted-commands-banner"
-          className="flex shrink-0 flex-wrap items-start gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
+        <StatusBanner tone="warning" role={interruptedBanner.role} data-testid="interrupted-commands-banner"
+          className="flex shrink-0 flex-wrap items-start gap-2 rounded-none border-x-0 border-t-0 px-4">
           <span className="min-w-0 flex-1">
             {interruptedBanner.notices.map((notice, index) => (
               <span key={index} className="block">{notice}</span>
             ))}
           </span>
-          <button onClick={clearInterruptedNotices} className="shrink-0 rounded px-2 py-0.5 text-xs hover:bg-warning/20">
+          <Button size="sm" variant="ghost" onClick={clearInterruptedNotices} className="shrink-0">
             {interruptedBanner.dismissLabel}
-          </button>
-        </div>
+          </Button>
+        </StatusBanner>
       )}
-      {(error || targetsError) && <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{[error, targetsError].filter(Boolean).join("；")}</div>}
+      {(error || targetsError) && (
+        <StatusBanner tone="error" className="shrink-0 rounded-none border-x-0 border-t-0 px-4">
+          {[error, targetsError].filter(Boolean).join("；")}
+        </StatusBanner>
+      )}
       {terminalRunning.current && selected && (
         <div role="status" className="shrink-0 border-b bg-card px-4 py-2 text-sm text-muted-foreground">
           {selected.cluster}/{selected.instance} · {sessionId}：{TERMINAL_RUNNING_MESSAGE}
         </div>
       )}
       {restoreNotice && (
-        <div role="status" className="flex shrink-0 items-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
+        <StatusBanner tone="warning" className="flex shrink-0 items-center gap-2 rounded-none border-x-0 border-t-0 px-4">
           <span className="min-w-0 flex-1">{restoreNotice}</span>
-          <button onClick={() => setRestoreNotice("")} className="shrink-0 rounded px-2 py-0.5 text-xs hover:bg-warning/20">
+          <Button size="sm" variant="ghost" onClick={() => setRestoreNotice("")} className="shrink-0">
             知道了
-          </button>
-        </div>
+          </Button>
+        </StatusBanner>
       )}
-      {(view === "console" || (view === "deploy" && deploySection !== "cicd")) && (
+      {view === "console" && resource && <div className="flex flex-wrap items-center gap-2 border-b p-2 text-sm"><Button size="sm" onClick={()=>{if(!blockTerminalSwitch()){setCatalogKind(resource.kind);openView("catalog")}}}>返回资产台账</Button>{resource.name} · {resourceAddress(resource)}</div>}
+      {fromAsset && (
         <section aria-label="目标上下文" className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-4 py-2">
-          <span className="text-xs text-muted-foreground">目标 Agent</span>
-          <TargetSwitcher targets={targets} selected={selected} onSelect={selectTarget} onRefresh={() => refresh("user")} loading={loading} isAdmin={isAdmin} />
-          {fromAsset && <Button size="sm" variant="ghost" disabled={skillRunning} onClick={() => openView("assets")}>
+          <Button size="sm" variant="ghost" disabled={skillRunning} onClick={() => openView("assets")}>
             {assetReturnLabel(assetOrigin.page)}
-          </Button>}
+          </Button>
         </section>
       )}
-      {view === "admin" && isAdmin ? (
-        <AdminConsole session={session} />
-      ) : view === "assets" ? (
-        <AssetInventory key={consoleScopeKey(session)} initialPage={assetEntry} session={session} targets={targets} onOpenTarget={(target, tab, namespace, origin) => {
-          if (target.key !== selected?.key && !selectTarget(target)) return
-          setAssetNamespace(namespace ?? "")
-          openView("console")
-          setAssetOrigin({ page: origin, targetKey: target.key, scope: consoleScopeKey(session) })
-          selectTab(tab)
-        }} />
-      ) : view === "deploy" ? (
-        <DeployView section={deploySection} onSection={setDeploySection} session={session} target={selected} sessionId={sessionId} onEnterConsole={() => { openView("console"); refresh("user") }}
-          onOpenCredentials={openCredentials} />
-      ) : (
-      <div className={tab === "ask" && selected ? "flex shrink-0" : "flex min-h-0 flex-1"}>
-        <main className="flex min-w-0 flex-1 flex-col">
-          <TargetToolsNav tab={tab} disabled={skillRunning} onChange={selectTab} />
-
-          {tab === "overview" ? (
-            <DashboardPanel
-              session={session}
-              targets={targets}
-              selected={selected}
-              loading={loading}
-              onRefresh={() => refresh("user")}
-              onDeployAgent={openAgentSetup}
-              onOpenTab={(nextTab, target) => {
-                if (target && target.key !== selected?.key && !selectTarget(target)) return
-                selectTab(nextTab)
-              }}
-            />
-          ) : !selected ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
-              <ServerIcon width={32} height={32} />
-              <p className="text-sm">{targets.length ? "请先选择此操作使用的目标 Agent。" : "暂无可操作的 Agent，请先接入 Agent 或联系管理员授权。"}</p>
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button
-                  onClick={openAgentSetup}
-                  variant="primary"
-                  size="sm"
-                >
-                  部署 DoOps Agent
-                </Button>
-                <Button
-                  onClick={() => selectTab("overview")}
-                  size="sm"
-                >
-                  返回当前目标
-                </Button>
+      {view === CONSOLE_HOME ? (
+        <DashboardPanel session={session} targets={targets} loading={loading}
+          onRefresh={() => refresh("user")} onDeployAgent={openAgentSetup} />
+      ) : view === "catalog" ? (
+        catalogKind === "credentials" ? <CredentialPanel key={`credentials-${consoleScopeKey(session)}-${selected?.key ?? "none"}`} session={session} target={selected ?? undefined} initialView="managed" />
+          : session.demo ? (
+            <div className="p-4">
+              <div className="card-surface space-y-3 p-4 text-sm">
+                <p>请连接 Gateway 查看和维护持久化{assetKinds[catalogKind]}台账。</p>
+                {catalogKind !== "k8s" && targets.some((t) => t.status !== "offline") && (
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <span className="text-xs text-muted-foreground">演示模式下可直接进入在线目标的{assetKinds[catalogKind]}实时面板：</span>
+                    {(onlineSelected ? [onlineSelected] : targets.filter((t) => t.status !== "offline")).map((t) => (
+                      <Button key={t.key} size="sm" variant="primary" onClick={() => {
+                        if (t.key !== selected?.key && !selectTarget(t)) return
+                        setCatalogContext(null)
+                        openView("console")
+                        selectTab(catalogKind)
+                      }}>
+                        打开 {t.cluster}/{t.instance} {assetKinds[catalogKind]}面板
+                      </Button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
+          ) : catalogKind === "k8s" ? null : <>
+              <ResourceCatalogPanel
+                key={JSON.stringify([consoleScopeKey(session), catalogKind])}
+                kind={catalogKind}
+                targets={directory}
+                selectedTarget={onlineSelected}
+                onOpenTargetTool={(target) => {
+                  if (target.key !== selected?.key && !selectTarget(target)) return
+                  setCatalogContext(null)
+                  openView("console")
+                  selectTab(catalogKind)
+                }}
+                onOperate={(row,target)=>{
+                  if (!selectTarget(target)) return
+                  const id=randomSession();setSessionId(id);setAssetOrigin(null);setCatalogContext({row,targetKey:target.key,sessionId:id,scope:consoleScopeKey(session)})
+                  openView("console");selectTab(row.kind)
+                }}
+              /><LegacyAssetNotes key={catalogKind} kind={catalogKind}/></>
+      ) : view === "assets" ? (
+        <><AssetInventory
+          catalog={{ targets: registered, error: directoryError, loading }}
+          key={consoleScopeKey(session)}
+          page={assetPage}
+          onPage={openAssetPage}
+          session={session}
+          targets={targets}
+          selectedTarget={onlineSelected}
+          onOpenDirectK8s={(target) => {
+            if (target.key !== selected?.key && !selectTarget(target)) return
+            setAssetNamespace("")
+            openView("console")
+            setAssetOrigin({ page: assetPage, targetKey: target.key, scope: consoleScopeKey(session) })
+            selectTab("k8s")
+          }}
+          onOpenTarget={(target, tab, namespace, origin) => {
+            if (target.key !== selected?.key && !selectTarget(target)) return
+            setAssetNamespace(namespace ?? "")
+            openView("console")
+            setAssetOrigin({ page: origin, targetKey: target.key, scope: consoleScopeKey(session) })
+            selectTab(tab)
+          }}
+        />{!session.demo && (assetPage.section==="clusters" || assetPage.section==="machines") && <LegacyAssetNotes key={assetPage.section} kind={assetPage.section==="clusters"?"k8s":"vm"}/>}</>
+      ) : view === "deploy" ? (
+        <DeployView section={deploySection} onSection={setDeploySection} session={session} target={onlineSelected} sessionId={sessionId} onEnterConsole={() => { openView("console"); refresh("user") }}
+          onOpenCredentials={openCredentials} />
+      ) : (
+      <div className={tab === "ask" && onlineSelected ? "flex shrink-0" : "flex min-h-0 flex-1"}>
+        <main className="flex min-w-0 flex-1 flex-col">
+
+          {!selected ? (
+            <AgentDirectory targets={directory} isAdmin={isAdmin} error={directoryError} loading={loading} onRefresh={() => refresh("user")} onDeploy={openAgentSetup} onEnter={chooseWorkspaceTarget} />
+          ) : tab === "overview" ? (
+            <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
+              <CurrentMachineSection selected={selected} />
+              <NodeInfoCard
+                key={`node-info-${selected.key}`}
+                session={session}
+                target={selected}
+                sessionId={sessionId}
+                online={Boolean(onlineSelected)}
+                onRunningChange={setSkillRunning}
+              />
+            </div>
+          ) : tab === "assets" || tab === "monitor" ? (
+            <section className="min-h-0 flex-1 overflow-auto p-4" key={selected.key + tab}>
+              {session.demo ? <p>连接 Gateway 后可读取此 Agent 的资产与指标。</p> : tab === "assets" ? <AgentAssets target={selected}/> : <AgentMonitor session={session} target={selected}/>}
+            </section>
+          ) : !onlineSelected && tab !== "audit" && tab !== "credentials" && tab !== "tasks" ? (
+            <section className="min-h-0 flex-1 overflow-auto p-4">
+              <div className="card-surface space-y-3 p-5">
+                <h2 className="font-semibold">{targetTabLabel(tab)}</h2>
+                <p role="status" className="text-sm text-muted-foreground">{selected.key} 当前离线。Agent 重新连接后即可使用此工具。</p>
+                <Button size="sm" disabled={loading} onClick={() => refresh("user")}>刷新连接状态</Button>
+              </div>
+            </section>
           ) : tab === "ask" ? null : (
             <>
               {/* files / ask / kb 面板自带头部，避免重复占一行 */}
@@ -656,13 +889,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b bg-card px-4 py-1.5">
                   <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     session
-                    <Input
-                      value={sessionId}
-                      disabled={skillRunning}
-                      onChange={(e) => changeSession(e.target.value)}
-                      scale="sm"
-                      className="w-44 font-mono"
-                    />
+                    <SessionInput value={sessionId} disabled={skillRunning} onCommit={changeSession} className="w-44 font-mono" />
                   </label>
                 </div>
               )}
@@ -670,7 +897,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
               <div className="min-h-0 flex-1">
                 {tab === "database" && (
                   <DatabasePanel
-                    key={`database-${selected.key}-${sessionId}`}
+                    key={`database-${selected.key}-${sessionId}`} initialHint={resource ? resourceAddress(resource) : undefined}
                     session={session}
                     target={selected}
                     sessionId={sessionId}
@@ -679,7 +906,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 )}
                 {tab === "website" && (
                   <WebsitePanel
-                    key={`website-${selected.key}-${sessionId}`}
+                    key={`website-${selected.key}-${sessionId}`} initialDomain={resource?.details.domain}
                     session={session}
                     target={selected}
                     sessionId={sessionId}
@@ -698,7 +925,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 )}
                 {tab === "image" && (
                   <ImagePanel
-                    key={`image-${selected.key}-${sessionId}`}
+                    key={`image-${selected.key}-${sessionId}`} initialImage={resource ? resourceAddress(resource) : undefined}
                     session={session}
                     target={selected}
                     sessionId={sessionId}
@@ -716,6 +943,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                     onRunningChange={onTerminalRunningChange}
                   />
                 )}
+                {tab === "tasks" && (
+                  <BackgroundTasksPanel
+                    key={`tasks-${selected.key}`}
+                    session={session}
+                    target={selected}
+                  />
+                )}
                 {tab === "files" && (
                   <FilesPanel
                     key={`files-${selected.key}-${sessionId}`}
@@ -723,6 +957,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                     target={selected}
                     sessionId={sessionId}
                     onSessionChange={changeSession}
+                    onRunningChange={setSkillRunning}
                   />
                 )}
                 {tab === "kb" && (
@@ -731,6 +966,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                     session={session}
                     target={selected}
                     sessionId={sessionId}
+                    onRunningChange={setSkillRunning}
                   />
                 )}
                 {tab === "audit" && (
@@ -743,7 +979,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 )}
                 {tab === "credentials" && (
                   <CredentialPanel
-                    key={`credentials-${selected.key}`}
+                    key={`credentials-${consoleScopeKey(session)}-${selected.key}`}
                     session={session}
                     target={selected}
                   />
@@ -755,7 +991,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       </div>
       )}
       {selected && codeWorkspace && agentRuntime && openedAgentRuntime === agentRuntime && (
-        <div hidden={view !== "console" || tab !== "ask"} className="min-h-0 flex-1">
+        <div hidden={view !== "console" || tab !== "ask" || !onlineSelected} className="min-h-0 flex-1">
           <AgentUiPanel
             key={`ask-${selected.key}-${sessionId}`}
             session={session}
@@ -771,39 +1007,8 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           />
         </div>
       )}
+      </div>
+      </div>
     </div>
-  )
-}
-
-const VIEW_ICONS: Partial<Record<ConsoleView, typeof RocketIcon>> = {
-  deploy: RocketIcon,
-  admin: ShieldIcon,
-}
-
-function ViewButton({
-  entry,
-  active,
-  disabled,
-  onSelect,
-  className,
-}: {
-  entry: ConsoleViewEntry
-  active: boolean
-  disabled: boolean
-  onSelect: (view: ConsoleView) => void
-  className: string
-}) {
-  const Icon = VIEW_ICONS[entry.id]
-  return (
-    <Button
-      disabled={disabled}
-      onClick={() => onSelect(entry.id)}
-      aria-current={active ? "page" : undefined}
-      size="sm"
-      variant={active ? "primary" : "ghost"}
-      className={`whitespace-nowrap ${className}`}
-    >
-      {Icon && <Icon width={13} height={13} />} {entry.label}
-    </Button>
   )
 }

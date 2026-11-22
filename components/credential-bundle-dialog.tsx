@@ -1,6 +1,6 @@
 "use client"
 
-import { Input, Select } from "./ui"
+import { Badge, Button, Checkbox, Input, Modal, SegmentedControl, Select, StatusBanner } from "./ui"
 import { useEffect, useState } from "react"
 import type { Session, Target } from "@/lib/client"
 import {
@@ -20,13 +20,13 @@ export function CredentialBundleButton({ session, target }: { session: Session; 
   const [open, setOpen] = useState(false)
   return (
     <>
-      <button
+      <Button
         onClick={() => setOpen(true)}
         title="创建或查看凭据组"
-        className="flex items-center gap-1.5 rounded-md border px-3 py-2 text-xs text-foreground hover:bg-muted"
+        size="sm"
       >
         <LayersIcon width={14} height={14} /> 凭据组
-      </button>
+      </Button>
       {open && <CredentialBundleDialog session={session} target={target} onClose={() => setOpen(false)} />}
     </>
   )
@@ -46,59 +46,45 @@ function CredentialBundleDialog({
   const [bundle, setBundle] = useState<CredentialBundle | null>(null)
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div className="max-h-[90dvh] w-full max-w-xl overflow-auto rounded-lg border bg-card shadow-xl">
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <h3 className="text-sm font-semibold text-foreground">凭据组</h3>
-          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted">
-            关闭
-          </button>
-        </div>
-        <div className="space-y-3 p-4">
-          <p className="text-xs text-muted-foreground">
-            凭据组是若干凭据 ID 的静态集合，只保存名称、归属和凭据 ID，不包含凭据内容。创建后不能修改或吊销，
-            发布时仍需按单个凭据名称引用。
-          </p>
-          <div className="inline-flex rounded-md border bg-background p-0.5 text-xs">
-            {(["view", "create"] as const).map((item) => (
-              <button
-                key={item}
-                onClick={() => {
-                  setMode(item)
-                  setError("")
-                }}
-                className={`rounded px-2.5 py-1.5 ${mode === item ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
-              >
-                {item === "view" ? "按名称查看" : "新建凭据组"}
-              </button>
-            ))}
-          </div>
-          {error && (
-            <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {error}
-            </div>
-          )}
-          {mode === "view" ? (
-            <ViewBundle session={session} onResult={setBundle} onError={setError} />
-          ) : (
-            <CreateBundle
-              session={session}
-              target={target}
-              onCreated={(created) => {
-                setBundle(created)
-                setMode("view")
-              }}
-              onError={setError}
-            />
-          )}
-          {bundle && <BundleSummary bundle={bundle} />}
-        </div>
+    <Modal title="凭据组" size="lg" onClose={onClose}>
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          凭据组是若干凭据 ID 的静态集合，只保存名称、归属和凭据 ID，不包含凭据内容。创建后不能修改或吊销，
+          发布时仍需按单个凭据名称引用。
+        </p>
+        <SegmentedControl
+          value={mode}
+          ariaLabel="凭据组操作模式"
+          onChange={(item) => {
+            setMode(item)
+            setError("")
+          }}
+          options={[
+            { value: "view", label: "按名称查看" },
+            { value: "create", label: "新建凭据组" },
+          ]}
+        />
+        {error && (
+          <StatusBanner tone="error" compact>
+            {error}
+          </StatusBanner>
+        )}
+        {mode === "view" ? (
+          <ViewBundle session={session} onResult={setBundle} onError={setError} />
+        ) : (
+          <CreateBundle
+            session={session}
+            target={target}
+            onCreated={(created) => {
+              setBundle(created)
+              setMode("view")
+            }}
+            onError={setError}
+          />
+        )}
+        {bundle && <BundleSummary bundle={bundle} />}
       </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -132,20 +118,19 @@ function ViewBundle({
       <label className="flex flex-1 flex-col gap-1 text-xs text-muted-foreground">
         凭据组名称
         <Input
-
           value={name}
           onChange={(event) => setName(event.target.value)}
           onKeyDown={(event) => event.key === "Enter" && name.trim() && !busy && submit()}
           placeholder={session.demo ? "release-demo" : "release"}
         />
       </label>
-      <button
+      <Button
         onClick={submit}
         disabled={busy || !name.trim()}
-        className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+        variant="primary"
       >
         {busy ? "查询中" : "查看"}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -209,7 +194,7 @@ function CreateBundle({
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground">
           凭据组名称
-          <Input  value={name} onChange={(event) => setName(event.target.value)} placeholder="release" />
+          <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="release" />
         </label>
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
           归属
@@ -233,8 +218,7 @@ function CreateBundle({
           ) : (
             credentials.map((credential) => (
               <label key={credential.id} className="flex items-center gap-2 py-1.5 text-xs text-foreground">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={selected.includes(credential.id)}
                   onChange={() => toggle(credential.id)}
                 />
@@ -247,14 +231,15 @@ function CreateBundle({
         </div>
       </fieldset>
       <div className="flex justify-end">
-        <button
+        <Button
           onClick={submit}
           disabled={busy || session.demo}
           title={session.demo ? "演示模式不执行凭据写操作" : undefined}
-          className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          variant="primary"
+          size="sm"
         >
           {busy ? "创建中" : `创建凭据组（${selected.length} 个凭据）`}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -266,11 +251,7 @@ function BundleSummary({ bundle }: { bundle: CredentialBundle }) {
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-foreground">{bundle.name}</span>
         <span className="text-muted-foreground">{bundle.scope === "platform" ? "平台" : "个人"}</span>
-        <span
-          className={`rounded px-1.5 py-0.5 ${bundle.state === "active" ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}
-        >
-          {bundle.state}
-        </span>
+        <Badge variant={bundle.state === "active" ? "success" : "default"}>{bundle.state}</Badge>
         <span className="ml-auto font-mono text-[11px] text-muted-foreground">{bundle.id}</span>
       </div>
       <div className="text-muted-foreground">包含 {bundle.items.length} 个凭据：</div>
