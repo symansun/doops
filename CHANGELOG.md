@@ -10,6 +10,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Linux 宿主采集器支持按块设备采集读写 IOPS、吞吐和平均延迟；控制台监控可查看独立曲线并设置阈值。
+
+## [0.3.23] — 2026-11-22
+
+### Fixed
+
+- 修复 `deploy-gateway.sh` 在 `--allow-unenrolled-credential-delivery` 校验中引用未展开变量、导致部署中止的问题；该开关仍要求同时使用 `--allow-open-agent-registration`。
+
 ## [0.3.22] — 2026-11-22
 
 ### Added

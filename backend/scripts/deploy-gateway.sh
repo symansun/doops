@@ -447,7 +447,7 @@ else
   echo 'agent_registration=required'
 fi
 if [[ '${UNENROLLED_CREDENTIALS}' == 'open' ]]; then
-  if [[ '__OPEN__' != 'open' ]]; then
+  if [[ '${AGENT_REGISTRATION}' != 'open' ]]; then
     echo '--allow-unenrolled-credential-delivery requires --allow-open-agent-registration' >&2
     exit 1
   fi
