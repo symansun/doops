@@ -46,6 +46,7 @@ var gatewayToolSpecs = []gatewayToolSpec{
 	{name: "doops_file_read", action: constantAction(ActionRead), summary: filePathSummary("doops_file_read")},
 	{name: "doops_workspace_read", action: constantAction(ActionRead)},
 	{name: "doops_file_write", action: constantAction(ActionWrite), summary: filePathSummary("doops_file_write")},
+	{name: "doops_kb", action: knowledgeBaseToolAction, summary: knowledgeBaseToolSummary},
 	{name: "doops_cos_sync", action: constantAction(ActionWrite)},
 	{name: "doops_node_info", action: constantAction(ActionInfo)},
 	{name: "doops_database_inventory", action: constantAction(ActionInfo), summary: constantSummary("doops_database_inventory")},
@@ -155,6 +156,30 @@ func filePathSummary(tool string) func(map[string]interface{}, json.RawMessage) 
 		}
 		return ""
 	}
+}
+
+// knowledgeBaseToolAction keeps the knowledge base on the same boundary as the
+// filesystem tools: reading is a read, writing or deleting is a write. An
+// unknown operation has no action, so the Gateway rejects the call.
+func knowledgeBaseToolAction(args json.RawMessage) GatewayAction {
+	switch strings.ToLower(strings.TrimSpace(extractStringArg(args, "operation"))) {
+	case "list", "read":
+		return ActionRead
+	case "write", "delete":
+		return ActionWrite
+	}
+	return ""
+}
+
+// knowledgeBaseToolSummary records the document name only; the audit log must
+// never contain the document body.
+func knowledgeBaseToolSummary(m map[string]interface{}, _ json.RawMessage) string {
+	operation, _ := m["operation"].(string)
+	operation = strings.ToLower(strings.TrimSpace(operation))
+	if name, _ := m["name"].(string); name != "" {
+		return trimTail("doops_kb "+operation+" "+name, 512)
+	}
+	return trimTail("doops_kb "+operation, 512)
 }
 
 func pullBeginSummary(m map[string]interface{}, _ json.RawMessage) string {

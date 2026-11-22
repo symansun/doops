@@ -25,6 +25,9 @@ func StartWorkspaceGC(maxAge time.Duration, interval time.Duration) {
 
 func performCleanup(maxAge time.Duration) {
 	now := time.Now()
+	// Trashed knowledge base documents are files, not session directories, so
+	// they expire on the same schedule through their own sweep.
+	pruneKnowledgeBaseTrash(maxAge)
 	cleanDirs := []string{
 		workspaceRoot(),
 		filepath.Join(os.TempDir(), "repos"),

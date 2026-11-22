@@ -170,6 +170,7 @@ export const TOOLS = {
   prompt: "doops_agent_prompt",
   fileRead: "doops_file_read",
   fileWrite: "doops_file_write",
+  kb: "doops_kb",
   workspaceRead: "doops_workspace_read",
   nodeInfo: "doops_node_info",
   checkDeployment: "doops_check_deployment",

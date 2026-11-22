@@ -369,22 +369,17 @@ func writeKnowledgeBaseFile(sessionID, rawPath, content string) (string, error) 
 	if err := validateSession(sessionID); err != nil {
 		return "", err
 	}
-	// Knowledge-base documents are read back into an agent or console session,
-	// so the save limit is the read limit. A document that could be written but
-	// never read again is not useful, and the 16 MiB workspace limit exists for
-	// a different consumer.
-	if int64(len(content)) > maxFileReadBytes() {
-		return "", fmt.Errorf(
-			"knowledge base document is %d bytes, over the %d-byte limit: split it into smaller documents before saving",
-			len(content), maxFileReadBytes(),
-		)
-	}
 	rootPath, err := knowledgeBaseRoot()
 	if err != nil {
 		return "", err
 	}
 	name, err := knowledgeBaseFileName(rootPath, rawPath)
 	if err != nil {
+		return "", err
+	}
+	// Documents are read back into an agent or console session, so the save
+	// limit is the read limit, and the root has a document and byte budget.
+	if err := enforceKnowledgeBaseQuota(rootPath, name, int64(len(content))); err != nil {
 		return "", err
 	}
 	root, rootPath, err := openKnowledgeBaseRoot()

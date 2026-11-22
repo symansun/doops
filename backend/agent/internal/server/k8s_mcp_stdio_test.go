@@ -26,8 +26,8 @@ func TestK8SMCPStdioExposesBoundedDomainTools(t *testing.T) {
 	}
 	result, _ := response["result"].(map[string]interface{})
 	tools, _ := result["tools"].([]interface{})
-	if len(tools) != 4 {
-		t.Fatalf("expected read, helm and web tools, got %#v", tools)
+	if len(tools) != 5 {
+		t.Fatalf("expected read, helm, web and kb tools, got %#v", tools)
 	}
 	names := make([]string, 0, len(tools))
 	for _, value := range tools {
@@ -95,7 +95,7 @@ func TestK8SMCPStdioExposesBoundedDomainTools(t *testing.T) {
 			}
 		}
 	}
-	if strings.Join(names, ",") != "k8s_read,helm,web_read,web" {
+	if strings.Join(names, ",") != "k8s_read,helm,web_read,web,kb_read" {
 		t.Fatalf("unexpected tools: %#v", names)
 	}
 }

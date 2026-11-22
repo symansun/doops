@@ -43,10 +43,6 @@ function formatDocSize(bytes: number) {
 
 type Mode = "edit" | "split" | "preview"
 
-function shq(s: string) {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
-}
-
 function DocumentPreviewPane({
   content,
   fullWidth,
@@ -193,7 +189,8 @@ export function KnowledgeBase({
   const byteLength = useMemo(() => new TextEncoder().encode(content).length, [content])
   const overLimit = byteLength > KB_MAX_BYTES
 
-  const docPath = useCallback((name: string) => `${KB_ROOT}/${name}`, [])
+  // 根目录由 doops_kb list 返回：Agent 可以用 DOOPS_KB_ROOT 改变它，控制台不该写死。
+  const [kbRoot, setKbRoot] = useState(KB_ROOT)
 
   const refresh = useCallback(async () => {
     setListBusy(true)
@@ -205,8 +202,8 @@ export function KnowledgeBase({
         {
           cluster: target.cluster,
           instance: target.instance,
-          tool: TOOLS.shell,
-          arguments: { session_id: sessionId, command: `mkdir -p ${shq(KB_ROOT)}; ls -1Ap ${shq(KB_ROOT)}` },
+          tool: TOOLS.kb,
+          arguments: { session_id: sessionId, operation: "list" },
         },
         (ev) => {
           if (ev.type === "output") buf += ev.data
@@ -214,11 +211,9 @@ export function KnowledgeBase({
           else if (ev.type === "error") setListErr(ev.error)
         },
       )
-      const names = buf
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith("exit code") && !l.startsWith("$"))
-        .filter((l) => !l.endsWith("/") && /\.md$/i.test(l))
+      const listed = JSON.parse(buf) as { root?: string; documents?: { name: string }[] }
+      if (listed.root) setKbRoot(listed.root)
+      const names = (listed.documents ?? []).map((doc) => doc.name).filter(Boolean)
       setDocs(names.sort((a, b) => a.localeCompare(b)))
     } catch (err) {
       setListErr((err as Error).message)
@@ -255,8 +250,8 @@ export function KnowledgeBase({
         {
           cluster: target.cluster,
           instance: target.instance,
-          tool: TOOLS.fileRead,
-          arguments: { session_id: sessionId, path: docPath(name) },
+          tool: TOOLS.kb,
+          arguments: { session_id: sessionId, operation: "read", name },
         },
         (ev) => {
           if (ev.type === "output") buf += ev.data
@@ -304,8 +299,8 @@ export function KnowledgeBase({
             {
               cluster: target.cluster,
               instance: target.instance,
-              tool: TOOLS.fileRead,
-              arguments: { session_id: sessionId, path: docPath(openDoc) },
+              tool: TOOLS.kb,
+              arguments: { session_id: sessionId, operation: "read", name: openDoc },
             },
             (ev) => {
               if (ev.type === "output") remote += ev.data
@@ -328,8 +323,8 @@ export function KnowledgeBase({
           {
             cluster: target.cluster,
             instance: target.instance,
-            tool: TOOLS.fileWrite,
-            arguments: { session_id: sessionId, path: docPath(openDoc), content },
+            tool: TOOLS.kb,
+            arguments: { session_id: sessionId, operation: "write", name: openDoc, content },
           },
           (ev) => {
             if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
@@ -350,7 +345,7 @@ export function KnowledgeBase({
         setBusy(false)
       }
     },
-    [openDoc, dirty, session, target.cluster, target.instance, sessionId, docPath, content, docs, refresh],
+    [openDoc, dirty, session, target.cluster, target.instance, sessionId, content, docs, refresh],
   )
 
   async function reloadDoc(name: string) {
@@ -463,8 +458,8 @@ export function KnowledgeBase({
         {
           cluster: target.cluster,
           instance: target.instance,
-          tool: TOOLS.shell,
-          arguments: { session_id: sessionId, command: `rm -f ${shq(docPath(name))}` },
+          tool: TOOLS.kb,
+          arguments: { session_id: sessionId, operation: "delete", name },
         },
         () => {},
       )
@@ -609,7 +604,7 @@ export function KnowledgeBase({
                   {openDoc.replace(/\.md$/i, "")}
                 </span>
                 <code className="hidden rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground md:inline">
-                  {docPath(openDoc)}
+                  {kbRoot}/{openDoc}
                 </code>
                 {dirty ? <Badge variant="warning">未保存</Badge> : <Badge variant="success">已同步</Badge>}
               </div>
@@ -673,7 +668,7 @@ export function KnowledgeBase({
                     size="sm"
                     onClick={() => void save()}
                     disabled={busy || !dirty || overLimit}
-                    title={`保存到节点 /root/kb (⌘S)，单篇上限 ${formatDocSize(KB_MAX_BYTES)}`}
+                    title={`保存到节点 ${kbRoot} (⌘S)，单篇上限 ${formatDocSize(KB_MAX_BYTES)}`}
                   >
                     <Save aria-hidden="true" className="size-3.5" />
                     <span>{busy ? "保存中…" : "保存"}</span>

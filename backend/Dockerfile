@@ -56,6 +56,8 @@ COPY --from=builder /app/agent/adopt_agent.py /app/adopt_agent.py
 COPY --from=builder /app/deploy /app/deploy
 COPY --from=builder /app/README.md /app/self-docs/README.md
 COPY --from=builder /app/docs /app/self-docs/docs
+# 评审记录是开发过程材料，不随镜像进入 Agent 可读的知识面。
+RUN rm -rf /app/self-docs/docs/reviews
 
 RUN chmod +x /app/agent-entrypoint.sh /app/sandbox-entrypoint.sh \
     && /app/doops-shell -c 'test -n "$BASH_VERSION"' \

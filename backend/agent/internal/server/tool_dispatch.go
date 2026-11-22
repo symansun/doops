@@ -42,6 +42,7 @@ var agentToolHandlers = map[string]func(*Gateway, toolInvocation){
 	"doops_credential_cleanup":     (*Gateway).handleToolCredentialCleanup,
 	"doops_cos_sync":               (*Gateway).handleToolCosSync,
 	"doops_file_write":             (*Gateway).handleToolFileWrite,
+	"doops_kb":                     (*Gateway).handleToolKb,
 	"doops_file_read":              (*Gateway).handleToolFileRead,
 	"doops_workspace_read":         (*Gateway).handleToolWorkspaceRead,
 	"doops_workspace_begin":        (*Gateway).handleToolWorkspaceBegin,

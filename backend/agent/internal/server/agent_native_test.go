@@ -47,13 +47,13 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 
 func TestDoagentAllowedToolsUsesPermissionEngineForDiagnostics(t *testing.T) {
 	ordinary := doagentAllowedTools(false, "", true)
-	wantOrdinary := []string{"Read", "glob", "grep", "Skill", "Bash", "mcp_doops_k8s_read", "mcp_doops_web_read"}
+	wantOrdinary := []string{"Read", "glob", "grep", "Skill", "Bash", "mcp_doops_k8s_read", "mcp_doops_web_read", "mcp_doops_kb_read"}
 	if !reflect.DeepEqual(ordinary, wantOrdinary) {
 		t.Fatalf("ordinary prompt tool directory = %#v, want %#v", ordinary, wantOrdinary)
 	}
 
 	apply := doagentAllowedTools(true, "", true)
-	wantApply := []string{"Read", "glob", "grep", "Skill", "mcp_doops_k8s_read", "mcp_doops_web_read", "mcp_doops_helm"}
+	wantApply := []string{"Read", "glob", "grep", "Skill", "mcp_doops_k8s_read", "mcp_doops_web_read", "mcp_doops_kb_read", "mcp_doops_helm"}
 	if !reflect.DeepEqual(apply, wantApply) {
 		t.Fatalf("apply prompt tool directory = %#v, want %#v", apply, wantApply)
 	}

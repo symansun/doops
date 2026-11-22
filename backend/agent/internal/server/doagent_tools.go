@@ -23,7 +23,7 @@ func doagentAllowedTools(apply bool, skill string, kubernetes bool) []string {
 	if kubernetes {
 		tools = append(tools, "mcp_doops_k8s_read")
 	}
-	tools = append(tools, "mcp_doops_web_read")
+	tools = append(tools, "mcp_doops_web_read", "mcp_doops_kb_read")
 	if strings.TrimSpace(skill) == "dosql" {
 		tools = append(tools, "mcp_dosql_read")
 	}
