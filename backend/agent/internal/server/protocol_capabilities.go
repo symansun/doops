@@ -9,7 +9,26 @@ const (
 	registryAuthfileSchema        = "doops.sh/registry-authfile/v1"
 	cosSnapshotExecutableProtocol = "cosSnapshotExecutable"
 	cosSnapshotExecutableSchema   = "doops.sh/cos-snapshot-executable/v1"
+	toolDeadlineProtocol          = "toolDeadline"
+	toolDeadlineSchema            = "doops.sh/tool-deadline/v1"
 )
+
+// toolDeadlineCapability lets the Gateway tell the Agent how long it will wait
+// for a tools/call. The Agent then replies with a definite timeout instead of
+// being abandoned, or reporting a cancellation, when its own deadline fires. An
+// Agent from before this work ignores the extra field, so the Gateway sends
+// timeout_ms only after the Agent declares this capability.
+func toolDeadlineCapability() map[string]interface{} {
+	return map[string]interface{}{
+		"schemaVersion":  toolDeadlineSchema,
+		"gatewayTimeout": true,
+		"timeoutReply":   true,
+	}
+}
+
+func toolDeadlineCapabilityCompatible(value interface{}) bool {
+	return capabilityMatches(value, toolDeadlineCapability())
+}
 
 func cosSnapshotExecutableCapability() map[string]interface{} {
 	return map[string]interface{}{
