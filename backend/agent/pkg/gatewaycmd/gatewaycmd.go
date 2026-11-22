@@ -1,6 +1,7 @@
 package gatewaycmd
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -85,6 +86,21 @@ func serve(args []string) {
 	defer store.Close()
 
 	consoleForwardSecret := strings.TrimSpace(os.Getenv("DOOPS_CONSOLE_FORWARD_SECRET"))
+
+	// Fail closed before listening. Release the database and lock explicitly:
+	// os.Exit skips defers, and the process must not look healthy when the key
+	// does not match the ciphertext in this database.
+	keyState, err := store.VerifySecretKey()
+	if err != nil {
+		log.Printf("[gateway] refusing to start: master key check failed for database %s: %s", resolvedDBPath, secretKeyStartupMessage(err))
+		_ = store.Close()
+		_ = dbLock.Close()
+		os.Exit(1)
+	}
+	if keyState == server.GatewaySecretKeyAbsent {
+		log.Printf("[gateway] warning: DOOPS_GATEWAY_SECRET_KEY is not set; credential features stay unavailable until it is configured")
+	}
+
 	hub := server.NewGatewayHub(store, server.GatewayHubOptions{
 		LoginTokenTTL:              *loginTokenTTL,
 		LoginTokenMaxLifetime:      *loginTokenMaxLifetime,
@@ -128,6 +144,19 @@ func serve(args []string) {
 	// are bounded separately.
 	if err := gatewayHTTPServer(":"+*port, mux).ListenAndServe(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// secretKeyStartupMessage turns a startup key-check error into operator
+// guidance. It never includes the key, a ciphertext or a payload value.
+func secretKeyStartupMessage(err error) string {
+	switch {
+	case errors.Is(err, server.ErrSecretKeyMismatch):
+		return "DOOPS_GATEWAY_SECRET_KEY does not match the key that encrypted the stored credential payloads; restore the original key (see backend/docs/CREDENTIAL_RESOURCES.md, master key backup) and restart"
+	case errors.Is(err, server.ErrSecretKeyUnavailable):
+		return "credential payloads are stored but DOOPS_GATEWAY_SECRET_KEY is not set; restore the original key and restart"
+	default:
+		return "credential master key check could not run"
 	}
 }
 

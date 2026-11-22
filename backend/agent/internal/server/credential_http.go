@@ -789,6 +789,10 @@ func credentialErrorCategory(err error) string {
 		return "credential_forbidden"
 	case errors.Is(err, ErrSecretKeyUnavailable):
 		return "credential_key_unavailable"
+	case errors.Is(err, ErrSecretKeyMismatch):
+		// Startup refuses a mismatched key; this guards a key changed in a
+		// long-running process before it could encrypt new rows with it.
+		return "credential_key_mismatch"
 	case errors.Is(err, ErrCredentialPayloadInvalid):
 		return "credential_payload_invalid"
 	case errors.Is(err, ErrCredentialAuditUnavailable):
@@ -807,7 +811,7 @@ func credentialHTTPStatus(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, ErrCredentialForbidden), errors.Is(err, ErrCredentialGrantDenied):
 		return http.StatusForbidden
-	case errors.Is(err, ErrSecretKeyUnavailable):
+	case errors.Is(err, ErrSecretKeyUnavailable), errors.Is(err, ErrSecretKeyMismatch):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, ErrCredentialAuditUnavailable):
 		return http.StatusInternalServerError
