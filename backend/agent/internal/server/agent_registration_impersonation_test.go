@@ -61,7 +61,7 @@ func newImpersonationFixture(t *testing.T, allowOpen bool) *impersonationFixture
 	// Synthetic master key only; no real credential material is involved.
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("s", 32))
 	f := &impersonationFixture{
-		executionLifecycleFixture: newExecutionLifecycleFixture(t, GatewayHubOptions{AllowOpenAgentRegistration: allowOpen}),
+		executionLifecycleFixture: newExecutionLifecycleFixture(t, GatewayHubOptions{AllowOpenAgentRegistration: allowOpen, RequireAgentEnrollment: !allowOpen}),
 		canary:                    "canary-s01-" + randomHex(12),
 	}
 	mux := http.NewServeMux()

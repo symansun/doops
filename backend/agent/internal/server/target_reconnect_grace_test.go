@@ -93,7 +93,7 @@ func rpcClientForTarget(t *testing.T, f *executionLifecycleFixture, name string,
 }
 
 func TestGatewayToolCallWaitsForReconnectingAgent(t *testing.T) {
-	f := newExecutionLifecycleFixture(t, GatewayHubOptions{TargetReconnectGrace: 10 * time.Second})
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{TargetReconnectGrace: 10 * time.Second, AllowOpenAgentRegistration: true})
 	client := rpcClientForTarget(t, f, "waiter", &ScopeGrant{Cluster: "dev", Instance: "local"})
 
 	// The Agent registers only after the call has started waiting.

@@ -266,11 +266,11 @@ func (gw *Gateway) submitBgTask(sessionID, command, logPath string) (*bgTask, er
 		// The log file is also this task's standard output, so a leftover pipe
 		// holder after the group cleanup is reported instead of ending in unknown.
 		err := waitProcessGroupWithHolder(taskCtx, task.PID, waitDone, &pipeHolder{})
-		if isResidualProcessesTerminated(err) && !errors.Is(err, errExecutionOutcomeUnknown) {
+		if residual := residualProcessesTerminatedFrom(err); residual != nil {
 			// The command finished; only leftover same-group background
-			// processes were cleaned up. Keep it a normal, known exit.
-			log.Printf("Background task %s: %v", taskID, err)
-			err = nil
+			// processes were cleaned up. Keep the leader's real exit status.
+			log.Printf("Background task %s: %v", taskID, residual)
+			err = residual.leaderErr
 		}
 		if logFile != nil {
 			state := "CMD FINISH"

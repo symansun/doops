@@ -175,7 +175,7 @@ func TestAgentTunnelInFlightToolsCountedOnDisconnect(t *testing.T) {
 	// handler's only write cannot complete because the client stops reading,
 	// so the call is still in flight when the read timeout closes the tunnel.
 	script := filepath.Join(root, "probe.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 7\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := conn.WriteJSON(map[string]interface{}{

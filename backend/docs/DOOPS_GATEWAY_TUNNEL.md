@@ -350,7 +350,10 @@ doops admin token revoke --target <gateway-target> --id <token-id>
   上游收到写请求后的连接/响应体传输失败同样是未知结果；不能把代理返回的传输
   错误当成业务没有执行。下游写失败必须等待取消结果后完成审计。
 - `-operation-timeout` 控制单个转发操作的最长运行时间；超时请求取消并等待原始终态。
-  取消 ACK 不是终态；缺失终态时保留 `outcome_unknown`，进入审计收尾时释放本次 lease，不自动重放。
+  声明 `toolDeadline`（schema `doops.sh/tool-deadline/v1`）的 Agent 会在 `tools/call`
+  的 `timeout_ms` 收到这个时限，并比它提前 5 秒以自己的 `agent_tool_timeout`
+  类别收尾（审计状态 `timeout`），不再把 Agent 侧超时误报成取消或 `outcome_unknown`。
+  未声明该能力的旧 Agent 行为不变。取消 ACK 不是终态；缺失终态时保留 `outcome_unknown`，进入审计收尾时释放本次 lease，不自动重放。
   历史未知审计不参与准入。运行或取消中的活跃操作仍按资源锁阻挡冲突请求；
   终态审计持久化失败保留原始证据并自动重试，不持有执行 lease，也不阻挡后续任务。
 - 每个互斥资源最多 10 个等待者、等待上限 10 分钟，没有全局或单用户执行配额。

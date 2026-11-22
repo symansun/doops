@@ -88,6 +88,10 @@ spec:
             - name: DOOPS_COMMAND_DENY_RULES
               value: {{ . | toJson | quote }}
             {{- end }}
+            {{- with .Values.toolTimeout }}
+            - name: DOOPS_TOOL_TIMEOUT
+              value: {{ . | quote }}
+            {{- end }}
             - name: KUBECONFIG
               value: /root/.kube/config
             - name: DOOPS_KUBECONFIG_SOURCE

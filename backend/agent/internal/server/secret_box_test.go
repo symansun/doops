@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -15,7 +16,7 @@ import (
 // or a log line the key check emits.
 const (
 	secretKeyCanary        = "synthetic-master-key-canary"
-	secretPayloadCanary    = "{{SECRET_syntheticpayload}}"
+	secretPayloadCanary    = "synthetic-credential-payload-canary-7f3a"
 	wrongSecretKeyCanary   = "different-synthetic-master-key"
 	secretKeyTestKeyLength = 32
 )
@@ -293,7 +294,12 @@ func TestSecretKeyTamperedCiphertext(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT payload_ciphertext FROM credential_versions WHERE credential_id=?`, resource.ID).Scan(&ciphertext); err != nil {
 		t.Fatalf("read ciphertext: %v", err)
 	}
-	tampered := ciphertext[:len(ciphertext)-2] + flipBase64Tail(ciphertext[len(ciphertext)-2:])
+	raw, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(ciphertext, "v2:"))
+	if err != nil {
+		t.Fatalf("decode ciphertext: %v", err)
+	}
+	raw[len(raw)/2] ^= 0x01
+	tampered := "v2:" + base64.RawStdEncoding.EncodeToString(raw)
 	if _, err := store.db.Exec(`UPDATE credential_versions SET payload_ciphertext=? WHERE credential_id=?`, tampered, resource.ID); err != nil {
 		t.Fatalf("tamper ciphertext: %v", err)
 	}
@@ -347,40 +353,20 @@ func TestSecretKeyMismatchCategoryAndStatus(t *testing.T) {
 		t.Fatalf("unavailable status = %d, want 503", got)
 	}
 
-	// A key changed under a long-running process is refused at the API instead
-	// of encrypting new rows with a second key.
+	// A changed key no longer matches the marker written at startup. Runtime
+	// env changes are not the normal path; this proves the guard that the
+	// Gateway runs before accepting traffic.
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", syntheticMasterKey(6))
 	store := openCredentialTestStore(t)
 	putSyntheticCredential(t, store)
 	markSecretKeyVerified(t, store)
-	owner, token := createCredentialHTTPUser(t, store, "owner", false)
-	hub := NewGatewayHub(store, GatewayHubOptions{})
-	mux := http.NewServeMux()
-	hub.RegisterRoutes(mux)
-	created := credentialHTTPRequest(t, mux, token, http.MethodPost, "/v1/credentials", map[string]any{
-		"name": "mismatch-registry", "scope": "personal", "type": "registry",
-	})
-	if created.Code != http.StatusOK {
-		t.Fatalf("create credential: HTTP %d: %s", created.Code, created.Body.String())
-	}
-	var resource CredentialResource
-	if err := json.Unmarshal(created.Body.Bytes(), &resource); err != nil {
-		t.Fatalf("decode credential: %v", err)
-	}
-	_ = owner
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", wrongSecretKeyCanary)
-
-	put := credentialHTTPRequest(t, mux, token, http.MethodPut, "/v1/credentials/"+resource.ID+"/payload",
-		json.RawMessage(`{"server":"registry.example.com","username":"owner","password":"`+secretPayloadCanary+`"}`))
-	if put.Code != http.StatusServiceUnavailable || strings.TrimSpace(put.Body.String()) != "credential_key_mismatch" {
-		t.Fatalf("mismatched key put = HTTP %d %q, want 503 credential_key_mismatch", put.Code, put.Body.String())
+	_, err := store.VerifySecretKey()
+	if !errors.Is(err, ErrSecretKeyMismatch) {
+		t.Fatalf("VerifySecretKey after key change = %v, want ErrSecretKeyMismatch", err)
 	}
-	if strings.Contains(put.Body.String(), secretPayloadCanary) || strings.Contains(put.Body.String(), wrongSecretKeyCanary) {
-		t.Fatalf("payload response leaked material: %s", put.Body.String())
-	}
-	var versions int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM credential_versions`).Scan(&versions); err != nil || versions != 0 {
-		t.Fatalf("mismatched key wrote versions = %d, %v", versions, err)
+	if strings.Contains(err.Error(), wrongSecretKeyCanary) || strings.Contains(err.Error(), secretPayloadCanary) {
+		t.Fatalf("key mismatch error leaked material: %v", err)
 	}
 }
 

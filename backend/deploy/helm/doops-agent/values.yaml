@@ -41,6 +41,10 @@ proxy:
 
 commandDenyRules: []
 
+# Agent 侧单条命令的保险上限（例如 "2h"）。留空表示跟随 Gateway 的
+# -operation-timeout；设置后取它与 Gateway 时限中较短的一个。
+toolTimeout: ""
+
 nodeSelector: {}
 
 tolerations: []

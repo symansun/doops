@@ -48,7 +48,6 @@ func TestGatewayTargetsAllowsInsecureLocalhostForDevelopment(t *testing.T) {
 	}
 }
 
-
 func TestFilterGatewayTargetsMatchesConfiguredRoute(t *testing.T) {
 	targets := []GatewayTarget{
 		{Cluster: "prod", Instance: "node-1"},

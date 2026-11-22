@@ -109,6 +109,7 @@ func serve(args []string) {
 		TargetReconnectGrace:       server.ReconnectGraceOption(*targetReconnectGrace),
 		MaxQueuedPerTarget:         *maxQueuedPerTarget,
 		AllowOpenAgentRegistration: *allowOpenAgentRegistration,
+		RequireAgentEnrollment:     !*allowOpenAgentRegistration,
 		// Environment only, never a flag: a flag would expose the secret in ps.
 		ConsoleForwardSecret: []byte(consoleForwardSecret),
 	})

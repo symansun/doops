@@ -171,7 +171,6 @@ func TestConsoleForwardingIgnoresUnsignedHeaders(t *testing.T) {
 	// A signed header claiming 203.0.113.9 is ignored: the request still
 	// counts for the proxy-reported 198.51.100.7 and fills its budget.
 	status, code := postConsoleLogin(t, ts.URL, "198.51.100.7", "spray-last", "wrong-password", secret, true)
-	println("DBG SPRAYLAST", status, code)
 	if status != http.StatusUnauthorized || code != "gateway_login_invalid_credentials" || status == http.StatusOK {
 		t.Fatalf("unsigned request with a foreign signature = %d %s", status, code)
 	}
@@ -256,23 +255,23 @@ func TestLoginFailureLimiterResetOnlyDropsTheAccountKey(t *testing.T) {
 	l.record("198.51.100.7", "alice", now.Add(-time.Second), time.Minute)
 	l.record("198.51.100.7", "bob", now.Add(-time.Second), time.Minute)
 	l.reset("198.51.100.7", "Alice", now)
-	// The per-address budget (still 2) limits everything from this address.
 	if got := len(l.byIPKey[loginAccountKey("198.51.100.7", "alice")]); got != 0 {
 		t.Fatalf("reset address/username kept %d failures", got)
+	}
+	if got := len(l.byIPKey[loginAccountKey("198.51.100.7", "bob")]); got != 1 {
+		t.Fatalf("reset cleared another account: bob has %d failures, want 1", got)
+	}
+	if got := len(l.byIP["198.51.100.7"]); got != 2 {
+		t.Fatalf("per-address failures = %d, want 2 (reset must not touch the address budget)", got)
 	}
 	if l.limited("198.51.100.7", "alice", now, 2, time.Minute) {
 		t.Fatal("reset address/username must not limit")
 	}
-	if !l.limited("198.51.100.7", "bob", now, 2, time.Minute) {
-		t.Fatal("reset must not clear another account")
-	}
-	if got := len(l.byIP["198.51.100.7"]); got != 2 {
-		t.Fatalf("per-address failures = %d, want 2", got)
-	}
-	// A failure recorded after the reset counts again.
+	// Two failures recorded after the reset reach the account limit again.
 	l.record("198.51.100.7", "alice", now.Add(time.Second), time.Minute)
-	if !l.limited("198.51.100.7", "alice", now, 2, time.Minute) {
-		t.Fatal("post-reset failure must count")
+	l.record("198.51.100.7", "alice", now.Add(2*time.Second), time.Minute)
+	if !l.limited("198.51.100.7", "alice", now.Add(2*time.Second), 2, time.Minute) {
+		t.Fatal("post-reset failures must count")
 	}
 }
 

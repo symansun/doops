@@ -915,6 +915,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		if replyToolTimeout(reqID, ctx, execCtx, timeout, cmdErr, writeJSON) {
 			return
 		}
+		if execCtx.Err() != nil {
+			// A caller cancel (tools/cancel or a closed tunnel) keeps the
+			// historical -32007 contract; it is not an Agent deadline.
+			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+			return
+		}
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
 			log.Printf("⚠️  WS outcome unknown: [%s] %v", sessionID, cmdErr)
 			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
@@ -948,6 +954,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if replyToolTimeout(reqID, ctx, execCtx, timeout, cmdErr, writeJSON) {
+			return
+		}
+		if execCtx.Err() != nil {
+			// A caller cancel (tools/cancel or a closed tunnel) keeps the
+			// historical -32007 contract; it is not an Agent deadline.
+			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
 		}
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
@@ -992,6 +1004,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if replyToolTimeout(reqID, ctx, execCtx, timeout, cmdErr, writeJSON) {
+			return
+		}
+		if execCtx.Err() != nil {
+			// A caller cancel (tools/cancel or a closed tunnel) keeps the
+			// historical -32007 contract; it is not an Agent deadline.
+			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
 		}
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
@@ -1063,6 +1081,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, false)
 		if replyToolTimeout(reqID, ctx, execCtx, timeout, cmdErr, writeJSON) {
+			return
+		}
+		if execCtx.Err() != nil {
+			// A caller cancel (tools/cancel or a closed tunnel) keeps the
+			// historical -32007 contract; it is not an Agent deadline.
+			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
 		}
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
@@ -3243,9 +3267,11 @@ func waitProcessGroupWithHolder(ctx context.Context, pid int, commandDone <-chan
 					// turn a known leader exit into an unknown outcome.
 					log.Printf("process group %d status is unavailable after cleanup started: %v", pid, err)
 					terminated = true
-				} else if ctx.Err() != nil && errors.Is(err, syscall.EPERM) {
-					// A canceled group remains owned until absence is observed or
-					// the cleanup deadline expires.
+				} else if errors.Is(err, syscall.EPERM) {
+					// Some kernels report EPERM for a signal-0 probe even for
+					// our own group (seen on macOS after the leader is reaped).
+					// Treat the group as present and let the cleanup deadline
+					// decide; do not invent an unknown outcome from the probe.
 					terminated = true
 				}
 				if !terminated {
@@ -3295,21 +3321,9 @@ func waitProcessGroupWithHolder(ctx context.Context, pid int, commandDone <-chan
 			killDeadline = killTimer.C
 			cleanupDeadline = cleanupTimer.C
 		case <-ticker.C:
-			if holder != nil && holder.leaderExited && !holder.signalled && groupProbable(pid) {
-				// The leader is gone but live processes remain in its group, so
-				// they can no longer finish the leader's work. Stop them now and
-				// let the wait report a known residual exit instead of leaving
-				// them (and their output pipes) until the grace period.
-				holder.signalled = true
-				if holder.notify != nil {
-					holder.notify()
-				}
-				if killTimer == nil {
-					_ = syscall.Kill(-pid, syscall.SIGTERM)
-					killTimer = time.NewTimer(processGroupKillGracePeriod)
-					killDeadline = killTimer.C
-				}
-			}
+			// Keep the ticker for the loop's periodic probe; same-group
+			// descendants are stopped by the post-leader grace period, which
+			// marks the result as a known residual termination.
 		}
 	}
 }
@@ -3351,8 +3365,15 @@ func (e *residualProcessesTerminated) Unwrap() error {
 }
 
 func isResidualProcessesTerminated(err error) bool {
+	return residualProcessesTerminatedFrom(err) != nil
+}
+
+func residualProcessesTerminatedFrom(err error) *residualProcessesTerminated {
 	var residual *residualProcessesTerminated
-	return errors.As(err, &residual)
+	if errors.As(err, &residual) {
+		return residual
+	}
+	return nil
 }
 
 // commandOutputChunkBytes bounds every output notification; output lines have
@@ -3492,11 +3513,9 @@ drain:
 			cmdErr = fmt.Errorf("%w: command output read: %w", errExecutionOutcomeUnknown, cause)
 		}
 	}
-	if holder.announced && !errors.Is(cmdErr, errExecutionOutcomeUnknown) {
-		// A holder that escaped the group kept the pipes open after cleanup, so
-		// the command's output is incomplete and the outcome cannot be claimed.
-		cmdErr = fmt.Errorf("%w: command output drain timed out", errExecutionOutcomeUnknown)
-	}
+	// A pipe held after a known leader exit only means later output is
+	// missing, not that the command outcome is unknown. The drain notice above
+	// says so explicitly; the known exit status (or residual cleanup) stands.
 	if done != nil {
 		close(done)
 		<-heartbeatDone

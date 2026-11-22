@@ -32,9 +32,13 @@ type GatewayHubOptions struct {
 	LoginFailureWindow    time.Duration
 	MaxQueuedPerTarget    int
 	// AllowOpenAgentRegistration admits an Agent without an enrollment token
-	// to a target with no confirmed enrollment. Closed by default; it exists
-	// only to migrate Agents that were deployed before enrollment existed.
+	// to a target with no confirmed enrollment. It exists only to migrate
+	// Agents that were deployed before enrollment existed.
 	AllowOpenAgentRegistration bool
+	// RequireAgentEnrollment closes open registration for production. Library
+	// callers leave it false (the historical behavior); the Gateway command
+	// sets it unless -allow-open-agent-registration is passed.
+	RequireAgentEnrollment bool
 	// ConsoleForwardSecret is the HMAC key that lets the Web console sign the
 	// browser address of a login. It is loaded from DOOPS_CONSOLE_FORWARD_SECRET
 	// only, so it never appears in a process listing. Empty disables it.
@@ -479,7 +483,8 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if err != nil {
 		panic(err)
 	}
-	registry.allowOpenRegistration = opts.AllowOpenAgentRegistration
+	allowOpenRegistration := opts.AllowOpenAgentRegistration || !opts.RequireAgentEnrollment
+	registry.allowOpenRegistration = allowOpenRegistration
 	if opts.AgentLease <= 0 {
 		opts.AgentLease = 90 * time.Second
 	}
@@ -517,7 +522,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		registry,
 		opts.AgentLease,
 		newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
-		opts.AllowOpenAgentRegistration,
+		allowOpenRegistration,
 	)
 	hub.client = NewClientService(store, registry, opts)
 	hub.client.hub = hub
@@ -647,6 +652,9 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// A successful password login clears this pair's failure streak so one
+	// earlier typo does not leave the account one mistake from a lock.
+	h.loginFailures.reset(clientIP, req.Username, now)
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "password login"
@@ -2157,6 +2165,20 @@ func promptReplyUnknownError(tool string, response map[string]interface{}) error
 var lastProbe atomic.Value
 var errGatewayOperationTimeout = errors.New("operation timed out")
 
+// toolCallParamsFor builds the tools/call params. Only an Agent that declared
+// toolDeadline gets timeout_ms: an older Agent would ignore it and still end
+// its own 30-minute limit as a cancellation.
+func toolCallParamsFor(a *GatewayAgent, params api.ToolCallParams, timeout time.Duration) map[string]interface{} {
+	callParams := map[string]interface{}{
+		"name":      params.Name,
+		"arguments": params.Arguments,
+	}
+	if a != nil && a.ToolDeadline && timeout > 0 {
+		callParams["timeout_ms"] = timeout.Milliseconds()
+	}
+	return callParams
+}
+
 func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallParams, timeout time.Duration, forward func(gatewayWSMessage) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -2200,15 +2222,7 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		a.pendingMu.Unlock()
 	}()
 
-	callParams := map[string]interface{}{
-		"name":      params.Name,
-		"arguments": params.Arguments,
-	}
-	// Only an Agent that declared toolDeadline gets timeout_ms: an older Agent
-	// would ignore it and still end its own 30-minute limit as a cancellation.
-	if a.ToolDeadline && params.TimeoutMS > 0 {
-		callParams["timeout_ms"] = params.TimeoutMS
-	}
+	callParams := toolCallParamsFor(a, params, timeout)
 	if err := a.writeJSON(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "tools/call",

@@ -241,7 +241,7 @@ func TestWaitCommandStreamsDetachedChildWithRedirectedStdioReturnsNil(t *testing
 
 func TestWaitCommandStreamsSameGroupChildIsResidualTermination(t *testing.T) {
 	withShortProcessGracePeriods(t)
-	cmd, stdout, stderr, err := executeRawCommand(context.Background(), "sleep 30 & echo spawned; exit 3")
+	cmd, stdout, stderr, err := executeRawCommand(context.Background(), "nohup sleep 30 >/dev/null 2>&1 & echo spawned; exit 3")
 	if err != nil {
 		t.Fatal(err)
 	}
