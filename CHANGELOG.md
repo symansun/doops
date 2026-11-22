@@ -8,15 +8,28 @@
 
 ## [Unreleased]
 
+## [0.3.24] — 2026-11-23
+
+### Security
+
+- Gateway 公网 Proxy 和 Git 隧道的审计摘要及活动操作不再记录请求 URL；公网 Proxy 不再回显底层错误。已有审计不变。
+
 ### Added
 
+- Gateway 新增优雅停机排空与活动操作观测：支持 `-shutdown-drain-timeout`（默认 `2m`）在收到 `SIGTERM`/`SIGINT` 时等待在途操作结束，排空期间 `/health` 返回 `503`、新操作快速拒绝（RPC `-32010 gateway_draining`，HTTP `503` + `Retry-After: 5`）；新增平台管理员只读接口 `GET /v1/admin/operations`；`deploy-gateway.sh` 同步配置 systemd `KillSignal=SIGTERM` 与 `TimeoutStopSec=150`。
+- Agent 反向隧道在普通断线或拨号失败时启用指数退避与 `[0.5x, 1.5x)` 随机抖动（上限 `30s`，稳定在线超 1 分钟重置），避免 Gateway 重启后所有 Agent 同秒重连冲击。
+- 统一监控与策略巡检闭环引擎：Gateway 新增 `monitor_schedules`、`monitor_runs`、`monitor_run_items` 与 `monitor_resource_snapshots` 持久化结构、`-monitor-tick` 定时调度循环与 `/v1/monitor/{overview,resources/history,schedules,runs}` 接口；通过内部工具 `doops_monitor_inspect` 按目标下发资产清单至 Agent，Agent 依据资产类型自动执行 `vm_host`、`ssh_host`、`k8s_cluster`、`container_runtime`、`app_service` 与 `database_service` 六类只读策略，离线目标计入缺口而非通过，采集指标同步桥接至 `/v1/assets/monitor` 触发规则告警；控制台原左侧「后台任务」入口升级为「自动化」，统一承接「定时巡检与记录」与「后台运行任务（`exec --bg`）」，「平台监控」同步提供「系统资源监控」与「巡检任务与记录」页签，「Agent 监控」支持一键全策略巡检采集。
 - 控制台表单提供「AI 辅助填写」：本地模型生成建议，可逐项确认；凭据载荷不参与，填入不提交。
 
-- Linux 宿主采集器支持按块设备采集读写 IOPS、吞吐和平均延迟；控制台监控可查看独立曲线并设置阈值。
+- 机器台账标签支持 `key=value` 键值格式与分组交集筛选；「机器台账」新增「探针覆盖率（100%）」视图（含未绑定/离线/超时缺口分类、批量隧道补采与 CSV 导出），并整合「纳管覆盖率 (80%)」「智能巡检」及「业务系统 → 分层拓扑图」入口。
+- 应用级监控新增响应时间（`response_time_ms`）、并发连接数（`active_connections`）与错误率（`error_rate`）指标：支持在线 Agent 原生探测已登记站点及回环 nginx `stub_status`（`mode=apps`），宿主采集器同步补齐 `--http-probe` 与 `stub_status` 活跃连接采集。
+- Linux 宿主采集器支持按块设备采集读写 IOPS、吞吐和平均延迟；新增 Agent 隧道原生虚拟机/主机（`mode=host`，含 CPU、内存、内核、网卡、挂载点与整盘 I/O）与运行中容器（`mode=containers`，支持 Docker / nerdctl / Podman 的 CPU、内存与 `memory_limit`）监控采集，控制台「Agent 监控」与「机器台账」可直接触发观测、查看内存上限占比并设置阈值。
 - 知识库新增 `doops_kb` 工具（`list`/`read`/`write`/`delete`）和只读的 `mcp_doops_kb_read`：普通 ask 会话可以直接查目标上由操作者维护的运维文档，写回仍走控制台或授权路径。删除改为移动到 `.trash/` 并按会话区同一过期时间清理；新增每库 500 篇、256 MiB 和单篇 1 MiB 的配额。
 
 ### Changed
 
+- Gateway 消除全局锁内访问单连接 SQLite 的阻塞路径：`AgentRegistry.Register` 改为按目标串行并在锁外写库，`beginExecution` 将 `MarkExecutionDispatched` 移出双锁后复核，`AgentRegistry.Wait` 快路径改用读锁；WAL 模式下新增独立只读 SQLite 连接池承接鉴权/授权/登记/审计/目标查询，心跳落库合并为每 30 秒单事务批量写入。
+- 重做控制台「平台监控」并补齐 Gateway 持久化与 `/v1/platform-monitor` 汇总接口：持久化离线 Agent 版本（`release_commit`）、上下线连接事件、分钟级并发排队水位、脱离后台任务（重启未完成任务恢复为 `outcome_unknown`）、`doagent` 大模型 Token/模型消耗与 `audit_events` 毫秒时间窗索引，支持按 `1h`/`24h`/`7d`/`30d` 查看调用与并发趋势、动作/模型分布、目标与账号排行及运行异常追踪。
 - 调大控制台和公开页的正文、导航、表单及小字，知识库编辑器和 AI 助手沿用同一字号层级。恢复登录会话时，居中提示改用醒目的状态标题。
 - 控制台知识库改用 `doops_kb` 读写，根目录由 Agent 返回而不是写死 `/root/kb`；预览不再加载远程图片，镜像不再下发 `docs/reviews`。
 - 凭据列表用中文展示状态、版本和目标；编号与内容摘要收进详情。
