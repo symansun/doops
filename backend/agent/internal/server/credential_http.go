@@ -776,6 +776,8 @@ func credentialErrorCategory(err error) string {
 		return "credential_bundle_not_found"
 	case errors.Is(err, ErrCredentialAmbiguous):
 		return "credential_reference_ambiguous"
+	case errors.Is(err, ErrCredentialTargetUnenrolled):
+		return "credential_target_unenrolled"
 	case errors.Is(err, ErrCredentialVersionNotFound):
 		return "credential_version_not_found"
 	case errors.Is(err, ErrCredentialRevoked):
@@ -801,7 +803,7 @@ func credentialHTTPStatus(err error) int {
 	case errors.Is(err, ErrCredentialNotFound), errors.Is(err, ErrCredentialVersionNotFound),
 		errors.Is(err, ErrCredentialBundleNotFound), errors.Is(err, sql.ErrNoRows):
 		return http.StatusNotFound
-	case errors.Is(err, ErrCredentialAmbiguous):
+	case errors.Is(err, ErrCredentialAmbiguous), errors.Is(err, ErrCredentialTargetUnenrolled):
 		return http.StatusConflict
 	case errors.Is(err, ErrCredentialForbidden), errors.Is(err, ErrCredentialGrantDenied):
 		return http.StatusForbidden

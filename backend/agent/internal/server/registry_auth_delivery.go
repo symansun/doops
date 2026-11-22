@@ -63,6 +63,12 @@ func (h *GatewayHub) deliverAgentCredentials(agent *GatewayAgent) {
 	if agent == nil {
 		return
 	}
+	if agent.TokenID == "" {
+		// A session that did not authenticate with a target enrollment token is
+		// not this target: it never receives model or registry credentials.
+		log.Printf("[gateway] credential delivery skipped for %s: target is not enrolled; connect this Agent with its enrollment token", agent.Key)
+		return
+	}
 	h.deliverModelProviders(agent)
 	h.deliverRegistryAuthFiles(agent)
 }

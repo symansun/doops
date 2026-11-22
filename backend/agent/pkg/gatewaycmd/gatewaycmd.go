@@ -59,6 +59,9 @@ func serve(args []string) {
 	_ = fs.Duration("scheduler-tick", 0, "Removed; accepted and ignored")
 	edgeListen := fs.String("edge-listen", "", "TCP listen address for Edge public traffic; empty disables it")
 	edgeProxyProtocol := fs.Bool("edge-proxy-protocol", true, "Require PROXY protocol on Edge listener (must be true behind nginx stream)")
+	// Temporary migration escape hatch. Open agent registration is closed by
+	// default; an Agent needs the enrollment token issued for its target.
+	allowOpenAgentRegistration := fs.Bool("allow-open-agent-registration", false, "TEMPORARY: accept Agents without an enrollment token on targets that have no confirmed enrollment (insecure; migrate them to enrollment tokens)")
 	fs.Parse(args)
 
 	if *retiredGlobalLimit != 0 || *retiredUserLimit != 0 {
@@ -81,11 +84,12 @@ func serve(args []string) {
 	defer store.Close()
 
 	hub := server.NewGatewayHub(store, server.GatewayHubOptions{
-		LoginTokenTTL:         *loginTokenTTL,
-		LoginTokenMaxLifetime: *loginTokenMaxLifetime,
-		OperationTimeout:      *operationTimeout,
-		TargetQueueTimeout:    *targetQueueTimeout,
-		MaxQueuedPerTarget:    *maxQueuedPerTarget,
+		LoginTokenTTL:              *loginTokenTTL,
+		LoginTokenMaxLifetime:      *loginTokenMaxLifetime,
+		OperationTimeout:           *operationTimeout,
+		TargetQueueTimeout:         *targetQueueTimeout,
+		MaxQueuedPerTarget:         *maxQueuedPerTarget,
+		AllowOpenAgentRegistration: *allowOpenAgentRegistration,
 	})
 	hub.StartOfflineInstanceReaper(time.Hour)
 
@@ -98,6 +102,10 @@ func serve(args []string) {
 	log.Printf("   edge endpoint:  ws://127.0.0.1:%s/v1/edge/connect", *port)
 	log.Printf("   client endpoint: ws://127.0.0.1:%s/v1/rpc?cluster=<cluster>&instance=<instance>", *port)
 	log.Printf("   login token ttl=%s max-lifetime=%s", *loginTokenTTL, *loginTokenMaxLifetime)
+	log.Printf("   agent enrollment: %s", agentEnrollmentPolicy(*allowOpenAgentRegistration))
+	if *allowOpenAgentRegistration {
+		logOpenRegistrationWarning(hub)
+	}
 	if strings.TrimSpace(*edgeListen) != "" {
 		listener, err := hub.StartEdgeListener(*edgeListen, *edgeProxyProtocol)
 		if err != nil {
@@ -351,4 +359,28 @@ func mustStore(path string) *server.GatewayStore {
 		log.Fatal(err)
 	}
 	return store
+}
+
+// agentEnrollmentPolicy is the one-line startup summary of agent registration.
+func agentEnrollmentPolicy(allowOpen bool) string {
+	if allowOpen {
+		return "open registration ENABLED for targets without a confirmed enrollment (temporary; migrate every Agent to an enrollment token)"
+	}
+	return "enrollment token required for every Agent"
+}
+
+// logOpenRegistrationWarning states the security consequence once at startup
+// and counts the live sessions that are currently unenrolled. Only the target
+// key is logged; enrollment tokens and token IDs are never printed.
+func logOpenRegistrationWarning(hub *server.GatewayHub) {
+	log.Printf("[gateway] WARNING: -allow-open-agent-registration is set. Any client that knows a cluster/instance without a confirmed enrollment can impersonate that target. It receives and can use no credentials, but it can run other operations as that target. Turn the flag off once every Agent carries its enrollment token.")
+	unenrolled := 0
+	for _, target := range hub.ListTargets() {
+		if target.Enrolled {
+			continue
+		}
+		unenrolled++
+		log.Printf("[gateway] WARNING: unenrolled target online: %s", target.Key)
+	}
+	log.Printf("[gateway] WARNING: %d live target(s) are not enrolled", unenrolled)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -11,6 +12,12 @@ import (
 
 	"github.com/user/doops/agent/api"
 )
+
+// ErrCredentialTargetUnenrolled refuses to materialize credential payload for
+// a live target whose Agent session did not authenticate with a target
+// enrollment token. Such a session is not this target and must never receive
+// credential material.
+var ErrCredentialTargetUnenrolled = errors.New("credential_target_unenrolled")
 
 type CredentialMaterialization struct {
 	CredentialID      string   `json:"credentialId"`
@@ -575,6 +582,12 @@ func (h *GatewayHub) materializeCredentialVersionAttempt(
 	recoverBindingFailure bool,
 	options ...materializeOption,
 ) (CredentialMaterialization, CredentialMaterializeRequest, error) {
+	// Gate before decryption: an unenrolled live session never causes payload
+	// decryption, intentional metadata, or a send.
+	if agent := h.getAgent(cluster, instance); agent != nil && agent.TokenID == "" {
+		return CredentialMaterialization{}, CredentialMaterializeRequest{}, fmt.Errorf(
+			"%w: target %s", ErrCredentialTargetUnenrolled, tunnelKey(cluster, instance))
+	}
 	payload, err := h.store.ResolveCredentialPayload(resource.ID, version.ID)
 	if err != nil {
 		return CredentialMaterialization{}, CredentialMaterializeRequest{}, err
@@ -1088,6 +1101,8 @@ func credentialOperationErrorCategory(err error) string {
 		return ""
 	}
 	switch {
+	case errors.Is(err, ErrCredentialTargetUnenrolled):
+		return "credential_target_unenrolled"
 	case errors.Is(err, ErrCredentialVersionNotFound):
 		return "credential_version_not_found"
 	case errors.Is(err, ErrCredentialGrantDenied):

@@ -16,7 +16,10 @@ var ErrAgentEnrollmentRequired = errors.New("agent enrollment required")
 // AgentRegistry is the single owner of live agent sessions and their persisted
 // connectivity state.
 type AgentRegistry struct {
-	store *GatewayStore
+	// allowOpenRegistration admits a session without an enrollment token to a
+	// target without a confirmed enrollment; see GatewayHubOptions.
+	allowOpenRegistration bool
+	store                 *GatewayStore
 
 	mu          sync.RWMutex
 	sessions    map[string]*GatewayAgent
@@ -63,13 +66,14 @@ func (r *AgentRegistry) Register(agent *GatewayAgent) error {
 	if agent.TokenID == "" {
 		// Checked again under the registry lock: a session that passed the
 		// handler's open-registration check must not replace an Agent whose
-		// target confirmed its enrollment in the meantime.
+		// target confirmed its enrollment in the meantime, and no unenrolled
+		// session replaces a live one while open registration is closed.
 		locked, err := r.store.TargetHasActiveAgentEnrollment(agent.Cluster, agent.Instance)
 		if err != nil {
 			r.mu.Unlock()
 			return fmt.Errorf("check agent enrollment: %w", err)
 		}
-		if locked {
+		if locked || !r.allowOpenRegistration {
 			r.mu.Unlock()
 			return fmt.Errorf("%w for %s", ErrAgentEnrollmentRequired, key)
 		}
