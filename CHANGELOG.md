@@ -59,6 +59,34 @@
 - 固定 DoAgent 0.2.47：命令执行与回放之间保留原始结果和产物路径，重连、重放或续跑后工具证据不再丢失或被截断。
 - Helm 直接回滚或卸载中断后尝试观察 release 状态，原操作结果仍为未知。
 - 控制台区分目标 Agent 在线状态与 AI 助手会话连接状态。平台资产看板或业务系统台账读取失败时，提示检查对应的数据库和迁移记录。
+### Security
+
+- Agent 注册默认要求 enrollment token，并新增 `DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1`
+  环境开关（等价于 `-allow-open-agent-registration`）供没有 enrollment 的私有部署临时开放连接；
+  未登记的会话不再接收模型密钥或镜像仓库凭据，
+  `doops targets` 标出未登记目标。升级前先用 `doops-gateway enroll create` 登记现有
+  Agent；确有迁移需要时可临时使用 `-allow-open-agent-registration`。
+- Gateway 启动时校验 `DOOPS_GATEWAY_SECRET_KEY` 与数据库中凭据密文匹配；不匹配时拒绝
+  启动并给出明确错误，运行期解密失败归类为 `credential_key_mismatch` 或
+  `credential_ciphertext_invalid`，不再落入通用凭据错误。
+- 控制台登录限流使用带 HMAC 签名的浏览器地址，单个用户输错口令不再锁住其他控制台用户；
+  登录成功后清除该（地址，用户名）的失败计数。WebSocket 来源校验同时比较主机和端口，
+  控制台增加 `frame-ancestors`、`X-Frame-Options`、`nosniff`、`Referrer-Policy` 和
+  `Permissions-Policy`，博客 SVG 响应带沙箱 CSP。
+
+### Changed
+
+- 工具时限改为跟随 Gateway `-operation-timeout`（默认 60 分钟），Agent 的
+  `DOOPS_TOOL_TIMEOUT` 作为保险上限；Agent 侧超时返回 `agent_tool_timeout` 并记为审计
+  状态 `timeout`，不再误报为取消或 `outcome_unknown`。Helm 新增 `toolTimeout`。
+- Agent 输出改为分块转发，取消 1 MiB 单行上限；命令已成功退出但仍有进程持有输出管道时，
+  只提示输出不完整，不再把结果改成未知。同一进程组残留的后台进程仍会在宽限期后停止，
+  但结果按已知退出码返回。
+- RPC、Git 和内部调用在目标重连时最多等待 10 秒（`-target-reconnect-grace`），探测类
+  调用保持立即返回；Agent 隧道读超时从 20 秒调整为可配置的 90 秒，并在断线时记录被结束
+  的执行数量。
+- CI 与构建镜像固定 pnpm 11.7.0（`packageManager` + corepack），Go 测试与发布统一使用
+  1.25.14（`toolchain`）。
 
 ## [0.3.21] — 2026-11-21
 

@@ -62,6 +62,7 @@ async function serve(request: Request, context: RouteContext, withBody: boolean)
   if (!info.isFile()) return new Response("Not Found", { status: 404 })
 
   const etag = `"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`
+  const extension = extname(filePath).toLowerCase()
   const headers = new Headers({
     "Content-Type": CONTENT_TYPES[extname(filePath).toLowerCase()] ?? "application/octet-stream",
     "Content-Length": String(info.size),
@@ -71,6 +72,14 @@ async function serve(request: Request, context: RouteContext, withBody: boolean)
     "X-Content-Type-Options": "nosniff",
     "Content-Disposition": "inline",
   })
+  if (extension === ".svg") {
+    // An SVG opened directly can carry script. Sandbox it and refuse external
+    // loads while keeping inline styles so the artwork still renders.
+    headers.set(
+      "Content-Security-Policy",
+      "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    )
+  }
 
   if (matchesEtag(request.headers.get("if-none-match"), etag)) {
     // 304 must not describe a body length.

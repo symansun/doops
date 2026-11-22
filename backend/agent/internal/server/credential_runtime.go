@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -11,6 +12,12 @@ import (
 
 	"github.com/user/doops/agent/api"
 )
+
+// ErrCredentialTargetUnenrolled refuses to materialize credential payload for
+// a live target whose Agent session did not authenticate with a target
+// enrollment token. Such a session is not this target and must never receive
+// credential material.
+var ErrCredentialTargetUnenrolled = errors.New("credential_target_unenrolled")
 
 type CredentialMaterialization struct {
 	CredentialID      string   `json:"credentialId"`
@@ -575,6 +582,12 @@ func (h *GatewayHub) materializeCredentialVersionAttempt(
 	recoverBindingFailure bool,
 	options ...materializeOption,
 ) (CredentialMaterialization, CredentialMaterializeRequest, error) {
+	// Gate before decryption: an unenrolled live session never causes payload
+	// decryption, intentional metadata, or a send.
+	if agent := h.getAgent(cluster, instance); agent != nil && agent.TokenID == "" {
+		return CredentialMaterialization{}, CredentialMaterializeRequest{}, fmt.Errorf(
+			"%w: target %s", ErrCredentialTargetUnenrolled, tunnelKey(cluster, instance))
+	}
 	payload, err := h.store.ResolveCredentialPayload(resource.ID, version.ID)
 	if err != nil {
 		return CredentialMaterialization{}, CredentialMaterializeRequest{}, err
@@ -936,7 +949,7 @@ func (h *GatewayHub) cleanupCredentialVersion(ctx context.Context, request Crede
 		// not remove it.
 		arguments["authfile_only"] = true
 	}
-	if _, err := h.RunInternalToolCall(ctx, request.Cluster, request.Instance, "doops_credential_cleanup", arguments); err != nil {
+	if _, err := h.RunInternalToolCall(withoutReconnectWait(ctx), request.Cluster, request.Instance, "doops_credential_cleanup", arguments); err != nil {
 		return err
 	}
 	return h.store.MarkCredentialMaterializationCleaned(request)
@@ -952,7 +965,7 @@ func (h *GatewayHub) cleanupCredentialMaterializationContext(
 		"namespace": request.Scope.Namespace, "workload": request.Scope.Workload,
 		"credential_type": request.CredentialType,
 	}
-	if _, err := h.RunInternalToolCall(ctx, request.Cluster, request.Instance, "doops_credential_cleanup", arguments); err != nil {
+	if _, err := h.RunInternalToolCall(withoutReconnectWait(ctx), request.Cluster, request.Instance, "doops_credential_cleanup", arguments); err != nil {
 		return err
 	}
 	return h.store.MarkCredentialMaterializationContextCleaned(request)
@@ -1088,6 +1101,8 @@ func credentialOperationErrorCategory(err error) string {
 		return ""
 	}
 	switch {
+	case errors.Is(err, ErrCredentialTargetUnenrolled):
+		return "credential_target_unenrolled"
 	case errors.Is(err, ErrCredentialVersionNotFound):
 		return "credential_version_not_found"
 	case errors.Is(err, ErrCredentialGrantDenied):
@@ -1101,6 +1116,10 @@ func credentialOperationErrorCategory(err error) string {
 		return "credential_payload_invalid"
 	case errors.Is(err, ErrCredentialAuditUnavailable):
 		return "credential_audit_unavailable"
+	case errors.Is(err, ErrSecretKeyMismatch):
+		return "credential_key_mismatch"
+	case errors.Is(err, ErrCredentialCiphertextInvalid):
+		return "credential_ciphertext_invalid"
 	}
 	category := sanitizeCredentialCategory(err.Error())
 	if category != "credential_operation_failed" {

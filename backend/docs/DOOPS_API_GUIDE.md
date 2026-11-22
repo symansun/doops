@@ -158,9 +158,12 @@ Gateway 签发的用户 token 格式为
 这些错误只描述 Gateway user token，不表示受管凭据 `credential_invalid`。如果响应只有裸
 `401 Unauthorized`，调用方必须将认证域视为未确定，不得直接把错误归因于受管凭据。
 
-`/v1/agent/connect` 在该 target 还没有确认 enrollment 时保持开放注册。确认之后必须带绑定到该
-cluster/instance 的 enrollment token，失败时返回 `code=agent_enrollment_auth_failed` 和
-`auth_domain=agent_enrollment`。已在线的 Agent 不会因为签发或升级而断开。
+`/v1/agent/connect` 默认要求 `Authorization: Bearer <enrollment token>`，且该 token 必须绑定到
+同一个 cluster/instance：token 缺失、无效、已撤销或属于另一个 target 时返回
+`401`、`code=agent_enrollment_auth_failed` 和 `auth_domain=agent_enrollment`，不会回退为开放注册。
+enrollment 存储不可用时返回 `503`。只有 Gateway 以 `-allow-open-agent-registration` 启动时，
+没有已确认 enrollment 的 target 才接受不带 token 的连接；该连接在 `/v1/targets` 中
+`enrolled=false`，且收不到任何凭据。已在线的 Agent 不会因为签发 enrollment 或升级而断开。
 `/v1/edge/connect` 使用另一份 enrollment token。失败时返回
 `code=edge_enrollment_auth_failed` 和 `auth_domain=edge_enrollment`。
 两处都不能使用 Gateway user token 或受管凭据替代。
@@ -406,6 +409,7 @@ Authorization: Bearer <USER_TOKEN>
       "status": "active",
       "active_ops": 1,
       "queued_ops": 0,
+      "enrolled": true,
       "resources": ["workspace:deploy-20260519"],
       "sessions": ["deploy-20260519"]
     }
@@ -418,6 +422,10 @@ Authorization: Bearer <USER_TOKEN>
 - `401 Unauthorized`：token 缺失、无效、过期或已撤销。
 
 列表按调用方的 grant 过滤；没有任何匹配 grant 时返回空 `targets` 数组，不返回 `403`。
+`enrolled` 为布尔值：`true` 表示该在线会话用本 target 的 enrollment token 认证，
+`false` 表示它是未 enrollment 的连接（只可能来自上述临时开放注册）。接口不返回
+enrollment token 或其 ID；未 enrollment 的 target 不会收到模型或 registry 凭据，
+显式使用凭据返回 `409 credential_target_unenrolled`。
 
 `busy` 只表示 Agent 自升级持有 target 级独占 lease；普通变更和排队 session 使用
 `target + session` 作用域的共享 lease，同一 session 内的 Shell/SSH/bg/apply 也可并发，

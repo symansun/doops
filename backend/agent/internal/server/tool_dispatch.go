@@ -11,13 +11,14 @@ import (
 
 // toolCall carries the per-request state shared by every tool handler.
 type toolCall struct {
-	ctx          context.Context
-	reqID        interface{}
-	args         json.RawMessage
-	write        func(v interface{})
-	sessionID    string
-	progress     func(evt notificationEvent)
-	policyDenial func(err error) bool
+	ctx              context.Context
+	reqID            interface{}
+	gatewayTimeoutMS int64
+	args             json.RawMessage
+	write            func(v interface{})
+	sessionID        string
+	progress         func(evt notificationEvent)
+	policyDenial     func(err error) bool
 }
 
 // toolHandlers maps a caller-facing tool name to its Agent-side handler. The
@@ -62,7 +63,7 @@ var internalToolHandlers = map[string]func(*Gateway, toolCall){
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）。
 // 校验会话后按 toolHandlers 分发给各工具的处理函数（tool_handlers_*.go）。
-func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, writeJSON func(v interface{})) {
+func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, gatewayTimeoutMS int64, writeJSON func(v interface{})) {
 	var sessionID string
 	var argsMap map[string]interface{}
 	json.Unmarshal(argBytes, &argsMap)
@@ -119,13 +120,14 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	}
 	if ok {
 		handler(gw, toolCall{
-			ctx:          ctx,
-			reqID:        reqID,
-			args:         argBytes,
-			write:        writeJSON,
-			sessionID:    sessionID,
-			progress:     pushProgress,
-			policyDenial: writePolicyDenial,
+			ctx:              ctx,
+			reqID:            reqID,
+			gatewayTimeoutMS: gatewayTimeoutMS,
+			args:             argBytes,
+			write:            writeJSON,
+			sessionID:        sessionID,
+			progress:         pushProgress,
+			policyDenial:     writePolicyDenial,
 		})
 		return
 	}

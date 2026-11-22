@@ -15,6 +15,8 @@ func TestAgentRegistryRefusesUnenrolledSessionAfterEnrollmentConfirmed(t *testin
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}
+	// This test covers the temporary open-registration migration mode.
+	registry.allowOpenRegistration = true
 
 	// An open (unenrolled) session registers while no enrollment is confirmed.
 	open := newGatewayAgentSession("dev", "local", "", "198.51.100.1:1", nil, nil)

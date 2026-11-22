@@ -241,6 +241,10 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 
 `doops targets` 的状态：
 
+`ENROLLED=NO (not enrolled)` 表示该在线 Agent 只带 `cluster/instance` 连入、没有使用该 target
+的 enrollment token；Gateway 不向它下发或发送任何凭据，行下会打印 NOT ENROLLED 提示，
+迁移步骤见 [DOOPS_GATEWAY_TUNNEL.md](DOOPS_GATEWAY_TUNNEL.md)。
+
 这些状态只描述 Gateway 操作计数。`ACTIVE=0 / QUEUED=0` 不代表 do-agent 内部名额空闲。
 增加 `--admission` 会通过节点信息 RPC 读取 `runtime/gcStats` 的 `admission.current`：
 `limit`、`inUse`、`available`、`holders`（session/turn）及
@@ -440,6 +444,22 @@ doops -session ops exec --target demo --cmd 'hostname && df -h && free -h'
 ```
 
 Use `exec` for deterministic commands, read-only checks, and known deployment scripts.
+
+### 时限与常驻进程
+
+- 单次工具的时限由 Gateway `-operation-timeout`（默认 60 分钟）和 Agent 的
+  `DOOPS_TOOL_TIMEOUT`（默认 30 分钟）共同决定：Agent 取两者中较短的一个，并比 Gateway
+  提前 5 秒收尾。未设置 `DOOPS_TOOL_TIMEOUT` 时，命令行工具跟随 Gateway 的时限；
+  Helm 可用 `toolTimeout` 设置这个保险上限。
+- Agent 自己的时限到期时返回 `agent_tool_timeout`（错误码 `-32603`），审计状态为
+  `timeout`，进程组已停止；这与调用方取消（`-32007`）和结果未知
+  （`execution_outcome_unknown`）不同，可以按超时处理。
+- 输出不再按行限制长度：单行几 MB 的 JSON、base64 或压缩产物会分块转发，不会中断命令。
+- `exec` 返回后不保留同一进程组里的后台进程；主进程退出 10 秒后仍留在组内的进程会被
+  停止。需要常驻的服务请显式脱离进程组并重定向标准流，例如
+  `setsid ./server </dev/null >/var/log/server.log 2>&1 &`，或使用
+  `systemd-run --unit=<name> --collect <command>`、容器。长任务优先用
+  `exec --bg`，它把输出写入日志文件，不受行长和前台排空影响。
 标准 Agent 镜像提供出站 `ssh` 客户端。多层 SSH 必须使用结构化入口，不能把 SSH
 命令拼进 `exec --cmd` 的单个字符串；这样可在 OpenSSH 边界保留每个远端 argv，避免
 嵌套引号被远端 shell 重解析。这不会创建 SSH target，也不会启动 `sshd`。SSH 目标、

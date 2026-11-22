@@ -102,6 +102,11 @@ doops -session preflight exec --target <自动发现的 target> --cmd hostname
    首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回
    `~/.agent/skills/doops/config.json`；已有路由的名称、别名和描述不会被改写。
    因此操作员不需要事先知道 Agent 的 `cluster/instance`。
+   `doops targets` 的 `ENROLLED` 列显示该 target 是否用该 target 的 enrollment token
+   连接：`NO (not enrolled)` 表示该 Agent 只用 `cluster/instance` 连入，Gateway 不会向它
+   下发或发送任何凭据，也不会把它当作该 target 的可信身份；为该 target 签发 enrollment
+   token 并以它重启该 Agent，步骤见
+   [DOOPS_GATEWAY_TUNNEL.md](DOOPS_GATEWAY_TUNNEL.md)。
 
 约束：
 
@@ -242,6 +247,14 @@ Kubernetes `cluster-admin` 也不等于已取得其他节点或 hypervisor 的�
    Agent 身份，不覆盖现有实例；失败按本次清理方案仅处理本次创建的资源。
 4. 检查 Deployment 收敛、实际新 Pod Ready 和 imageID，登录 Gateway 并核对唯一
    `cluster/instance`、`release_commit`、`upgradeAudit v1`，再完成下文安装验收。
+   若控制台经服务端代理登录 Gateway，给控制台和 Gateway 配置同一个
+   `DOOPS_CONSOLE_FORWARD_SECRET`（Helm/Secret 注入），并按控制台前面的代理层数设置
+   `DOOPS_CONSOLE_TRUSTED_PROXY_HOPS`；否则所有控制台用户共享同一个登录限流桶。
+   没有 enrollment 的私有 Gateway 可在 `/etc/doops-gateway.env` 设置
+   `DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1` 后重启 Gateway；这只恢复未登记 Agent 的连接，
+   不会向它投递凭据。完成登记后删除该行并重启。
+   Gateway 默认要求提前签发 enrollment token（`values.gateway.enrollmentTokenSecret`）；
+   只带 `cluster/instance` 的新 Agent 会被拒绝（`401`），`doops targets` 也不会出现它。
    未完成 Gateway 注册与验收前，不宣称 target 已可用。
 
 初装完成后，Agent 生命周期切换统一通过授权、受审计的 Gateway：
@@ -261,10 +274,20 @@ Kubernetes `cluster-admin` 也不等于已取得其他节点或 hypervisor 的�
 [PHYSICAL_HOST_ACCESS.md](PHYSICAL_HOST_ACCESS.md)。
 这只到达 Pod 所在节点的操作系统，不跨越虚拟机的 hypervisor，也不能代替一份写明范围的 Helm values。
 
+不需要宿主机入口和容器内镜像构建的目标可以收窄 Agent 自身权限：
+`securityContext.privileged=false`（同时要求 `hostAccess.enabled=false`，否则渲染失败）
+会去掉特权并设置 `allowPrivilegeEscalation=false`、丢弃全部 capabilities；此时
+`nsenter` 和特权 BuildKit 不可用。`rbac.clusterRole` 可换成更小的 ClusterRole，
+`rbac.namespaces` 非空时改用命名空间级 RoleBinding。收窄 RBAC 后要单独验证
+`doops upgrade` 所需权限。安装时优先固定 `image.digest`，不要依赖浮动标签。
+
 ## 空服务器 Docker 首装
 
 支持使用 systemd 的 Ubuntu/Debian，amd64/arm64（所选发布镜像必须包含对应架构）。
-这是首次安装入口，不用于覆盖已有容器。以下命令从仓库根执行，Unicom 示例：
+这是首次安装入口，不用于覆盖已有容器。Agent 必须带该 target 的 enrollment token 注册：
+在 Gateway 执行 `doops-gateway enroll create -cluster <cluster> -instance <instance>`，
+把输出的明文写入仅 root 可读的文件（含 `DOOPS_AGENT_ENROLL_TOKEN=<token>`），用
+`--enroll-token-file` 传入；不带该参数时 Agent 无法通过默认关闭的注册。以下命令从仓库根执行，Unicom 示例：
 
 ```bash
 sudo bash backend/scripts/bootstrap-host-agent.sh \

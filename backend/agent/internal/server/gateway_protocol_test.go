@@ -48,21 +48,29 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 		t.Fatalf("grant targets list: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, LoginTokenTTL: 20 * time.Millisecond})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, LoginTokenTTL: 20 * time.Millisecond, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
 	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	agentConn, resp, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer stale-registration-token"}})
+	// Open registration admits a token-less Agent on an unconfirmed target ...
+	agentConn, resp, err := websocket.DefaultDialer.Dial(agentWS, nil)
 	if err != nil {
-		t.Fatalf("open registration must keep accepting an agent before an enrollment is confirmed: %v", err)
+		t.Fatalf("open registration must accept a token-less agent before an enrollment is confirmed: %v", err)
 	}
 	_ = agentConn.Close()
 	if resp != nil && resp.Body != nil {
 		resp.Body.Close()
 	}
+	// ... but a presented token that is not an enrollment for this target is
+	// refused even in open mode, never treated as an open registration.
+	_, resp, err = websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer stale-registration-token"}})
+	if err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("invalid token must be refused with 401, got err=%v resp=%v", err, resp)
+	}
+	resp.Body.Close()
 
 	resp, err = http.Get(ts.URL + "/v1/targets")
 	if err != nil {
@@ -110,7 +118,9 @@ func TestGatewayAgentRegistrationStaysOpenUntilEnrollmentIsConfirmed(t *testing.
 	}
 	defer store.Close()
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	// Open registration is opt-in: this test exercises the temporary
+	// -allow-open-agent-registration migration mode.
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	var delivered atomic.Int32
 	gw.registration.onRegistered = func(*GatewayAgent) { delivered.Add(1) }
 	mux := http.NewServeMux()
@@ -157,13 +167,6 @@ func TestGatewayAgentRegistrationStaysOpenUntilEnrollmentIsConfirmed(t *testing.
 	}
 	_ = pending.Close()
 
-	other := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=other"
-	otherConn, _, err := websocket.DefaultDialer.Dial(other, nil)
-	if err != nil {
-		t.Fatalf("another target must stay open: %v", err)
-	}
-	_ = otherConn.Close()
-
 	enrolled, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + created.Plaintext}})
 	if err != nil {
 		t.Fatalf("dial enrolled agent: %v", err)
@@ -183,13 +186,19 @@ func TestGatewayAgentRegistrationStaysOpenUntilEnrollmentIsConfirmed(t *testing.
 	if current := gw.getAgent("dev", "local"); current != ready || delivered.Load() != 2 {
 		t.Fatal("unauthenticated candidate replaced the enrolled session")
 	}
+	// A token issued for dev/local is not a token for dev/other: it is refused
+	// and it never falls back to open registration.
+	other := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=other"
 	untouched, resp, err := websocket.DefaultDialer.Dial(other, http.Header{"Authorization": []string{"Bearer " + created.Plaintext}})
-	if err != nil {
-		t.Fatalf("token for another target must not close that target: %v", err)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("token for another target must be refused with 401, got err=%v resp=%v", err, resp)
 	}
-	_ = untouched.Close()
-	if resp != nil && resp.Body != nil {
-		resp.Body.Close()
+	if untouched != nil {
+		_ = untouched.Close()
+	}
+	resp.Body.Close()
+	if current := gw.getAgent("dev", "other"); current != nil {
+		t.Fatal("a token for another target registered dev/other")
 	}
 }
 
@@ -249,7 +258,7 @@ func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *test
 	}
 	defer store.Close()
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -281,7 +290,7 @@ func TestGatewayAgentCandidateAckFailureKeepsReadySession(t *testing.T) {
 	}
 	defer store.Close()
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -316,7 +325,7 @@ func TestGatewayAgentCandidateHeartbeatFailureKeepsReadySession(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	gw.registration.heartbeatTimeout = 50 * time.Millisecond
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
@@ -463,7 +472,7 @@ func TestGatewayStartupReconcilesPersistedOnlineStatus(t *testing.T) {
 		t.Fatalf("mark stale agent online: %v", err)
 	}
 
-	hub := NewGatewayHub(store, GatewayHubOptions{})
+	hub := NewGatewayHub(store, GatewayHubOptions{AllowOpenAgentRegistration: true})
 
 	statuses, err := store.ListAgentStatus()
 	if err != nil {
@@ -506,7 +515,7 @@ func TestGatewayGitHTTPRoutesByClusterAndInstance(t *testing.T) {
 		t.Fatalf("grant pull: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -554,7 +563,7 @@ func TestGatewayGitHTTPWaitsForShortAgentReconnect(t *testing.T) {
 		t.Fatalf("grant pull: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, TargetReconnectGrace: 500 * time.Millisecond})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, TargetReconnectGrace: 500 * time.Millisecond, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -617,7 +626,7 @@ func TestGatewayGitHTTPEndToEndPushAndFetch(t *testing.T) {
 		t.Fatalf("grant push/pull: %v", err)
 	}
 
-	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: 10 * time.Second, MaxQueuedPerTarget: -1})
+	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: 10 * time.Second, MaxQueuedPerTarget: -1, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -746,7 +755,7 @@ func TestGatewayPasswordLoginIssuesUserToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create expired prior token: %v", err)
 	}
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, LoginTokenTTL: 2 * time.Second})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, LoginTokenTTL: 2 * time.Second, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -848,7 +857,7 @@ func TestGatewayHTTPReportsTokenLifecycleReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := NewGatewayHub(store, GatewayHubOptions{})
+	hub := NewGatewayHub(store, GatewayHubOptions{AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -927,7 +936,7 @@ func TestGatewayAuditHTTPAllowsOwnHistoryAndFiltersEvents(t *testing.T) {
 		t.Fatalf("finish audit: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -998,7 +1007,7 @@ func TestGatewayAdminTokenCreateRequiresAdminAndIssuesUserToken(t *testing.T) {
 	alice, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: alice.ID, Name: "alice"})
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -1073,7 +1082,7 @@ func TestGatewayRPCForwardsAllowedActionAndRejectsDeniedAction(t *testing.T) {
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -1156,7 +1165,7 @@ func TestGatewayRPCForwardsBackgroundToolsAsExec(t *testing.T) {
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -1229,7 +1238,7 @@ func TestGatewayRPCDoesNotAllowClientActionOverrideForShell(t *testing.T) {
 		t.Fatalf("grant info: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -1316,7 +1325,7 @@ func TestGatewayRejectsStructuredSSHForAgentWithoutCapability(t *testing.T) {
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -1368,7 +1377,7 @@ func TestGatewayDispatchesTaggedAndPinnedAgentUpgrade(t *testing.T) {
 		t.Fatalf("grant agent upgrade: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: 30 * time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: 30 * time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -1448,7 +1457,7 @@ func TestGatewayForwardsShellCommandsWithoutInspectingContent(t *testing.T) {
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -1584,7 +1593,7 @@ func TestGatewayKeepsIdleAgentAliveWithPing(t *testing.T) {
 	defer store.Close()
 
 	lease := 200 * time.Millisecond
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: lease})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: lease, AllowOpenAgentRegistration: true})
 	gw.registration.heartbeatTimeout = time.Second
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
@@ -1683,7 +1692,7 @@ func TestGatewayAgentReadLoopKeepsPongResponsiveWhenStoreIsBusy(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
-	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Second})
+	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Second, AllowOpenAgentRegistration: true})
 
 	heldConn, err := store.db.Conn(context.Background())
 	if err != nil {
@@ -1831,7 +1840,7 @@ func TestGatewayRelayTimeoutDoesNotCloseAgentConnection(t *testing.T) {
 	}
 	defer store.Close()
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: 25 * time.Millisecond})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: 25 * time.Millisecond, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2035,7 +2044,7 @@ func TestGatewayRPCRunsSameSessionShellConcurrentlyAndFencesWorkspace(t *testing
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2104,7 +2113,7 @@ func TestGatewayRPCAllowsConcurrentStructuredWorkspacesForSameTarget(t *testing.
 		t.Fatalf("grant write: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2173,7 +2182,7 @@ func TestGatewayRPCAllowsConcurrentCallsOnOneClientConnection(t *testing.T) {
 		t.Fatalf("grant info: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2237,7 +2246,7 @@ func TestGatewayRPCAllowsShellMutationsAcrossSessions(t *testing.T) {
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2305,7 +2314,7 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2474,7 +2483,7 @@ func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create token: %v", err)
 	}
-	hub := NewGatewayHub(store, GatewayHubOptions{})
+	hub := NewGatewayHub(store, GatewayHubOptions{AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 	server := httptest.NewServer(mux)
@@ -2529,7 +2538,7 @@ func testGatewayConcurrentReadOnlyRPC(t *testing.T, action GatewayAction, tool s
 		t.Fatalf("grant %s: %v", action, err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2591,9 +2600,10 @@ func TestGatewayRPCQueuesSecondOperationForSameTarget(t *testing.T) {
 	}
 
 	gw := NewGatewayHub(store, GatewayHubOptions{
-		AgentLease:         time.Minute,
-		TargetQueueTimeout: time.Second,
-		MaxQueuedPerTarget: 1,
+		AgentLease:                 time.Minute,
+		TargetQueueTimeout:         time.Second,
+		MaxQueuedPerTarget:         1,
+		AllowOpenAgentRegistration: true,
 	})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
@@ -2645,7 +2655,7 @@ func TestGatewayRPCDefaultDoesNotQueueBehindBusyTarget(t *testing.T) {
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2699,7 +2709,7 @@ func TestGatewayRPCCancelsOperationWhenClientDisconnects(t *testing.T) {
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2739,7 +2749,7 @@ func TestGatewayGitClientCancelReleasesTarget(t *testing.T) {
 		t.Fatalf("grant pull: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2812,7 +2822,7 @@ func TestGatewayRPCAllowsOneUserToRunOnSeveralTargetsAtOnce(t *testing.T) {
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2864,7 +2874,7 @@ func TestGatewayStaleAgentDisconnectDoesNotMarkReplacementOffline(t *testing.T) 
 	}
 	defer store.Close()
 
-	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, AllowOpenAgentRegistration: true})
 	oldAgent := &GatewayAgent{
 		Cluster:  "dev",
 		Instance: "local",
@@ -2943,7 +2953,7 @@ func newGatewayGitE2E(t *testing.T, targets []gatewayGitE2ETarget) (*GatewayHub,
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: 30 * time.Second, MaxQueuedPerTarget: -1})
+	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: 30 * time.Second, MaxQueuedPerTarget: -1, AllowOpenAgentRegistration: true})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2989,7 +2999,14 @@ func waitForGatewayAgent(t *testing.T, hub *GatewayHub, cluster, instance string
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if hub.getAgent(cluster, instance) != nil {
+		if agent := hub.getAgent(cluster, instance); agent != nil {
+			// Tests model Agents that completed enrollment; token-less sessions
+			// are covered explicitly by the impersonation tests.
+			hub.registry.mu.Lock()
+			if agent.TokenID == "" {
+				agent.TokenID = "test-enrollment"
+			}
+			hub.registry.mu.Unlock()
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

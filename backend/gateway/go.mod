@@ -2,6 +2,8 @@ module github.com/user/doops/gateway
 
 go 1.24.0
 
+toolchain go1.25.14
+
 require (
 	github.com/user/doops/agent v0.0.0
 	modernc.org/sqlite v1.45.0

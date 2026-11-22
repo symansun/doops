@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/api"
@@ -49,44 +50,109 @@ func checkWebSocketOrigin(r *http.Request) bool {
 		return true
 	}
 	originURL, err := url.Parse(origin)
-	if err != nil {
+	if err != nil || originURL.Host == "" {
 		return false
 	}
-	originHost := strings.ToLower(originURL.Host)
-	if originHost == "" {
+	if originURL.Scheme != "http" && originURL.Scheme != "https" {
 		return false
 	}
-	// Same-host requests are always allowed.
-	if strings.EqualFold(originHost, r.Host) || strings.EqualFold(originURL.Hostname(), hostOnly(r.Host)) {
+	// Same origin means the same host AND port. Comparing only the hostname
+	// would let any page on another port of the same host open the socket.
+	if sameWebSocketOrigin(originURL, r.Host) {
 		return true
 	}
 	for _, allowed := range strings.Split(os.Getenv("DOOPS_ALLOWED_WS_ORIGINS"), ",") {
-		allowed = strings.ToLower(strings.TrimSpace(allowed))
-		if allowed == "" {
-			continue
-		}
-		if allowed == originHost || allowed == strings.ToLower(originURL.Hostname()) {
+		if allowedWebSocketOrigin(strings.TrimSpace(allowed), originURL) {
 			return true
 		}
 	}
 	return false
 }
 
-func hostOnly(hostport string) string {
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		return h
+// sameWebSocketOrigin compares scheme-independent host and effective port. The
+// scheme is deliberately not compared: TLS usually terminates in front of the
+// Gateway, so the request scheme seen here is not the browser's. Cross-port
+// origins are rejected; list them explicitly when a deployment needs them.
+func sameWebSocketOrigin(origin *url.URL, requestHost string) bool {
+	host, port, ok := originHostPort(origin)
+	if !ok {
+		return false
 	}
-	return hostport
+	requestName, requestPort := splitHostPortDefault(requestHost, defaultPort(origin.Scheme))
+	return strings.EqualFold(host, requestName) && port == requestPort
+}
+
+// allowedWebSocketOrigin accepts either a full origin ("https://console:8443")
+// or the legacy bare host[:port] form, which means the https default port.
+func allowedWebSocketOrigin(allowed string, origin *url.URL) bool {
+	allowed = strings.TrimSpace(allowed)
+	if allowed == "" {
+		return false
+	}
+	if strings.Contains(allowed, "://") {
+		parsed, err := url.Parse(allowed)
+		if err != nil || parsed.Host == "" {
+			return false
+		}
+		host, port, ok := originHostPort(parsed)
+		if !ok || !strings.EqualFold(parsed.Scheme, origin.Scheme) {
+			return false
+		}
+		originName, originPort, ok := originHostPort(origin)
+		return ok && strings.EqualFold(host, originName) && port == originPort
+	}
+	host, port := splitHostPortDefault(allowed, defaultPort("https"))
+	originName, originPort, ok := originHostPort(origin)
+	return ok && strings.EqualFold(host, originName) && port == originPort
+}
+
+func originHostPort(origin *url.URL) (string, string, bool) {
+	if origin == nil || origin.Hostname() == "" {
+		return "", "", false
+	}
+	port := origin.Port()
+	if port == "" {
+		port = defaultPort(origin.Scheme)
+	}
+	return origin.Hostname(), port, true
+}
+
+func splitHostPortDefault(hostport, fallbackPort string) (string, string) {
+	if host, port, err := net.SplitHostPort(hostport); err == nil {
+		return host, port
+	}
+	return strings.Trim(hostport, "[]"), fallbackPort
+}
+
+func defaultPort(scheme string) string {
+	if strings.EqualFold(scheme, "https") {
+		return "443"
+	}
+	return "80"
 }
 
 const (
-	agentWSReadTimeout            = 20 * time.Second
 	agentWSPingInterval           = 5 * time.Second
 	agentWSPingWriteTimeout       = 3 * time.Second
 	agentWSDataWriteTimeout       = 60 * time.Second
 	maxAgentPromptAttachments     = 4
 	maxAgentPromptAttachmentBytes = 25 * 1024 * 1024
 )
+
+// defaultAgentTunnelReadTimeout matches the Gateway's 90-second Agent lease.
+// The Agent pongs (refreshing the lease) before this deadline; exceeding it
+// ends the tunnel, which still terminates that connection's in-flight calls.
+const defaultAgentTunnelReadTimeout = 90 * time.Second
+
+// agentTunnelReadTimeout reads DOOPS_TUNNEL_READ_TIMEOUT on the Agent side.
+// The Gateway's read deadline on the same connection is longer than any
+// expectable interval between Agent pongs, so a healthy Agent is never cut.
+func agentTunnelReadTimeout() time.Duration {
+	return positiveEnvDuration("DOOPS_TUNNEL_READ_TIMEOUT", defaultAgentTunnelReadTimeout)
+}
+
+// edgeWSReadTimeout keeps the Edge transport's fixed 20-second idle bound.
+const edgeWSReadTimeout = 20 * time.Second
 
 type websocketControlWriter interface {
 	WriteControl(messageType int, data []byte, deadline time.Time) error
@@ -234,10 +300,13 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	// per-connection 写互斥锁（gorilla/websocket 不允许并发写）
 	var connMu sync.Mutex
 	var dataWriteState websocketDataWriteState
+	// Read once per connection so a read timeouts change cannot split a deadline
+	// window between the initial deadline, the pong handler and the loop.
+	readTimeout := agentTunnelReadTimeout()
 
-	conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
+	conn.SetReadDeadline(time.Now().Add(readTimeout))
 	conn.SetPongHandler(func(string) error {
-		return conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
+		return conn.SetReadDeadline(time.Now().Add(readTimeout))
 	})
 
 	pingDone := make(chan struct{})
@@ -279,6 +348,10 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	activeToolMu := sync.Mutex{}
 	activeToolCalls := make(map[int64]activeToolCall)
 	var executionWG sync.WaitGroup
+	// inFlightToolCalls counts started tool calls that have not returned yet.
+	// It only feeds the disconnect log; cancellation semantics stay with
+	// connectionCtx and executionWG.
+	var inFlightToolCalls atomic.Int64
 	var readyOnce sync.Once
 	closeGitBody := func(id int64) {
 		gitBodyMu.Lock()
@@ -321,7 +394,8 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	// 主读取循环
 	for {
 		messageType, message, err := readWebSocketMessage(conn, func() {
-			_ = conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
+			// Data frames count as liveness; pongs keep this deadline too.
+			_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
 		})
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -361,6 +435,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 							upgradeAuditProtocol:          upgradeAuditCapability(),
 							registryAuthfileProtocol:      registryAuthfileCapability(),
 							cosSnapshotExecutableProtocol: cosSnapshotExecutableCapability(),
+							toolDeadlineProtocol:          toolDeadlineCapability(),
 						},
 					},
 				},
@@ -584,26 +659,37 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					cancel: cancel,
 				}
 				activeToolMu.Unlock()
+				inFlightToolCalls.Add(1)
 				executionWG.Add(1)
 				go func() {
 					defer executionWG.Done()
+					defer inFlightToolCalls.Add(-1)
 					defer func() {
 						activeToolMu.Lock()
 						delete(activeToolCalls, id)
 						activeToolMu.Unlock()
 						cancel()
 					}()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
+					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.TimeoutMS, writeJSON)
 				}()
 			} else {
+				inFlightToolCalls.Add(1)
 				executionWG.Add(1)
 				go func() {
 					defer executionWG.Done()
+					defer inFlightToolCalls.Add(-1)
 					defer cancel()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
+					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.TimeoutMS, writeJSON)
 				}()
 			}
 		}
+	}
+
+	// Cleanup below cancels this connection's executions. Report the count once
+	// before cancelling so an idle-timeout disconnect is visible in Agent logs;
+	// only the count is logged, never command text.
+	if pending := inFlightToolCalls.Load(); pending > 0 {
+		log.Printf("[agent] tunnel disconnected; ending %d in-flight executions after the read timeout", pending)
 	}
 
 	log.Printf("🔗 WS Client Disconnected: %s", remoteAddr)
@@ -2351,12 +2437,44 @@ func startRawCommand(ctx context.Context, cmd *exec.Cmd) (*exec.Cmd, io.ReadClos
 	return cmd, stdoutPipe, stderrPipe, nil
 }
 
-// Wait for both the command and its process group. Cancellation escalation is
-// joined here, never left running after a terminal RPC response.
-const postLeaderDescendantGracePeriod = 10 * time.Second
-const commandPipeGracePeriod = time.Second
+// Grace periods are variables so tests can shrink them; production keeps 1s,
+// 10s and 2s. Cancellation escalation is joined in waitProcessGroup, never left
+// running after a terminal RPC response.
+var commandPipeGracePeriod = time.Second
+var postLeaderDescendantGracePeriod = 10 * time.Second
+var processGroupKillGracePeriod = 2 * time.Second
+
+// postLeaderCleanupGracePeriod bounds how long a group that was told to stop
+// may take to disappear before the outcome is unknown.
+var postLeaderCleanupGracePeriod = 10 * time.Second
+
+// groupProbable reports a group that still has members. A denied probe counts
+// as members, so cleanup still makes progress.
+func groupProbable(pid int) bool {
+	err := syscall.Kill(-pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// pipeHolder tracks a bounded group wait whose leader exited but whose group
+// did not. It is set when the group was cleaned up after the leader exited but after the leader exited but
+// its output pipes were still held by processes that left the group. Such a
+// holder can never be terminated through the group, so waiting for it would
+// only delay the response.
+type pipeHolder struct {
+	announced    bool
+	leaderExited bool
+	signalled    bool
+	// notify ends the output drain once a holder that escaped the group is
+	// known; the remaining readers never see EOF on their own.
+	notify func()
+}
 
 func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) error {
+	return waitProcessGroupWithHolder(ctx, pid, commandDone, nil)
+}
+
+func waitProcessGroupWithHolder(ctx context.Context, pid int, commandDone <-chan error, holder *pipeHolder) error {
+	leaderExited := false
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	ctxDone := ctx.Done()
@@ -2391,19 +2509,38 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 					return ctx.Err()
 				}
 				if forcedCleanup {
-					return fmt.Errorf("%w: detached process group was terminated", errExecutionOutcomeUnknown)
+					return &residualProcessesTerminated{leaderErr: commandErr}
 				}
 				return commandErr
 			}
-			// A canceled group remains owned until absence is observed or the
-			// cleanup deadline expires, including a temporarily denied status probe.
-			if err != nil && !(ctx.Err() != nil && errors.Is(err, syscall.EPERM)) {
-				return fmt.Errorf("%w: process group status: %v", errExecutionOutcomeUnknown, err)
+			if err != nil {
+				terminated := false
+				if forcedCleanup {
+					// Same-group processes we told to stop are survivors while
+					// the probe is denied; keep waiting for the cleanup deadline
+					// instead of inventing a failure. A denied probe must not
+					// turn a known leader exit into an unknown outcome.
+					log.Printf("process group %d status is unavailable after cleanup started: %v", pid, err)
+					terminated = true
+				} else if errors.Is(err, syscall.EPERM) {
+					// Some kernels report EPERM for a signal-0 probe even for
+					// our own group (seen on macOS after the leader is reaped).
+					// Treat the group as present and let the cleanup deadline
+					// decide; do not invent an unknown outcome from the probe.
+					terminated = true
+				}
+				if !terminated {
+					return fmt.Errorf("%w: process group status: %v", errExecutionOutcomeUnknown, err)
+				}
 			}
 		}
 		select {
 		case commandErr = <-commandDone:
 			commandDone = nil
+			leaderExited = true
+			if holder != nil {
+				holder.leaderExited = true
+			}
 			if ctx.Err() == nil {
 				postLeaderTimer = time.NewTimer(postLeaderDescendantGracePeriod)
 				postLeaderDeadline = postLeaderTimer.C
@@ -2415,8 +2552,8 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 				postLeaderDeadline = nil
 			}
 			_ = syscall.Kill(-pid, syscall.SIGTERM)
-			killTimer = time.NewTimer(2 * time.Second)
-			cleanupTimer = time.NewTimer(10 * time.Second)
+			killTimer = time.NewTimer(processGroupKillGracePeriod)
+			cleanupTimer = time.NewTimer(postLeaderCleanupGracePeriod)
 			killDeadline = killTimer.C
 			cleanupDeadline = cleanupTimer.C
 		case <-killDeadline:
@@ -2427,12 +2564,21 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 		case <-postLeaderDeadline:
 			postLeaderDeadline = nil
 			forcedCleanup = true
+			if leaderExited && holder != nil {
+				holder.announced = true
+				if holder.notify != nil {
+					holder.notify()
+				}
+			}
 			_ = syscall.Kill(-pid, syscall.SIGTERM)
-			killTimer = time.NewTimer(2 * time.Second)
-			cleanupTimer = time.NewTimer(10 * time.Second)
+			killTimer = time.NewTimer(processGroupKillGracePeriod)
+			cleanupTimer = time.NewTimer(postLeaderCleanupGracePeriod)
 			killDeadline = killTimer.C
 			cleanupDeadline = cleanupTimer.C
 		case <-ticker.C:
+			// Keep the ticker for the loop's periodic probe; same-group
+			// descendants are stopped by the post-leader grace period, which
+			// marks the result as a known residual termination.
 		}
 	}
 }
@@ -2443,18 +2589,68 @@ func waitCommandStreams(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Re
 	return waitCommandOutput(ctx, cmd, stdout, stderr, push, push, heartbeat)
 }
 
+// residualProcessesTerminated reports a leader that exited on its own while
+// same-process-group background processes kept the group alive. They were
+// terminated after postLeaderDescendantGracePeriod; this is a known local
+// outcome, not errExecutionOutcomeUnknown.
+type residualProcessesTerminated struct {
+	leaderErr error
+}
+
+func (e *residualProcessesTerminated) Error() string {
+	code := 0
+	var exitErr *exec.ExitError
+	if e != nil && e.leaderErr != nil {
+		code = -1
+		if errors.As(e.leaderErr, &exitErr) {
+			code = exitErr.ExitCode()
+		}
+	}
+	return fmt.Sprintf("command exited with exit code %d, but background processes in the same process group "+
+		"kept it running; doops terminated them after %s (SIGTERM, then SIGKILL). "+
+		"Start long-running processes detached so doops does not own or clean them up: "+
+		"systemd-run --unit <name> <command>, a container, or `setsid <command> </dev/null >/path/to/log 2>&1 &` "+
+		"with its standard output and error redirected to a file",
+		code, postLeaderDescendantGracePeriod)
+}
+
+// Unwrap exposes the leader's exit status to exit-code helpers.
+func (e *residualProcessesTerminated) Unwrap() error {
+	return e.leaderErr
+}
+
+func isResidualProcessesTerminated(err error) bool {
+	return residualProcessesTerminatedFrom(err) != nil
+}
+
+func residualProcessesTerminatedFrom(err error) *residualProcessesTerminated {
+	var residual *residualProcessesTerminated
+	if errors.As(err, &residual) {
+		return residual
+	}
+	return nil
+}
+
+// commandOutputChunkBytes bounds every output notification; output lines have
+// no length limit and are split only at UTF-8 rune boundaries.
+const commandOutputChunkBytes = 64 << 10
+
+// commandOutputDrainNotice is emitted once when a process that is not the
+// command leader still holds an output pipe after the leader exited.
+const commandOutputDrainNotice = "[doops] command output is incomplete: the command exited, but a process still holds its output pipe (for example a background process in the same process group), so later output is not collected. " +
+	"To start a daemon, redirect its standard output and error, for example " +
+	"`setsid <command> </dev/null >/path/to/log 2>&1 &`, systemd-run --unit <name> <command>, or a container."
+
 func waitCommandOutput(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.ReadCloser, push, pushError notificationSender, heartbeat bool) error {
 	streamDone := make(chan error, 2)
 	readStream := func(pipe io.ReadCloser, send notificationSender) {
-		scanner := bufio.NewScanner(pipe)
-		defer func() {
-			_ = pipe.Close()
-			streamDone <- scanner.Err()
-		}()
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			send(rawNotification(scanner.Text() + "\n"))
+		readErr := streamCommandOutput(pipe, send)
+		if errors.Is(readErr, os.ErrClosed) {
+			// Closing our own read end is not a command failure.
+			readErr = nil
 		}
+		_ = pipe.Close()
+		streamDone <- readErr
 	}
 	go readStream(stdout, push)
 	go readStream(stderr, pushError)
@@ -2470,33 +2666,180 @@ func waitCommandOutput(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Rea
 	}
 	commandDone := make(chan error, 1)
 	go func() { commandDone <- cmd.Wait() }()
-	cmdErr := waitProcessGroup(ctx, cmd.Process.Pid, commandDone)
+	holder := &pipeHolder{}
+	released := make(chan struct{})
+	var releaseOnce sync.Once
+	holder.notify = func() {
+		releaseOnce.Do(func() {
+			_ = stdout.Close()
+			_ = stderr.Close()
+			close(released)
+		})
+	}
+	cmdErr := waitProcessGroupWithHolder(ctx, cmd.Process.Pid, commandDone, holder)
 	if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
 		_ = stdout.Close()
 		_ = stderr.Close()
 	}
+	// A known leader exit status (success, a normal exit code, cancellation, or
+	// residual same-group processes) is evidence the command itself finished or
+	// was stopped on request, so it is never downgraded to an unknown outcome.
+	// Only a read error or an unkillable group before the leader exit is unknown.
+	leaderKnown := !errors.Is(cmdErr, errExecutionOutcomeUnknown)
 	drainTimer := time.NewTimer(commandPipeGracePeriod)
 	defer drainTimer.Stop()
 	drainDeadline := drainTimer.C
-	for remaining := 2; remaining > 0; {
-		select {
-		case readErr := <-streamDone:
-			remaining--
-			if readErr != nil && !errors.Is(cmdErr, errExecutionOutcomeUnknown) {
-				cmdErr = fmt.Errorf("%w: command output read: %w", errExecutionOutcomeUnknown, readErr)
+	var readErr error
+	pending := 2
+	// drainEnded reports whether the pipes had to be closed, i.e. a process that
+	// is not the command leader (same group or escaped) still held them.
+	drainEnded := false
+	emitDrainNotices := func() {
+		if holder.announced && cmdErr != nil {
+			push(errorNotification(cmdErr.Error()))
+		}
+		push(errorNotification(commandOutputDrainNotice))
+	}
+	if holder.announced && leaderKnown {
+		// Cleanup already signalled the group, so the holder left the group and
+		// would never release its pipe on its own. Close now; later output cannot
+		// be collected.
+		drainEnded = true
+		go func(pending int) {
+			for ; pending > 0; pending-- {
+				<-streamDone
 			}
+		}(pending)
+		pending = 0
+		emitDrainNotices()
+	}
+drain:
+	for pending > 0 {
+		select {
+		case err := <-streamDone:
+			pending--
+			if err != nil && readErr == nil {
+				readErr = err
+			}
+		case <-released:
+			// The holder-notify path above already closed the pipes.
+			break drain
 		case <-drainDeadline:
 			drainDeadline = nil
+			drainEnded = true
 			_ = stdout.Close()
 			_ = stderr.Close()
-			cmdErr = fmt.Errorf("%w: command output drain timed out", errExecutionOutcomeUnknown)
+			if leaderKnown {
+				go func(pending int) {
+					for ; pending > 0; pending-- {
+						<-streamDone
+					}
+				}(pending)
+				emitDrainNotices()
+			} else {
+				cmdErr = fmt.Errorf("%w: command output drain timed out", errExecutionOutcomeUnknown)
+			}
+			break drain
 		}
 	}
+	if readErr != nil {
+		// A real read failure before the drain closed the pipes leaves the output
+		// outcome unproven. Residual same-group cleanup alone does not: with no
+		// read error the known leader exit stands, and a canceled parent keeps
+		// context.Canceled because the caller already owns the cancel semantics.
+		// Once the drain closed the pipes, later read errors say nothing about
+		// the command; an escaped holder is then reported as unknown below.
+		var residual *residualProcessesTerminated
+		switch {
+		case drainEnded:
+			if errors.As(cmdErr, &residual) {
+				cmdErr = residual
+			}
+		case errors.As(cmdErr, &residual), errors.Is(cmdErr, context.Canceled):
+			// Known outcome: the leader exit status (the residual) or the caller's
+			// cancellation already explains this result.
+		case errors.Is(cmdErr, errExecutionOutcomeUnknown):
+			cmdErr = fmt.Errorf("%w: command output read: %w", errExecutionOutcomeUnknown, readErr)
+		default:
+			cause := readErr
+			if cmdErr != nil {
+				cause = errors.Join(cmdErr, readErr)
+			}
+			cmdErr = fmt.Errorf("%w: command output read: %w", errExecutionOutcomeUnknown, cause)
+		}
+	}
+	// A pipe held after a known leader exit only means later output is
+	// missing, not that the command outcome is unknown. The drain notice above
+	// says so explicitly; the known exit status (or residual cleanup) stands.
 	if done != nil {
 		close(done)
 		<-heartbeatDone
 	}
 	return cmdErr
+}
+
+// streamCommandOutput forwards output in bounded chunks as it arrives. There is
+// no per-line limit: a line longer than the buffer is forwarded piece by piece
+// instead of failing the read. A chunk never ends inside a multi-byte UTF-8
+// sequence. Bytes that are not valid UTF-8 are passed through unchanged, so the
+// concatenated notifications reproduce the command output exactly.
+func streamCommandOutput(pipe io.Reader, send notificationSender) error {
+	reader := bufio.NewReaderSize(pipe, commandOutputChunkBytes)
+	pending := make([]byte, 0, commandOutputChunkBytes)
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		pending = append(pending, chunk...)
+		complete := 0
+		if err == bufio.ErrBufferFull {
+			// The buffer is full: the only reason to hold bytes back is a rune
+			// split exactly at the end of the buffer.
+			complete = utf8ChunkBoundary(pending)
+		} else {
+			// The line, or the stream, ends here, so nothing can be split.
+			complete = len(pending)
+		}
+		if complete > 0 {
+			send(rawNotification(string(pending[:complete])))
+			pending = append(pending[:0], pending[complete:]...)
+		}
+		switch err {
+		case nil, bufio.ErrBufferFull:
+			continue
+		case io.EOF:
+			if len(pending) > 0 {
+				send(rawNotification(string(pending)))
+			}
+			return nil
+		default:
+			return err
+		}
+	}
+}
+
+// utf8ChunkBoundary returns how many leading bytes of data can be forwarded
+// without splitting a multi-byte UTF-8 sequence. A trailing invalid or
+// incomplete sequence is not held back: malformed input must still stream.
+func utf8ChunkBoundary(data []byte) int {
+	if utf8.Valid(data) {
+		return len(data)
+	}
+	// Scan back to the last rune start in the final UTFMax bytes and keep the
+	// sequence only when it is complete; otherwise it crosses the boundary.
+	start := len(data)
+	if start > utf8.UTFMax {
+		start -= utf8.UTFMax
+	}
+	for index := len(data) - 1; index >= start; index-- {
+		if !utf8.RuneStart(data[index]) {
+			continue
+		}
+		sequence := data[index:]
+		if runeValue, size := utf8.DecodeRune(sequence); runeValue != utf8.RuneError && size > 1 {
+			return len(data)
+		}
+		return index
+	}
+	return len(data)
 }
 
 func commandExitCode(err error) int {

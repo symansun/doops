@@ -222,8 +222,18 @@ func TestRawCommandOutputEscapedWriterIsBounded(t *testing.T) {
 			}
 			select {
 			case err := <-done:
-				if !errors.Is(err, errExecutionOutcomeUnknown) || time.Since(started) < commandPipeGracePeriod {
-					t.Fatalf("escaped writer did not reach bounded unknown: err=%v elapsed=%s", err, time.Since(started))
+				// The leader exit is known, so a pipe held by an escaped writer
+				// no longer turns the outcome into unknown. A real cancellation
+				// still surfaces as context.Canceled for the caller.
+				if canceled {
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("canceled escaped writer = %v, want context.Canceled", err)
+					}
+				} else if err != nil {
+					t.Fatalf("escaped writer with a known exit = %v, want nil", err)
+				}
+				if elapsed := time.Since(started); elapsed > 4*time.Second {
+					t.Fatalf("escaped writer blocked drain beyond its grace period: %s", elapsed)
 				}
 			case <-time.After(4 * time.Second):
 				t.Fatal("escaped writer blocked drain beyond its grace period")

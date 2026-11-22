@@ -3,7 +3,7 @@
 FROM node:24-bookworm-slim AS deps
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
+RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY patches ./patches
 RUN pnpm install --frozen-lockfile
@@ -11,7 +11,7 @@ RUN pnpm install --frozen-lockfile
 FROM node:24-bookworm-slim AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
+RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/patches ./patches
 COPY app ./app

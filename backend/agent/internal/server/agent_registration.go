@@ -13,7 +13,11 @@ type AgentRegistrationHandler struct {
 	lease            time.Duration
 	heartbeatTimeout time.Duration
 	messageBudget    *gatewayMessageBudget
-	acknowledge      func(*GatewayAgent) error
+	// allowOpenRegistration admits a session without an enrollment token to a
+	// target that has no confirmed enrollment. It is a temporary migration
+	// escape hatch; closed is the default.
+	allowOpenRegistration bool
+	acknowledge           func(*GatewayAgent) error
 	// onRegistered runs after an Agent is registered, outside the read loop.
 	onRegistered func(*GatewayAgent)
 }
@@ -22,12 +26,14 @@ func NewAgentRegistrationHandler(
 	registry *AgentRegistry,
 	lease time.Duration,
 	messageBudget *gatewayMessageBudget,
+	allowOpenRegistration bool,
 ) *AgentRegistrationHandler {
 	return &AgentRegistrationHandler{
-		registry:         registry,
-		lease:            lease,
-		heartbeatTimeout: 10 * time.Second,
-		messageBudget:    messageBudget,
+		registry:              registry,
+		lease:                 lease,
+		heartbeatTimeout:      10 * time.Second,
+		messageBudget:         messageBudget,
+		allowOpenRegistration: allowOpenRegistration,
 		acknowledge: func(session *GatewayAgent) error {
 			return session.writeJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
@@ -44,9 +50,9 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "cluster and instance are required", http.StatusBadRequest)
 		return
 	}
-	// Targets without a confirmed enrollment stay open, so an already deployed
-	// Agent keeps registering with cluster and instance alone. Enforcement
-	// starts only after that Agent has connected once with the issued token.
+	// Open registration is closed by default. A session needs an enrollment
+	// token bound to this exact target unless the operator temporarily opened
+	// registration for targets that have no confirmed enrollment yet.
 	locked, err := h.registry.store.TargetHasActiveAgentEnrollment(cluster, instance)
 	if err != nil {
 		http.Error(w, "agent enrollment unavailable", http.StatusServiceUnavailable)
@@ -54,17 +60,19 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	}
 	enrollmentID := ""
 	if token := bearerToken(r); token != "" {
+		// A presented token is always verified, even on an unlocked target: an
+		// invalid token never falls back to open registration.
 		enrollment, verifyErr := h.registry.store.VerifyAgentEnrollment(token, cluster, instance)
 		if verifyErr == nil {
 			enrollmentID = enrollment.ID
 		} else if !errors.Is(verifyErr, ErrUnauthorized) {
 			http.Error(w, "agent enrollment unavailable", http.StatusServiceUnavailable)
 			return
-		} else if locked {
+		} else {
 			writeAgentEnrollmentRequired(w)
 			return
 		}
-	} else if locked {
+	} else if locked || !h.allowOpenRegistration {
 		writeAgentEnrollmentRequired(w)
 		return
 	}
@@ -105,8 +113,11 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if enrollmentID == "" {
+		// Recheck after the handshake with the same rule as above: a target
+		// enrolled while connecting, or open registration that was never
+		// enabled, still ends here.
 		locked, err = h.registry.store.TargetHasActiveAgentEnrollment(cluster, instance)
-		if err != nil || locked {
+		if err != nil || locked || !h.allowOpenRegistration {
 			log.Printf("[gateway] agent registration closed while connecting: %s", session.Key)
 			_ = conn.Close()
 			<-session.closed
@@ -119,10 +130,19 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := h.registry.Register(session); err != nil {
+		if errors.Is(err, ErrAgentEnrollmentRequired) {
+			writeAgentEnrollmentRequired(w)
+			_ = conn.Close()
+			<-session.closed
+			return
+		}
 		log.Printf("[gateway] agent registration failed: %s: %v", session.Key, err)
 		_ = conn.Close()
 		<-session.closed
 		return
+	}
+	if session.TokenID == "" {
+		log.Printf("[gateway] WARNING: unenrolled agent session accepted for %s; open agent registration is enabled (-allow-open-agent-registration)", session.Key)
 	}
 	log.Printf("[gateway] agent online: %s generation=%d remote=%s", session.Key, session.Generation, session.Remote)
 	go session.pingLoop(h.registry, h.lease)

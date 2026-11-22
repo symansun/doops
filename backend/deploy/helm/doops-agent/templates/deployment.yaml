@@ -40,6 +40,19 @@ spec:
       {{- if hasKey $hostAccess "enabled" }}
       {{- $enterNode = index $hostAccess "enabled" }}
       {{- end }}
+      {{- /* Same sprig rule: an explicit securityContext.privileged=false must be
+             read with hasKey, and any other value is a values typo. */}}
+      {{- $privileged := true }}
+      {{- $securityContext := .Values.securityContext | default dict }}
+      {{- if hasKey $securityContext "privileged" }}
+      {{- $privileged = index $securityContext "privileged" }}
+      {{- end }}
+      {{- if not (kindIs "bool" $privileged) }}
+      {{- fail "securityContext.privileged must be a boolean" }}
+      {{- end }}
+      {{- if and $enterNode (not $privileged) }}
+      {{- fail "hostAccess.enabled requires securityContext.privileged=true: a non-privileged Agent cannot enter the node; set hostAccess.enabled=false or securityContext.privileged=true" }}
+      {{- end }}
       hostPID: {{ $enterNode }}
       nodeSelector:
 {{ toYaml .Values.nodeSelector | indent 8 }}
@@ -58,7 +71,13 @@ spec:
           image: {{ if .Values.image.digest }}{{ printf "%s@%s" (required "image.repository is required" .Values.image.repository) .Values.image.digest | quote }}{{ else }}{{ printf "%s:%s" (required "image.repository is required" .Values.image.repository) (required "image.tag is required" .Values.image.tag) | quote }}{{ end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
-            privileged: true
+            privileged: {{ $privileged }}
+{{- if not $privileged }}
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+{{- end }}
           command:
             - /bin/sh
             - -lc
@@ -87,6 +106,10 @@ spec:
             {{- with .Values.commandDenyRules }}
             - name: DOOPS_COMMAND_DENY_RULES
               value: {{ . | toJson | quote }}
+            {{- end }}
+            {{- with .Values.toolTimeout }}
+            - name: DOOPS_TOOL_TIMEOUT
+              value: {{ . | quote }}
             {{- end }}
             - name: KUBECONFIG
               value: /root/.kube/config

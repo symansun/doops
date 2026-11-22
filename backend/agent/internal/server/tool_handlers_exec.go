@@ -26,8 +26,8 @@ func (gw *Gateway) handleToolShell(call toolCall) {
 	log.Printf("🖥️  WS Exec: [%s]", sessionID)
 
 	// 放弃过度设计的 PTY Sentinel 模式，换用标准 os/exec Streaming
-	execCtx, cancelExec := context.WithTimeout(ctx, maxToolExecutionDuration())
-	defer cancelExec()
+	execCtx, cancelExec, timeout := toolDeadline(ctx, call.gatewayTimeoutMS)
+	defer releaseToolDeadline(execCtx, cancelExec)
 	cmd, stdoutPipe, stderrPipe, err := executeRawCommand(execCtx, args.Command)
 	if err != nil {
 		if writePolicyDenial(err) {
@@ -39,6 +39,9 @@ func (gw *Gateway) handleToolShell(call toolCall) {
 	}
 
 	cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
+	if replyToolTimeout(reqID, ctx, execCtx, timeout, cmdErr, writeJSON) {
+		return
+	}
 	if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
 		log.Printf("⚠️  WS outcome unknown: [%s] %v", sessionID, cmdErr)
 		writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
@@ -48,7 +51,7 @@ func (gw *Gateway) handleToolShell(call toolCall) {
 		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 		return
 	}
-	writeSessionCommandAudit(sessionID, args.Command, cmdErr)
+	writeSessionCommandAudit(sessionID, args.Command, currentCommandExit(cmdErr))
 
 	if cmdErr != nil {
 		finalText := fmt.Sprintf("Command failed with error: %v", cmdErr)
@@ -68,8 +71,8 @@ func (gw *Gateway) handleToolSSH(call toolCall) {
 	log.Printf("🔐 WS SSH: [%s] host=%s options=%d remote_args=%d",
 		sessionID, args.Host, len(args.Options), len(args.Command))
 
-	execCtx, cancelExec := context.WithTimeout(ctx, maxToolExecutionDuration())
-	defer cancelExec()
+	execCtx, cancelExec, timeout := toolDeadline(ctx, call.gatewayTimeoutMS)
+	defer releaseToolDeadline(execCtx, cancelExec)
 	cmd, stdoutPipe, stderrPipe, err := executeStructuredSSHCommand(execCtx, args)
 	if err != nil {
 		writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
@@ -77,6 +80,9 @@ func (gw *Gateway) handleToolSSH(call toolCall) {
 	}
 
 	cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
+	if replyToolTimeout(reqID, ctx, execCtx, timeout, cmdErr, writeJSON) {
+		return
+	}
 	if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
 		log.Printf("⚠️  WS outcome unknown: [%s] %v", sessionID, cmdErr)
 		writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
@@ -86,7 +92,7 @@ func (gw *Gateway) handleToolSSH(call toolCall) {
 		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 		return
 	}
-	writeSessionCommandAudit(sessionID, sshAuditSummary(args), cmdErr)
+	writeSessionCommandAudit(sessionID, sshAuditSummary(args), currentCommandExit(cmdErr))
 	if cmdErr != nil {
 		if exitCode, ok := sshExitCode(cmdErr); ok {
 			writeJSON(buildStructuredToolErrorResponse(

@@ -1,6 +1,7 @@
 package gatewaycmd
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -56,10 +57,17 @@ func serve(args []string) {
 	retiredUserLimit := fs.Int("max-concurrent-per-user", 0, "Retired; ignored")
 	targetQueueTimeout := fs.Duration("target-queue-timeout", 10*time.Minute, "How long an operation waits for a busy target")
 	maxQueuedPerTarget := fs.Int("max-queued-per-target", 10, "Maximum queued operations per target; negative disables queueing")
+	targetReconnectGrace := fs.Duration("target-reconnect-grace", 10*time.Second, "How long an RPC or internal call waits for a reconnecting Agent; 0 fails immediately, negative uses the default")
 	// The issue scheduler was removed; the flag stays accepted so existing service units keep starting.
 	_ = fs.Duration("scheduler-tick", 0, "Removed; accepted and ignored")
 	edgeListen := fs.String("edge-listen", "", "TCP listen address for Edge public traffic; empty disables it")
 	edgeProxyProtocol := fs.Bool("edge-proxy-protocol", true, "Require PROXY protocol on Edge listener (must be true behind nginx stream)")
+	// Temporary migration escape hatch. Open agent registration is closed by
+	// default; an Agent needs the enrollment token issued for its target.
+	// The environment variable lets a deployment (for example a private
+	// Gateway without enrollments) open it without editing the service unit.
+	allowOpenDefault := envFlagEnabled("DOOPS_ALLOW_OPEN_AGENT_REGISTRATION")
+	allowOpenAgentRegistration := fs.Bool("allow-open-agent-registration", allowOpenDefault, "TEMPORARY: accept Agents without an enrollment token on targets that have no confirmed enrollment (insecure; migrate them to enrollment tokens); DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1 sets the same switch")
 	fs.Parse(args)
 
 	if *retiredGlobalLimit != 0 || *retiredUserLimit != 0 {
@@ -84,13 +92,34 @@ func serve(args []string) {
 	}
 	defer store.Close()
 
+	consoleForwardSecret := strings.TrimSpace(os.Getenv("DOOPS_CONSOLE_FORWARD_SECRET"))
+
+	// Fail closed before listening. Release the database and lock explicitly:
+	// os.Exit skips defers, and the process must not look healthy when the key
+	// does not match the ciphertext in this database.
+	keyState, err := store.VerifySecretKey()
+	if err != nil {
+		log.Printf("[gateway] refusing to start: master key check failed for database %s: %s", resolvedDBPath, secretKeyStartupMessage(err))
+		_ = store.Close()
+		_ = dbLock.Close()
+		os.Exit(1)
+	}
+	if keyState == server.GatewaySecretKeyAbsent {
+		log.Printf("[gateway] warning: DOOPS_GATEWAY_SECRET_KEY is not set; credential features stay unavailable until it is configured")
+	}
+
 	hub := server.NewGatewayHub(store, server.GatewayHubOptions{
-		LoginTokenTTL:         *loginTokenTTL,
-		LoginTokenMaxLifetime: *loginTokenMaxLifetime,
-		OperationTimeout:      *operationTimeout,
-		DetachedTaskTimeout:   *detachedTaskTimeout,
-		TargetQueueTimeout:    *targetQueueTimeout,
-		MaxQueuedPerTarget:    *maxQueuedPerTarget,
+		LoginTokenTTL:              *loginTokenTTL,
+		LoginTokenMaxLifetime:      *loginTokenMaxLifetime,
+		OperationTimeout:           *operationTimeout,
+		DetachedTaskTimeout:        *detachedTaskTimeout,
+		TargetQueueTimeout:         *targetQueueTimeout,
+		TargetReconnectGrace:       server.ReconnectGraceOption(*targetReconnectGrace),
+		MaxQueuedPerTarget:         *maxQueuedPerTarget,
+		AllowOpenAgentRegistration: *allowOpenAgentRegistration,
+		RequireAgentEnrollment:     !*allowOpenAgentRegistration,
+		// Environment only, never a flag: a flag would expose the secret in ps.
+		ConsoleForwardSecret: []byte(consoleForwardSecret),
 	})
 	hub.StartOfflineInstanceReaper(time.Hour)
 
@@ -103,6 +132,14 @@ func serve(args []string) {
 	log.Printf("   edge endpoint:  ws://127.0.0.1:%s/v1/edge/connect", *port)
 	log.Printf("   client endpoint: ws://127.0.0.1:%s/v1/rpc?cluster=<cluster>&instance=<instance>", *port)
 	log.Printf("   login token ttl=%s max-lifetime=%s", *loginTokenTTL, *loginTokenMaxLifetime)
+	log.Printf("   agent enrollment: %s", agentEnrollmentPolicy(*allowOpenAgentRegistration))
+	if *allowOpenAgentRegistration {
+		logOpenRegistrationWarning(hub)
+	}
+	if consoleForwardSecret != "" {
+		// Never print the secret itself.
+		log.Printf("   console login forwarding: enabled (DOOPS_CONSOLE_FORWARD_SECRET)")
+	}
 	if strings.TrimSpace(*edgeListen) != "" {
 		listener, err := hub.StartEdgeListener(*edgeListen, *edgeProxyProtocol)
 		if err != nil {
@@ -116,6 +153,19 @@ func serve(args []string) {
 	// are bounded separately.
 	if err := gatewayHTTPServer(":"+*port, mux).ListenAndServe(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// secretKeyStartupMessage turns a startup key-check error into operator
+// guidance. It never includes the key, a ciphertext or a payload value.
+func secretKeyStartupMessage(err error) string {
+	switch {
+	case errors.Is(err, server.ErrSecretKeyMismatch):
+		return "DOOPS_GATEWAY_SECRET_KEY does not match the key that encrypted the stored credential payloads; restore the original key (see backend/docs/CREDENTIAL_RESOURCES.md, master key backup) and restart"
+	case errors.Is(err, server.ErrSecretKeyUnavailable):
+		return "credential payloads are stored but DOOPS_GATEWAY_SECRET_KEY is not set; restore the original key and restart"
+	default:
+		return "credential master key check could not run"
 	}
 }
 
@@ -356,4 +406,39 @@ func mustStore(path string) *server.GatewayStore {
 		log.Fatal(err)
 	}
 	return store
+}
+
+// agentEnrollmentPolicy is the one-line startup summary of agent registration.
+// envFlagEnabled accepts the conventional truthy spellings used by the
+// Gateway's other environment-only switches.
+func envFlagEnabled(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func agentEnrollmentPolicy(allowOpen bool) string {
+	if allowOpen {
+		return "open registration ENABLED for targets without a confirmed enrollment (temporary; migrate every Agent to an enrollment token)"
+	}
+	return "enrollment token required for every Agent"
+}
+
+// logOpenRegistrationWarning states the security consequence once at startup
+// and counts the live sessions that are currently unenrolled. Only the target
+// key is logged; enrollment tokens and token IDs are never printed.
+func logOpenRegistrationWarning(hub *server.GatewayHub) {
+	log.Printf("[gateway] WARNING: -allow-open-agent-registration is set. Any client that knows a cluster/instance without a confirmed enrollment can impersonate that target. It receives and can use no credentials, but it can run other operations as that target. Turn the flag off once every Agent carries its enrollment token.")
+	unenrolled := 0
+	for _, target := range hub.ListTargets() {
+		if target.Enrolled {
+			continue
+		}
+		unenrolled++
+		log.Printf("[gateway] WARNING: unenrolled target online: %s", target.Key)
+	}
+	log.Printf("[gateway] WARNING: %d live target(s) are not enrolled", unenrolled)
 }

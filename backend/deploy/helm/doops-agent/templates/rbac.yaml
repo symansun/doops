@@ -6,9 +6,28 @@
 {{- if eq $account "default" }}
 {{- fail "rbac.create requires a dedicated ServiceAccount, not default" }}
 {{- end }}
-{{- $binding := printf "%s-%s-cluster-admin" .Release.Namespace $account }}
+{{- $clusterRole := trim (default "cluster-admin" .Values.rbac.clusterRole) }}
+{{- if not $clusterRole }}
+{{- fail "rbac.clusterRole must name an existing ClusterRole" }}
+{{- end }}
+{{- $namespaces := .Values.rbac.namespaces | default list }}
+{{- /* roleRef is immutable. The historical cluster-admin binding keeps its
+       name; every other role gets a role-specific name so a chart upgrade never
+       switches a role by mutating a roleRef in place. */}}
+{{- $binding := printf "%s-%s-%s" .Release.Namespace $account $clusterRole }}
+{{- if eq $clusterRole "cluster-admin" }}
+{{- $binding = printf "%s-%s-cluster-admin" .Release.Namespace $account }}
+{{- end }}
+{{- $kind := "ClusterRoleBinding" }}
+{{- if $namespaces }}
+{{- $kind = "RoleBinding" }}
+{{- end }}
+{{- $scope := "" }}
+{{- if $namespaces }}
+{{- $scope = printf " in namespaces %s" (join ", " $namespaces) }}
+{{- end }}
 {{- if gt (len $binding) 253 }}
-{{- fail "namespace and serviceAccount.name make the ClusterRoleBinding name exceed 253 characters" }}
+{{- fail (printf "namespace and serviceAccount.name make the %s name exceed 253 characters" $kind) }}
 {{- end }}
 apiVersion: v1
 kind: ServiceAccount
@@ -16,20 +35,41 @@ metadata:
   name: {{ $account | quote }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+{{- if $namespaces }}
+{{- range $namespace := $namespaces }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: {{ $kind }}
 metadata:
   name: {{ $binding | quote }}
+  namespace: {{ $namespace | quote }}
   labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: {{ $clusterRole | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $account | quote }}
+    namespace: {{ $.Release.Namespace | quote }}
+{{- end }}
+{{- else }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ $kind }}
+metadata:
+  name: {{ $binding | quote }}
+  labels:
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $clusterRole | quote }}
 subjects:
   - kind: ServiceAccount
     name: {{ $account | quote }}
     namespace: {{ .Release.Namespace | quote }}
+{{- end }}
 {{- end }}

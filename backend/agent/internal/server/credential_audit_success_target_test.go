@@ -38,6 +38,7 @@ func startClusterAgent(t *testing.T, f *executionLifecycleFixture, cluster strin
 		requireEventually(t, 3*time.Second, func() bool { return f.hub.client.registry.Get(cluster, "local") == nil })
 	})
 	waitForGatewayAgent(t, f.hub, cluster, "local")
+	markTestAgentEnrolled(t, f.hub, cluster, "local")
 }
 
 // createAuditTargetCredential creates a platform credential with a staged
@@ -132,8 +133,8 @@ func TestCredentialGrantRevokeSuccessAuditFiltersRequestTextTarget(t *testing.T)
 // The identifier path keeps recording the target and the stored scope.
 func TestCredentialVerifySuccessAuditFiltersRequestTextTarget(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		cluster      string
+		name            string
+		cluster         string
 		wantIdentifiers bool
 	}{
 		{name: "request text target", cluster: freeTextAuditTarget},
@@ -240,5 +241,17 @@ func TestCredentialApplyStartAuditFiltersRequestTextTarget(t *testing.T) {
 			}
 			assertAuditEventHasNoRequestText(t, event)
 		})
+	}
+}
+
+// markTestAgentEnrolled models an Agent that has completed enrollment. The
+// open-registration compatibility path deliberately leaves TokenID empty and
+// receives no credential payload; credential tests need the enrolled state.
+func markTestAgentEnrolled(t *testing.T, hub *GatewayHub, cluster, instance string) {
+	t.Helper()
+	hub.registry.mu.Lock()
+	defer hub.registry.mu.Unlock()
+	if agent := hub.registry.sessions[tunnelKey(cluster, instance)]; agent != nil {
+		agent.TokenID = "test-enrollment"
 	}
 }

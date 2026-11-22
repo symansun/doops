@@ -776,6 +776,8 @@ func credentialErrorCategory(err error) string {
 		return "credential_bundle_not_found"
 	case errors.Is(err, ErrCredentialAmbiguous):
 		return "credential_reference_ambiguous"
+	case errors.Is(err, ErrCredentialTargetUnenrolled):
+		return "credential_target_unenrolled"
 	case errors.Is(err, ErrCredentialVersionNotFound):
 		return "credential_version_not_found"
 	case errors.Is(err, ErrCredentialRevoked):
@@ -787,6 +789,10 @@ func credentialErrorCategory(err error) string {
 		return "credential_forbidden"
 	case errors.Is(err, ErrSecretKeyUnavailable):
 		return "credential_key_unavailable"
+	case errors.Is(err, ErrSecretKeyMismatch):
+		// Startup refuses a mismatched key; this guards a key changed in a
+		// long-running process before it could encrypt new rows with it.
+		return "credential_key_mismatch"
 	case errors.Is(err, ErrCredentialPayloadInvalid):
 		return "credential_payload_invalid"
 	case errors.Is(err, ErrCredentialAuditUnavailable):
@@ -801,11 +807,11 @@ func credentialHTTPStatus(err error) int {
 	case errors.Is(err, ErrCredentialNotFound), errors.Is(err, ErrCredentialVersionNotFound),
 		errors.Is(err, ErrCredentialBundleNotFound), errors.Is(err, sql.ErrNoRows):
 		return http.StatusNotFound
-	case errors.Is(err, ErrCredentialAmbiguous):
+	case errors.Is(err, ErrCredentialAmbiguous), errors.Is(err, ErrCredentialTargetUnenrolled):
 		return http.StatusConflict
 	case errors.Is(err, ErrCredentialForbidden), errors.Is(err, ErrCredentialGrantDenied):
 		return http.StatusForbidden
-	case errors.Is(err, ErrSecretKeyUnavailable):
+	case errors.Is(err, ErrSecretKeyUnavailable), errors.Is(err, ErrSecretKeyMismatch):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, ErrCredentialAuditUnavailable):
 		return http.StatusInternalServerError

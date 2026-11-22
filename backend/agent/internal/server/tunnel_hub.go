@@ -31,7 +31,19 @@ type GatewayHubOptions struct {
 	LoginFailureLimit     int
 	LoginFailureWindow    time.Duration
 	MaxQueuedPerTarget    int
-	DetachedTaskTimeout   time.Duration
+	DetachedTaskTimeout time.Duration
+	// AllowOpenAgentRegistration admits an Agent without an enrollment token
+	// to a target with no confirmed enrollment. It exists only to migrate
+	// Agents that were deployed before enrollment existed.
+	AllowOpenAgentRegistration bool
+	// RequireAgentEnrollment closes open registration for production. Library
+	// callers leave it false (the historical behavior); the Gateway command
+	// sets it unless -allow-open-agent-registration is passed.
+	RequireAgentEnrollment bool
+	// ConsoleForwardSecret is the HMAC key that lets the Web console sign the
+	// browser address of a login. It is loaded from DOOPS_CONSOLE_FORWARD_SECRET
+	// only, so it never appears in a process listing. Empty disables it.
+	ConsoleForwardSecret []byte
 }
 
 type GatewayHub struct {
@@ -163,6 +175,7 @@ type GatewayAgent struct {
 	UpgradeAudit           bool      `json:"upgrade_audit,omitempty"`
 	RegistryAuthfile       bool      `json:"registry_authfile,omitempty"`
 	COSSnapshotExecutable  bool      `json:"cos_snapshot_executable,omitempty"`
+	ToolDeadline           bool      `json:"tool_deadline,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
 	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
@@ -216,8 +229,11 @@ type GatewayTarget struct {
 	BusyReason    string    `json:"busy_reason,omitempty"`
 	ActiveOps     int       `json:"active_ops"`
 	QueuedOps     int       `json:"queued_ops"`
-	Resources     []string  `json:"resources,omitempty"`
-	Sessions      []string  `json:"sessions,omitempty"`
+	// Enrolled reports whether the live session authenticated with a target
+	// enrollment token. The token and its ID never leave the Gateway.
+	Enrolled  bool     `json:"enrolled"`
+	Resources []string `json:"resources,omitempty"`
+	Sessions  []string `json:"sessions,omitempty"`
 }
 
 type gatewayWSMessage struct {
@@ -468,6 +484,8 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if err != nil {
 		panic(err)
 	}
+	allowOpenRegistration := opts.AllowOpenAgentRegistration || !opts.RequireAgentEnrollment
+	registry.allowOpenRegistration = allowOpenRegistration
 	if opts.AgentLease <= 0 {
 		opts.AgentLease = 90 * time.Second
 	}
@@ -477,7 +495,12 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if opts.TargetQueueTimeout <= 0 {
 		opts.TargetQueueTimeout = 2 * time.Minute
 	}
-	if opts.TargetReconnectGrace <= 0 {
+	// Zero means "unset" and keeps the 10s reconnect grace. The
+	// explicitNoReconnectGrace sentinel means "fail immediately"; any other
+	// negative value restores the default.
+	if opts.TargetReconnectGrace == explicitNoReconnectGrace {
+		opts.TargetReconnectGrace = 0
+	} else if opts.TargetReconnectGrace <= 0 {
 		opts.TargetReconnectGrace = 10 * time.Second
 	}
 	opts.LoginTokenTTL, opts.LoginTokenMaxLifetime = normalizeLoginTokenLifetimes(opts.LoginTokenTTL, opts.LoginTokenMaxLifetime)
@@ -503,6 +526,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		registry,
 		opts.AgentLease,
 		newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
+		allowOpenRegistration,
 	)
 	hub.client = NewClientService(store, registry, opts)
 	hub.client.hub = hub
@@ -606,8 +630,12 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid login request", http.StatusBadRequest)
 		return
 	}
+	now := time.Now()
 	clientIP := loginClientIP(r)
-	if h.loginFailures.limited(clientIP, req.Username, time.Now(), h.opts.LoginFailureLimit, h.opts.LoginFailureWindow) {
+	if forwarded := consoleForwardedIP(r, h.opts.ConsoleForwardSecret, now); forwarded != "" {
+		clientIP = forwarded
+	}
+	if h.loginFailures.limited(clientIP, req.Username, now, h.opts.LoginFailureLimit, h.opts.LoginFailureWindow) {
 		w.Header().Set("Retry-After", "60")
 		writeDoopsError(w, http.StatusTooManyRequests, "", doopsErrorResponse{
 			Error:      "rate_limited",
@@ -624,7 +652,7 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 			writeGatewayAuthError(w, `Bearer realm="doops-gateway"`, err)
 			return
 		}
-		h.loginFailures.record(clientIP, req.Username, time.Now(), h.opts.LoginFailureWindow)
+		h.loginFailures.record(clientIP, req.Username, now, h.opts.LoginFailureWindow)
 		writeDoopsError(w, http.StatusUnauthorized, "", doopsErrorResponse{
 			Error:      "unauthorized",
 			Code:       "gateway_login_invalid_credentials",
@@ -634,6 +662,9 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// A successful password login clears this pair's failure streak so one
+	// earlier typo does not leave the account one mistake from a lock.
+	h.loginFailures.reset(clientIP, req.Username, now)
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "password login"
@@ -1126,6 +1157,22 @@ func clientRPCRequestKey(id interface{}) (string, bool) {
 	}
 }
 
+// targetReconnectGrace returns how long a forwarded RPC may wait for a target
+// that is reconnecting. Liveness probes stay immediate so `doops targets` and
+// `doops targets remove` keep reporting an exact "target offline" answer.
+func (h *ClientService) targetReconnectGrace(tool string) time.Duration {
+	switch tool {
+	case "doops_node_info", "doops_task_status":
+		// Liveness probes must report the current state.
+		return 0
+	case "doops_credential_materialize", "doops_credential_cleanup", "doops_credential_import":
+		// Credential delivery and cleanup bind to one target and must fail (or
+		// succeed) promptly instead of holding a request for the reconnect grace.
+		return 0
+	}
+	return h.opts.TargetReconnectGrace
+}
+
 func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
 	if err := h.store.validateUserTokenAuth(auth); err != nil {
 		if errors.Is(err, ErrUnauthorized) {
@@ -1295,7 +1342,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 		return nil
 	}
-	agent := h.registry.Get(cluster, instance)
+	agent := h.registry.Wait(ctx, cluster, instance, h.targetReconnectGrace(params.Name))
 	if agent == nil || agent.Cluster != cluster || agent.Instance != instance {
 		errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
 		finishAudit("offline", errMsg, "", 0)
@@ -1596,6 +1643,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 					if finalErr == "operation canceled" {
 						finalErr = "operation_canceled"
 					}
+				} else if agentToolTimeoutResponse(msg.Parsed) {
+					// The Agent's own tool deadline fired and it replied with a
+					// terminal -32603. The command was stopped, not canceled, and
+					// its outcome is known.
+					finalStatus, finalErr = "timeout", AgentToolTimeoutCategory
 				} else if params.Name == "doops_agent_prompt" {
 					switch finalErr {
 					case "operation_timeout", doagentPromptAdmissionTimeout, "doagent_prompt_queue_timeout":
@@ -1702,6 +1754,9 @@ func clientCapabilitiesFor(agent *GatewayAgent, detachedTimeout time.Duration) m
 	if agent != nil && agent.ExecutionLifecycle {
 		protocols[executionLifecycleProtocol] = executionLifecycleCapability()
 	}
+	if agent != nil && agent.ToolDeadline {
+		protocols[toolDeadlineProtocol] = toolDeadlineCapability()
+	}
 	if agent != nil && agent.UpgradeAudit {
 		protocols[upgradeAuditProtocol] = upgradeAuditCapability()
 	}
@@ -1758,14 +1813,38 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 // every prompt failure sanitize to credential_operation_failed and lose the
 // category the operator and the audit need.
 func relayErrorAuditText(tool string, rpcErr interface{}) string {
-	if tool == "doops_agent_prompt" {
-		if errorObject, ok := rpcErr.(map[string]interface{}); ok {
-			if message, _ := errorObject["message"].(string); strings.TrimSpace(message) != "" {
-				return strings.TrimSpace(message)
-			}
+	errorObject, _ := rpcErr.(map[string]interface{})
+	if tool == "doops_agent_prompt" || isAgentToolTimeout(errorObject) {
+		if message, _ := errorObject["message"].(string); strings.TrimSpace(message) != "" {
+			return sanitizeSecretText(strings.TrimSpace(message))
 		}
 	}
 	return fmt.Sprintf("%v", rpcErr)
+}
+
+// isAgentToolTimeout recognizes the Agent's own-deadline reply: -32603 with the
+// agent_tool_timeout message prefix or a matching error.data category. It is a
+// known terminal outcome, never a cancellation or execution_outcome_unknown.
+func isAgentToolTimeout(rpcErr map[string]interface{}) bool {
+	if rpcErr == nil {
+		return false
+	}
+	if code, ok := numericID(rpcErr["code"]); !ok || code != -32603 {
+		return false
+	}
+	if message, _ := rpcErr["message"].(string); strings.HasPrefix(strings.TrimSpace(message), AgentToolTimeoutCategory) {
+		return true
+	}
+	if data, ok := rpcErr["data"].(map[string]interface{}); ok {
+		category, _ := data["category"].(string)
+		return category == AgentToolTimeoutCategory
+	}
+	return false
+}
+
+func agentToolTimeoutResponse(response map[string]interface{}) bool {
+	rpcErr, _ := response["error"].(map[string]interface{})
+	return isAgentToolTimeout(rpcErr)
 }
 
 // agentPromptAuditCategory keeps only stable categories for prompt audits. An
@@ -1994,6 +2073,9 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 	// outright, because it decodes the materialization request strictly.
 	a.RegistryAuthfile = registryAuthfileCapabilityCompatible(protocols[registryAuthfileProtocol])
 	a.COSSnapshotExecutable = cosSnapshotExecutableCapabilityCompatible(protocols[cosSnapshotExecutableProtocol])
+	// Only an Agent that declares this understands a timeout_ms tools/call
+	// field and replies with agent_tool_timeout when its own deadline fires.
+	a.ToolDeadline = toolDeadlineCapabilityCompatible(protocols[toolDeadlineProtocol])
 	if !ok {
 		return
 	}
@@ -2198,7 +2280,22 @@ func promptReplyUnknownError(tool string, response map[string]interface{}) error
 	return nil
 }
 
+var lastProbe atomic.Value
 var errGatewayOperationTimeout = errors.New("operation timed out")
+
+// toolCallParamsFor builds the tools/call params. Only an Agent that declared
+// toolDeadline gets timeout_ms: an older Agent would ignore it and still end
+// its own 30-minute limit as a cancellation.
+func toolCallParamsFor(a *GatewayAgent, params api.ToolCallParams, timeout time.Duration) map[string]interface{} {
+	callParams := map[string]interface{}{
+		"name":      params.Name,
+		"arguments": params.Arguments,
+	}
+	if a != nil && a.ToolDeadline && timeout > 0 {
+		callParams["timeout_ms"] = timeout.Milliseconds()
+	}
+	return callParams
+}
 
 func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallParams, timeout time.Duration, forward func(gatewayWSMessage) error) error {
 	if err := ctx.Err(); err != nil {
@@ -2243,14 +2340,12 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		a.pendingMu.Unlock()
 	}()
 
+	callParams := toolCallParamsFor(a, params, timeout)
 	if err := a.writeJSON(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "tools/call",
 		"id":      id,
-		"params": map[string]interface{}{
-			"name":      params.Name,
-			"arguments": params.Arguments,
-		},
+		"params":  callParams,
 	}); err != nil {
 		if uncertainWithoutTerminal {
 			return fmt.Errorf("%w: dispatch failed: %v", errExecutionOutcomeUnknown, err)
@@ -2893,6 +2988,7 @@ func (a *GatewayAgent) snapshot() GatewayTarget {
 		Key:           a.Key,
 		Remote:        a.Remote,
 		TokenID:       a.TokenID,
+		Enrolled:      a.TokenID != "",
 		ReleaseCommit: a.ReleaseCommit,
 		ConnectedAt:   a.ConnectedAt,
 		LastSeen:      a.LastSeen,

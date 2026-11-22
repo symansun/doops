@@ -138,14 +138,33 @@ bash scripts/deploy-gateway.sh \
 第一版是 SQLite + 单活可靠部署：
 
 - SQLite WAL 数据库：用户、token、权限、审计。
-- Agent 注册默认只声明 `cluster/instance`，已在线的 Agent 不因升级 Gateway 或 Agent 而断开。
-  需要收紧某个 target 时，在 Gateway 主机执行
-  `doops-gateway enroll create -cluster <cluster> -instance <instance>`。
-  明文只出现在该命令的标准输出里。先把 token 放到该 Agent 的环境变量
+- Agent 注册默认**关闭**：每个 Agent 都必须带该 target 的 enrollment token。Gateway 主机执行
+  `doops-gateway enroll create -cluster <cluster> -instance <instance>` 签发 token。
+  明文只出现在该命令的标准输出里。把 token 放到该 Agent 的环境变量
   `DOOPS_AGENT_ENROLL_TOKEN`（Helm 用可选的 `gateway.enrollmentTokenSecret` 引用 Secret 注入；
   不要放在 `-enroll-token` 命令行参数里，参数会出现在进程列表和 Pod spec 中）。
-  当前会话保持在线。该 Agent 用这份 token 连上一次之后，这个 target 的后续连接才必须带它。
-  吊销后该 target 回到原来的开放注册。不要使用 Gateway user token 或受管凭据。
+  token 本身即可完成首次连接并确认该 target，之后该 target 的连接必须带它。
+  不要使用 Gateway user token 或受管凭据。
+- 已有部署在没有 enrollment、且暂时不能批量登记时，可以在 Gateway 的 systemd
+  `EnvironmentFile`（通常 `/etc/doops-gateway.env`）设置
+  `DOOPS_ALLOW_OPEN_AGENT_REGISTRATION=1`，等价于
+  `-allow-open-agent-registration`；两者都只用于迁移。开放注册只恢复连接：
+  未登记会话仍然不会收到模型密钥或镜像仓库凭据，登记一个就关闭一个。
+- 带 token 的连接始终验证：token 无效、已吊销，或属于另一个 target 时返回 `401`
+  （`code=agent_enrollment_auth_failed`），**不会**回退为开放注册。不带 token 且 target
+  没有已确认的 enrollment 时同样返回 `401`。enrollment 存储不可用时返回 `503`。
+  同一 `cluster/instance` 的无 token 连接永远不能替换一个已确认 target 的在线会话。
+- 只用 `cluster/instance` 连接的无 token Agent 被视为**未 enrollment**：`GET /v1/targets`
+  与 `doops targets` 把它标为 `enrolled=false`（CLI 显示 `NO (not enrolled)` 并给出提示），
+  它**不会**收到模型 key 或 registry authfile 的投递，也不能让 Gateway 向它发送任何凭据载荷；
+  显式使用凭据返回 `409 credential_target_unenrolled`（审计类别同名）。
+- 升级兼容：旧版本部署的 Agent 如果没有 token，升级 Gateway 后会被拒绝（401，按退避重试）。
+  临时逃生口是 Gateway 启动参数 `-allow-open-agent-registration`：它只放行**没有已确认
+  enrollment** 的 target 的无 token 连接，启动日志打印醒目警告并列出当前未 enrollment 的
+  在线 target 数量。该参数是迁移期临时措施，不应长期开启；迁移完成后必须移除。
+- 迁移顺序：给每个 target `enroll create` → 把 token 写入 Secret → Agent 单独一个 Helm revision
+  注入 token → 确认重连且 `doops-gateway enroll list` 显示 `enforced=true` → 去掉
+  `-allow-open-agent-registration`。
 
 ### Agent enrollment 迁移与恢复
 
@@ -157,12 +176,13 @@ bash scripts/deploy-gateway.sh \
   的旧 Chart（旧 `values.schema.json` 会拒绝这两个值）重新安装，都会让 Agent 不再带 token；
   如果该 target 已经 `enforced=true`，Agent 会被拒绝并按退避（最长约 60 秒）重试。
 - 恢复：在 Gateway 主机上 `doops-gateway enroll list` 找到该 target 的 id，执行
-  `doops-gateway enroll revoke -id <id>`，该 target 立即回到开放注册，Agent 下一次重试即可连上；
-  之后再重新签发并按上面的顺序收紧。
+  `doops-gateway enroll revoke -id <id>`，然后**重新签发** token 并按上面的顺序注入：
+  吊销不会让 target 回到开放注册，吊销后只能靠新的 enrollment token 连接。
 - `adopt` 只接受通过 `valueFrom.secretKeyRef` 注入的 `DOOPS_AGENT_ENROLL_TOKEN`，会把它映射为
   `gateway.enrollmentTokenSecret`/`enrollmentTokenKey`；明文值或 `-enroll-token` 参数会被拒绝，
   以免接管后丢失 token。
-- 未签发或未确认 enrollment 的 target 与之前版本行为一致；新版本 Agent 带 token 连旧 Gateway 也可以正常注册。
+- 新版本 Agent 带 token 连旧 Gateway 也可以正常注册；旧 Gateway 不认识 token 时会忽略它。
+  反向情况（旧 Agent 无 token 连新 Gateway）会被拒绝，见上面的迁移说明。
 
 - user token 只能操作有 grant 的 target。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
@@ -197,9 +217,16 @@ bash scripts/deploy-gateway.sh \
 
 隧道与代理接口：
 
-- `WS /v1/agent/connect?cluster=<cluster>&instance=<instance>`。该 target 尚未确认 enrollment 时不需要请求头；确认之后带 `Authorization: Bearer <enrollment token>`
+- `WS /v1/agent/connect?cluster=<cluster>&instance=<instance>`，带 `Authorization: Bearer <enrollment token>`。
+  无 token 只在 `-allow-open-agent-registration` 开启且该 target 没有已确认 enrollment 时被接受（会话标记为未 enrollment）
 - `WS /v1/rpc?cluster=<cluster>&instance=<instance>`
 - `WS /v1/edge/connect?cluster=<cluster>&instance=<instance>`（Edge 隧道；Gateway `-edge-listen` 默认空，未启用时不监听，见 [design/DOOPS_EDGE_TUNNEL.md](design/DOOPS_EDGE_TUNNEL.md)）
+
+WebSocket 升级的 `Origin` 校验：不带 `Origin` 的非浏览器客户端一律放行；浏览器来源必须与
+请求的 `Host` **主机和端口都相同**（默认端口按 `http=80`/`https=443` 归一，协议不比较，
+因为 TLS 通常在 Gateway 前面终止）。同主机不同端口的页面默认被拒绝；确有需要时把完整来源
+（例如 `https://console.example.com:8443`）加入 `DOOPS_ALLOWED_WS_ORIGINS`。只写主机名的
+旧写法仍然接受，含义是该主机的 https 默认端口。`DOOPS_ALLOW_ALL_WS_ORIGINS=1` 只用于开发。
 - `GET/POST /v1/git/<cluster>/<instance>/<session>.git/...`
 - `GET/POST /`（按 Host 匹配代理路由的公网网站代理）
 
@@ -332,7 +359,10 @@ doops admin token revoke --target <gateway-target> --id <token-id>
   上游收到写请求后的连接/响应体传输失败同样是未知结果；不能把代理返回的传输
   错误当成业务没有执行。下游写失败必须等待取消结果后完成审计。
 - `-operation-timeout` 控制单个转发操作的最长运行时间；超时请求取消并等待原始终态。
-  取消 ACK 不是终态；缺失终态时保留 `outcome_unknown`，进入审计收尾时释放本次 lease，不自动重放。
+  声明 `toolDeadline`（schema `doops.sh/tool-deadline/v1`）的 Agent 会在 `tools/call`
+  的 `timeout_ms` 收到这个时限，并比它提前 5 秒以自己的 `agent_tool_timeout`
+  类别收尾（审计状态 `timeout`），不再把 Agent 侧超时误报成取消或 `outcome_unknown`。
+  未声明该能力的旧 Agent 行为不变。取消 ACK 不是终态；缺失终态时保留 `outcome_unknown`，进入审计收尾时释放本次 lease，不自动重放。
   历史未知审计不参与准入。运行或取消中的活跃操作仍按资源锁阻挡冲突请求；
   终态审计持久化失败保留原始证据并自动重试，不持有执行 lease，也不阻挡后续任务。
 - 每个互斥资源最多 10 个等待者、等待上限 10 分钟，没有全局或单用户执行配额。
