@@ -80,12 +80,15 @@ func serve(args []string) {
 	}
 	defer store.Close()
 
+	consoleForwardSecret := strings.TrimSpace(os.Getenv("DOOPS_CONSOLE_FORWARD_SECRET"))
 	hub := server.NewGatewayHub(store, server.GatewayHubOptions{
 		LoginTokenTTL:         *loginTokenTTL,
 		LoginTokenMaxLifetime: *loginTokenMaxLifetime,
 		OperationTimeout:      *operationTimeout,
 		TargetQueueTimeout:    *targetQueueTimeout,
 		MaxQueuedPerTarget:    *maxQueuedPerTarget,
+		// Environment only, never a flag: a flag would expose the secret in ps.
+		ConsoleForwardSecret: []byte(consoleForwardSecret),
 	})
 	hub.StartOfflineInstanceReaper(time.Hour)
 
@@ -98,6 +101,10 @@ func serve(args []string) {
 	log.Printf("   edge endpoint:  ws://127.0.0.1:%s/v1/edge/connect", *port)
 	log.Printf("   client endpoint: ws://127.0.0.1:%s/v1/rpc?cluster=<cluster>&instance=<instance>", *port)
 	log.Printf("   login token ttl=%s max-lifetime=%s", *loginTokenTTL, *loginTokenMaxLifetime)
+	if consoleForwardSecret != "" {
+		// Never print the secret itself.
+		log.Printf("   console login forwarding: enabled (DOOPS_CONSOLE_FORWARD_SECRET)")
+	}
 	if strings.TrimSpace(*edgeListen) != "" {
 		listener, err := hub.StartEdgeListener(*edgeListen, *edgeProxyProtocol)
 		if err != nil {
