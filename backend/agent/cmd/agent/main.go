@@ -216,15 +216,26 @@ func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance, enrollToken
 		authBackoff = 0
 
 		log.Printf("✅ reverse tunnel connected: cluster=%s instance=%s", cluster, instance)
-		func() {
-			defer setReverseTunnelConnected(false)
-			reverseTunnelServeConn(gw, conn, "doops-gateway:"+tunnelURL, func() {
-				setReverseTunnelConnected(true)
-			})
-		}()
-		log.Printf("⚠️ reverse tunnel disconnected; reconnecting in %s", reconnectDelay)
+		serveReverseTunnelConn(gw, conn, "doops-gateway:"+tunnelURL)
+		log.Printf("🔁 reconnecting in %s", reconnectDelay)
 		time.Sleep(reconnectDelay)
 	}
+}
+
+// serveReverseTunnelConn serves one Gateway connection and, once the tunnel has
+// returned, reports that cleanup finished before the caller sleeps and
+// reconnects. ServeGatewayWebSocketConnWithReady returns only after the
+// connection's in-flight executions are canceled and settled, so this marks the
+// point where re-registering cannot overlap the old connection's work.
+func serveReverseTunnelConn(gw *server.Gateway, conn *websocket.Conn, name string) {
+	started := time.Now()
+	func() {
+		defer setReverseTunnelConnected(false)
+		reverseTunnelServeConn(gw, conn, name, func() {
+			setReverseTunnelConnected(true)
+		})
+	}()
+	log.Printf("⚠️ reverse tunnel disconnected; in-flight cleanup completed in %s", time.Since(started).Round(time.Millisecond))
 }
 
 // reverseTunnelMaxAuthBackoff caps the retry interval after the Gateway

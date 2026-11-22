@@ -476,7 +476,12 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if opts.TargetQueueTimeout <= 0 {
 		opts.TargetQueueTimeout = 2 * time.Minute
 	}
-	if opts.TargetReconnectGrace <= 0 {
+	// Zero means "unset" and keeps the 10s reconnect grace. The
+	// explicitNoReconnectGrace sentinel means "fail immediately"; any other
+	// negative value restores the default.
+	if opts.TargetReconnectGrace == explicitNoReconnectGrace {
+		opts.TargetReconnectGrace = 0
+	} else if opts.TargetReconnectGrace <= 0 {
 		opts.TargetReconnectGrace = 10 * time.Second
 	}
 	opts.LoginTokenTTL, opts.LoginTokenMaxLifetime = normalizeLoginTokenLifetimes(opts.LoginTokenTTL, opts.LoginTokenMaxLifetime)
@@ -1073,6 +1078,17 @@ func clientRPCRequestKey(id interface{}) (string, bool) {
 	}
 }
 
+// targetReconnectGrace returns how long a forwarded RPC may wait for a target
+// that is reconnecting. Liveness probes stay immediate so `doops targets` and
+// `doops targets remove` keep reporting an exact "target offline" answer.
+func (h *ClientService) targetReconnectGrace(tool string) time.Duration {
+	switch tool {
+	case "doops_node_info", "doops_task_status":
+		return 0
+	}
+	return h.opts.TargetReconnectGrace
+}
+
 func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
 	if err := h.store.validateUserTokenAuth(auth); err != nil {
 		if errors.Is(err, ErrUnauthorized) {
@@ -1236,7 +1252,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 		return nil
 	}
-	agent := h.registry.Get(cluster, instance)
+	agent := h.registry.Wait(ctx, cluster, instance, h.targetReconnectGrace(params.Name))
 	if agent == nil || agent.Cluster != cluster || agent.Instance != instance {
 		errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
 		finishAudit("offline", errMsg, "", 0)

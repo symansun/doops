@@ -81,13 +81,27 @@ func hostOnly(hostport string) string {
 }
 
 const (
-	agentWSReadTimeout            = 20 * time.Second
 	agentWSPingInterval           = 5 * time.Second
 	agentWSPingWriteTimeout       = 3 * time.Second
 	agentWSDataWriteTimeout       = 60 * time.Second
 	maxAgentPromptAttachments     = 4
 	maxAgentPromptAttachmentBytes = 25 * 1024 * 1024
 )
+
+// defaultAgentTunnelReadTimeout matches the Gateway's 90-second Agent lease.
+// The Agent pongs (refreshing the lease) before this deadline; exceeding it
+// ends the tunnel, which still terminates that connection's in-flight calls.
+const defaultAgentTunnelReadTimeout = 90 * time.Second
+
+// agentTunnelReadTimeout reads DOOPS_TUNNEL_READ_TIMEOUT on the Agent side.
+// The Gateway's read deadline on the same connection is longer than any
+// expectable interval between Agent pongs, so a healthy Agent is never cut.
+func agentTunnelReadTimeout() time.Duration {
+	return positiveEnvDuration("DOOPS_TUNNEL_READ_TIMEOUT", defaultAgentTunnelReadTimeout)
+}
+
+// edgeWSReadTimeout keeps the Edge transport's fixed 20-second idle bound.
+const edgeWSReadTimeout = 20 * time.Second
 
 type websocketControlWriter interface {
 	WriteControl(messageType int, data []byte, deadline time.Time) error
@@ -235,10 +249,13 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	// per-connection 写互斥锁（gorilla/websocket 不允许并发写）
 	var connMu sync.Mutex
 	var dataWriteState websocketDataWriteState
+	// Read once per connection so a read timeouts change cannot split a deadline
+	// window between the initial deadline, the pong handler and the loop.
+	readTimeout := agentTunnelReadTimeout()
 
-	conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
+	conn.SetReadDeadline(time.Now().Add(readTimeout))
 	conn.SetPongHandler(func(string) error {
-		return conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
+		return conn.SetReadDeadline(time.Now().Add(readTimeout))
 	})
 
 	pingDone := make(chan struct{})
@@ -280,6 +297,10 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	activeToolMu := sync.Mutex{}
 	activeToolCalls := make(map[int64]activeToolCall)
 	var executionWG sync.WaitGroup
+	// inFlightToolCalls counts started tool calls that have not returned yet.
+	// It only feeds the disconnect log; cancellation semantics stay with
+	// connectionCtx and executionWG.
+	var inFlightToolCalls atomic.Int64
 	var readyOnce sync.Once
 	closeGitBody := func(id int64) {
 		gitBodyMu.Lock()
@@ -322,7 +343,8 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	// 主读取循环
 	for {
 		messageType, message, err := readWebSocketMessage(conn, func() {
-			_ = conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
+			// Data frames count as liveness; pongs keep this deadline too.
+			_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
 		})
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -585,9 +607,11 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					cancel: cancel,
 				}
 				activeToolMu.Unlock()
+				inFlightToolCalls.Add(1)
 				executionWG.Add(1)
 				go func() {
 					defer executionWG.Done()
+					defer inFlightToolCalls.Add(-1)
 					defer func() {
 						activeToolMu.Lock()
 						delete(activeToolCalls, id)
@@ -597,14 +621,23 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
 				}()
 			} else {
+				inFlightToolCalls.Add(1)
 				executionWG.Add(1)
 				go func() {
 					defer executionWG.Done()
+					defer inFlightToolCalls.Add(-1)
 					defer cancel()
 					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
 				}()
 			}
 		}
+	}
+
+	// Cleanup below cancels this connection's executions. Report the count once
+	// before cancelling so an idle-timeout disconnect is visible in Agent logs;
+	// only the count is logged, never command text.
+	if pending := inFlightToolCalls.Load(); pending > 0 {
+		log.Printf("[agent] tunnel disconnected; ending %d in-flight executions after the read timeout", pending)
 	}
 
 	log.Printf("🔗 WS Client Disconnected: %s", remoteAddr)
