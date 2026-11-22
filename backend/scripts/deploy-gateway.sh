@@ -46,6 +46,11 @@ Options:
                           as doops.aiedulab.cn.
   --require-enrolled-credential-delivery
                           Remove that insecure switch.
+  --readiness-timeout SECONDS
+                          Seconds to wait for the restarted Gateway to answer
+                          /health locally before the deploy is rolled back.
+                          Raise it for a first start that must migrate a large
+                          database. Default: 30.
   --no-build              Do not run scripts/build-gateway.sh before deploy.
   --dry-run               Print the plan and verify SSH, but do not modify remote host.
   -h, --help              Show this help.
@@ -72,6 +77,7 @@ VERIFY_SESSION=""
 SOURCE_COMMIT=""
 AGENT_REGISTRATION="preserve" # preserve | open | required
 UNENROLLED_CREDENTIALS="preserve" # preserve | open | required
+READINESS_TIMEOUT="30"
 BUILD=true
 DRY_RUN=false
 
@@ -137,6 +143,10 @@ while [[ $# -gt 0 ]]; do
       UNENROLLED_CREDENTIALS="required"
       shift
       ;;
+    --readiness-timeout)
+      READINESS_TIMEOUT="${2:-}"
+      shift 2
+      ;;
     --no-build)
       BUILD=false
       shift
@@ -168,6 +178,11 @@ if [[ "${HOST}" == *"/"* || "${HOST}" == *":"* || "${HOST}" == *","* ]]; then
 Error: --host must be a real SSH host/IP, not a doops target or cluster/instance.
 Gateway deployment must not go through a doops target.
 EOF
+  exit 2
+fi
+
+if [[ ! "${READINESS_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Error: --readiness-timeout must be a positive integer" >&2
   exit 2
 fi
 
@@ -488,11 +503,11 @@ echo "[5/6] Verifying host-local HTTP endpoint"
 "${SSH[@]}" "set -e
 GATEWAY_PORT='${GATEWAY_PORT}'
 $(declare -f wait_for_local_gateway)
-wait_for_local_gateway 30
+wait_for_local_gateway "${READINESS_TIMEOUT}"
 "
 
 echo "[6/6] Waiting for every baseline Agent to reconnect"
-wait_for_gateway_state 60
+wait_for_gateway_state "${READINESS_TIMEOUT}"
 
 "${SSH[@]}" "rm -rf '${REMOTE_TMP}'"
 ROLLBACK_ARMED=false
