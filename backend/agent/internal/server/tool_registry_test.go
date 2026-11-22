@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -101,5 +102,47 @@ func TestInternalToolsAreNotCallerFacing(t *testing.T) {
 		if _, ok := agentToolHandlers[name]; ok {
 			t.Fatalf("internal relay tool %s is also in the caller-facing dispatch map", name)
 		}
+	}
+}
+
+func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
+	if got := actionForTool("doops_shell", json.RawMessage(`{"_doops_action":"info"}`)); got != ActionExec {
+		t.Fatalf("doops_shell must map to exec regardless of client override, got %q", got)
+	}
+	if got := actionForTool("doops_ssh", nil); got != ActionExec {
+		t.Fatalf("doops_ssh must map to exec, got %q", got)
+	}
+	if got := actionForTool("doops_check_deployment", nil); got != ActionCheck {
+		t.Fatalf("doops_check_deployment must map to check, got %q", got)
+	}
+	if got := actionForTool("doops_clean_workspace", nil); got != ActionClean {
+		t.Fatalf("doops_clean_workspace must map to clean, got %q", got)
+	}
+	if got := actionForTool("doops_workspace_read", nil); got != ActionRead {
+		t.Fatalf("doops_workspace_read must map to read, got %q", got)
+	}
+	if got := actionForTool("doops_k8s", nil); got != ActionExec {
+		t.Fatalf("doops_k8s must map to exec, got %q", got)
+	}
+	if got := actionForTool("doops_database_inventory", nil); got != ActionInfo {
+		t.Fatalf("doops_database_inventory must map to info, got %q", got)
+	}
+	if got := resourceKeyForTool(ActionInfo, "doops_database_inventory", nil, "dev", "node"); got != "" {
+		t.Fatalf("database inventory must stay a concurrent read, got %q", got)
+	}
+}
+
+func TestGatewayActionMappingUsesDedicatedToolForAgentUpgrade(t *testing.T) {
+	if got := actionForTool("doops_agent_upgrade", nil); got != ActionAgentUpgrade {
+		t.Fatalf("expected agent upgrade action, got %q", got)
+	}
+}
+
+func TestGatewayActionMappingUsesDedicatedToolsForWorkspacePull(t *testing.T) {
+	if got := actionForTool("doops_workspace_pull_begin", nil); got != ActionPull {
+		t.Fatalf("expected workspace pull begin to map to pull, got %q", got)
+	}
+	if got := actionForTool("doops_workspace_pull_chunk", nil); got != ActionPull {
+		t.Fatalf("expected workspace pull chunk to map to pull, got %q", got)
 	}
 }
