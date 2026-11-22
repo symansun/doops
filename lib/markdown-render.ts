@@ -204,5 +204,3 @@ export function createKbSessionStore<M extends string = string>(defaultMode: M) 
 }
 
 export const kbSessionStore = createKbSessionStore<"edit" | "split" | "preview">("split")
-
-
