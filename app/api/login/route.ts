@@ -3,6 +3,7 @@ import {
   gatewayPolicyResponse,
   setGatewaySession,
 } from "@/lib/gateway-policy"
+import { forwardHeaders } from "@/lib/server/console-forward"
 import { readGatewayIdentity } from "@/lib/server/gateway-identity"
 import { gatewayErrorResponse } from "@/lib/server/gateway-errors"
 import { rejectCrossOriginMutation } from "@/lib/server/same-origin"
@@ -28,9 +29,11 @@ export async function POST(req: Request) {
 
   try {
     const gatewayBase = allowedGatewayBase(gateway)
+    // Signed browser address so the Gateway limits per browser, not per console
+    // host. Empty when DOOPS_CONSOLE_FORWARD_SECRET or the hop count is unset.
     const res = await fetch(`${gatewayBase}/v1/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...forwardHeaders(req) },
       body: JSON.stringify({ username, password, name: name || "doops-console" }),
       redirect: "manual",
     })

@@ -35,6 +35,10 @@ type GatewayHubOptions struct {
 	// to a target with no confirmed enrollment. Closed by default; it exists
 	// only to migrate Agents that were deployed before enrollment existed.
 	AllowOpenAgentRegistration bool
+	// ConsoleForwardSecret is the HMAC key that lets the Web console sign the
+	// browser address of a login. It is loaded from DOOPS_CONSOLE_FORWARD_SECRET
+	// only, so it never appears in a process listing. Empty disables it.
+	ConsoleForwardSecret []byte
 }
 
 type GatewayHub struct {
@@ -605,8 +609,12 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid login request", http.StatusBadRequest)
 		return
 	}
+	now := time.Now()
 	clientIP := loginClientIP(r)
-	if h.loginFailures.limited(clientIP, req.Username, time.Now(), h.opts.LoginFailureLimit, h.opts.LoginFailureWindow) {
+	if forwarded := consoleForwardedIP(r, h.opts.ConsoleForwardSecret, now); forwarded != "" {
+		clientIP = forwarded
+	}
+	if h.loginFailures.limited(clientIP, req.Username, now, h.opts.LoginFailureLimit, h.opts.LoginFailureWindow) {
 		w.Header().Set("Retry-After", "60")
 		writeDoopsError(w, http.StatusTooManyRequests, "", doopsErrorResponse{
 			Error:      "rate_limited",
@@ -623,7 +631,7 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 			writeGatewayAuthError(w, `Bearer realm="doops-gateway"`, err)
 			return
 		}
-		h.loginFailures.record(clientIP, req.Username, time.Now(), h.opts.LoginFailureWindow)
+		h.loginFailures.record(clientIP, req.Username, now, h.opts.LoginFailureWindow)
 		writeDoopsError(w, http.StatusUnauthorized, "", doopsErrorResponse{
 			Error:      "unauthorized",
 			Code:       "gateway_login_invalid_credentials",
