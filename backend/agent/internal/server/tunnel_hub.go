@@ -43,6 +43,10 @@ type GatewayHubOptions struct {
 	// browser address of a login. It is loaded from DOOPS_CONSOLE_FORWARD_SECRET
 	// only, so it never appears in a process listing. Empty disables it.
 	ConsoleForwardSecret []byte
+	// AuditRetention deletes completed audit rows older than this. Zero, the
+	// library default, keeps every row; the Gateway command sets it from
+	// -audit-retention.
+	AuditRetention time.Duration
 }
 
 type GatewayHub struct {

@@ -18,3 +18,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_session_target_id ON audit_events(session, 
 -- the session and leave the target empty. Without it a session plus status
 -- filter would walk the status index instead.
 CREATE INDEX IF NOT EXISTS idx_audit_session_id ON audit_events(session, id DESC);
+-- Retention scans rows by age: audit_events(started_at) range plus id for the
+-- keyed batch delete. Created last so it never displaces the filter indexes
+-- above for queries that also match on user, target, status or action.
+-- started_at is RFC3339Nano UTC text, so string order is time order.
+CREATE INDEX IF NOT EXISTS idx_audit_started_at ON audit_events(started_at, id);

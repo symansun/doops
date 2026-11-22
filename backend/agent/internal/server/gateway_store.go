@@ -1187,11 +1187,7 @@ func credentialAuditScopeJSON(scope *CredentialGrantScope) (string, error) {
 }
 
 func (s *GatewayStore) DeleteAuditBefore(before time.Time) (int64, error) {
-	res, err := s.db.Exec(deleteCompletedAuditSQL, formatTime(before.UTC()))
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	return execRowsAffected(s.db, deleteCompletedAuditSQL, formatTime(before.UTC()))
 }
 
 func firstNonEmpty(values ...string) string {
