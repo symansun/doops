@@ -21,6 +21,14 @@ func TestOpenGatewayStoreRestrictsPersistentFilePermissions(t *testing.T) {
 		t.Fatalf("create permissive database file: %v", err)
 	}
 
+	// Creation modes are filtered by the process umask. Set the fixture's actual
+	// starting modes so the test checks the store, not the invoking shell.
+	if err := os.Chmod(sharedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(databasePath, 0644); err != nil {
+		t.Fatal(err)
+	}
 	store, err := OpenGatewayStore(databasePath)
 	if err != nil {
 		t.Fatalf("open gateway store: %v", err)

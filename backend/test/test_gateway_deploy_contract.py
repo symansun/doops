@@ -1,4 +1,8 @@
+import os
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +39,6 @@ def test_gateway_deploy_can_verify_with_configured_doops_target_without_exportin
 
     assert "--verify-target" in text
     assert "--verify-session" in text
-    assert 'doops -session "${VERIFY_SESSION}" targets --target "${VERIFY_TARGET}"' in text
     assert "--verify-token-file" not in text
     assert "VERIFY_TOKEN" not in text
 
@@ -67,3 +70,93 @@ def test_gateway_deploy_rejects_binary_without_exact_source_commit():
     assert 'strings -a "${LOCAL_BIN}"' in text
     assert 'grep -Fxx "${SOURCE_COMMIT}" >/dev/null' in text
     assert "Gateway binary does not contain source commit" in text
+
+
+@pytest.mark.parametrize(("mode", "routes", "expected"), [
+    ("normal", ["first"], "success"),
+    ("normal", ["first", "second"], "success"),
+    ("enrolled", ["first", "second"], "success"),
+    ("unenrolled", ["first", "second"], "success"),
+    ("foreign-warning", ["first", "second"], "baseline_failure"),
+    ("alias", ["first", "alias"], "baseline_failure"),
+    ("denied", ["first", "second"], "baseline_failure"),
+    ("empty", ["first", "second"], "baseline_failure"),
+    ("ambiguous", ["first", "second"], "baseline_failure"),
+    ("missing", ["first", "second"], "rollback"),
+    ("swapped", ["first", "second"], "rollback"),
+])
+def test_route_reconnect_gate(tmp_path, mode, routes, expected):
+    # Exercise the script entrypoint; SSH, uploads, health, CLI and waiting stay local stubs.
+    def stub(name, body):
+        path = tmp_path / name
+        path.write_text("#!/bin/bash\nset -eu\n" + body + "\n")
+        path.chmod(0o700)
+
+    stub("ssh", r'''case "${!#}" in
+      "sudo -n sha256sum "*) echo "dummy-digest  old-binary" ;;
+      *"install -m 0755"*".rollback-"*) echo rollback >> "$TRACE"; touch "$FIX/restored" ;;
+    esac''')
+    stub("scp", 'echo upload >> "$TRACE"; touch "$FIX/uploaded"')
+    stub("curl", "exit 0")
+    stub("sha256sum", 'echo "0123456789abcdef  fixture"')
+    stub("strings", 'echo "$COMMIT"')
+    stub("sleep", "exit 0")
+    stub("seq", 'printf "1\\n2\\n"')  # Bound the simulation, not the production deadline.
+    stub("doops", r'''
+    [[ "$#" == 5 && "$1" == -session && "$2" == test && "$3" == targets && "$4" == --target ]]
+    route=$5
+    stage=before
+    if [[ -e "$FIX/uploaded" ]]; then stage=after; fi
+    if [[ -e "$FIX/restored" ]]; then stage=restored; fi
+    echo "$stage:$route" >> "$TRACE"
+    identity=$route
+    if [[ $MODE == alias && $route == alias ]]; then identity=first; fi
+    case "$MODE" in
+      enrolled|unenrolled|foreign-warning) echo 'CLUSTER INSTANCE BUSY STATUS ACTIVE QUEUED ENROLLED RELEASE_COMMIT RESOURCES LAST_SEEN' ;;
+      *) echo 'CLUSTER INSTANCE BUSY STATUS ACTIVE QUEUED RELEASE_COMMIT RESOURCES LAST_SEEN' ;;
+    esac
+    echo '--------------------------------------------------'
+    row(){
+      local label='' warning=''
+      case "$MODE:$1" in
+        enrolled:*|unenrolled:first|foreign-warning:first) label='yes' ;;
+        unenrolled:second|foreign-warning:second) label='NO (not enrolled)'; warning="demo/$1" ;;
+      esac
+      if [[ "$MODE:$1" == 'foreign-warning:second' ]]; then warning='demo/other'; fi
+      printf 'demo %s false idle 0 0 %s <unknown> 2026-01-01T00:00:00Z\n' "$1" "$label"
+      if [[ -n "$warning" ]]; then echo "  NOT ENROLLED: $warning connected without a target enrollment token; it receives and can use no credentials."; fi
+    }
+    case "$MODE:$stage:$route" in
+      denied:before:second) row "$identity"; exit 1 ;;
+      empty:before:second) ;;
+      ambiguous:before:second) row "$identity"; row other ;;
+      missing:after:second) exit 1 ;;
+      swapped:after:first) row second ;;
+      swapped:after:second) row first ;;
+      *) row "$identity" ;;
+    esac
+    echo 'ACTIVE/QUEUED count Gateway operations, not do-agent turn permits or prompt queues.'
+    ''')
+    fixture = tmp_path / "candidate"
+    fixture.touch(mode=0o700)
+    trace = tmp_path / "trace"
+    commit = "a" * 40
+    command = ["bash", str(DEPLOY), "--host", "fixture.invalid", "--no-build", "--binary", str(fixture),
+               "--source-commit", commit, "--verify-session", "test"]
+    for route in routes:
+        command.extend(["--verify-target", route])
+    result = subprocess.run(command, env={"PATH": f"{tmp_path}:{os.defpath}", "FIX": str(tmp_path),
+                                         "TRACE": str(trace), "MODE": mode, "COMMIT": commit},
+                            text=True, capture_output=True, timeout=12)
+    events = trace.read_text().splitlines()
+    assert events[:len(routes)] == ["before:" + route for route in routes]
+    assert (result.returncode == 0) == (expected == "success"), (events, result.stderr)
+    if expected == "success":
+        assert events == [*("before:" + r for r in routes), "upload", *("after:" + r for r in routes)]
+        assert f"Baseline targets: {len(routes)}" in result.stdout
+        if mode == "unenrolled":
+            assert "NOT ENROLLED: demo/second" in result.stderr
+    elif expected == "baseline_failure":
+        assert "upload" not in events
+    else:
+        assert "after:second" in events and events[-3:] == ["rollback", "restored:first", "restored:second"]

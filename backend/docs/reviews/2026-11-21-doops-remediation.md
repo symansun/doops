@@ -11,7 +11,7 @@
 | DoSQL 直接查询与验证 | 收紧只读语句准入并保留引号中的字面量 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，采用词法规则 |
 | MySQL 查询模式 | 拒绝 INTO 和可执行注释 | [Skill 查询准入](../../agent/skills/dosql/Server/lib/database-operation-executor.mjs#L477-L483) · [执行器回归套件](../../agent/skills/dosql/Server/lib/database-operation-executor.test.mjs) | 已发布；v0.3.21 执行器套件 19 项通过。另用合成适配器定向验证：普通只读查询调用适配器一次，含 INTO 和含可执行注释的两种输入均在调用前被拒绝（各零次）。未连接数据库。 |
 | MongoDB 文档校验 | 在解码后区分键和字面值 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
-| DoSQL 部分提交 | 结果未知时保留已知的部分提交证据 | [handler_ws.go](../../agent/internal/server/handler_ws.go) | 已发布，Agent CI 通过 |
+| DoSQL 部分提交 | 结果未知时保留已知提交证据；版本日志区分普通失败与已确认的部分提交 | [直连执行结果](../../agent/internal/server/dosql_direct_prompt.go) · [版本日志回归](../../agent/internal/server/dosql_version_journal_test.go) | RPC 错误证据已发布。版本日志修复尚未发布：已复现执行器报告部分提交而结束记录写为 `failed`，并验证新记录保留状态与计数、旧记录只读兼容且原字节不变。另见下文真实 MySQL 复验。 |
 | Helm 补偿回滚 | 等待回滚并回读 live release 状态 | [helm_interrupt_test.go](../../agent/internal/server/helm_interrupt_test.go) | 已发布 |
 | Helm 原生回滚和卸载中断 | 保留结果未知，补充有界的只读状态观测 | [Helm 中断测试](../../agent/internal/server/helm_interrupt_test.go) | 已随 v0.3.20 发布，macOS 和 Linux 非 root 定向通过 |
 | Agent 回滚候选 | 要求匹配的成功持久化回执 | [self_upgrade_test.go](../../agent/internal/server/self_upgrade_test.go) | 已发布 |
@@ -21,11 +21,11 @@
 | Git 隧道流和取消 | 失败时中止流，取消回执按 RPC ID 匹配 | [handler_ws_test.go](../../agent/internal/server/handler_ws_test.go) | 已发布，macOS 和 Linux 各重复通过 100 次 |
 | 会话文本文件 | 限制相对路径访问，限制读取大小，Linux 相对路径已修复 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，工作区模板仍支持任意文本 |
 | 非空工作区替换 | 原子交换，交换不可用时保留现有工作区 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
-| Web 模型配置 | 本地存储清理旧 API key，发布入口采用凭证引用 | [Web 指南](../DOOPS_WEBUI.md) | v0.3.21 已发布，隔离 Web 会话和凭证流程通过，实际服务待验收 |
+| Web 模型配置 | 加载和保存时清除旧 `api_key`；模型设置须在凭据管理中验证并启用，不能从配置中心直接写入节点 | [Web 指南](../DOOPS_WEBUI.md) · [发布版本函数复验](https://github.com/symansun/doops/pull/30#issuecomment-7073362485) | v0.3.21 已发布。合成存储复验保留模型元数据和凭据引用；3 条模型直发路径均未调用模拟 RPC，普通文件对照调用 1 次。实际服务待验收。 |
 | Web 同源检查 | 默认使用请求源。正式部署脚本可传入公开 HTTPS origin，并检查候选与切换后容器的同源登录行为 | [部署规程](../DOOPS_WEBUI.md) · [PR #27](https://github.com/symansun/doops/pull/27) | v0.3.21 已发布，隔离 Web 容器和切换回滚分支通过，实际服务待验收 |
-| Web 升级观察 | 提交前持久化可从操作编号推导的 Job，关联证据补齐命名空间 | [升级面板](../../../components/agent-upgrade-panel.tsx) | 已发布 |
+| Web 升级观察 | 提交前保存可从操作编号推导的 Job；恢复观察时只补全匹配回执中的命名空间 | [升级面板](../../../components/agent-upgrade-panel.tsx) · [v0.3.21 客户端恢复用例](https://github.com/symansun/doops/blob/v0.3.21/lib/client.test.mjs#L575-L746) | 已发布。8 个恢复与失败用例在发布标签上通过。另用模拟 RPC 验证：提交前保存失败，发送 0 个请求；缺失命名空间时可从匹配回执补齐；已有命名空间与回执冲突时不报成功。后两种恢复各发送 1 个观察请求，均未重新提交。 |
 | CLI 流式终态 | 拒绝缺失或空终态，解析失败以错误返回 | [CLI 流式测试](../../cli/cli/doops/client_test.go) | 已发布 |
-| CLI 历史 | 新历史省略 ask 和 exec 正文，收紧旧文件权限 | [CLI 历史测试](../../cli/cli/doops/auth_test.go) | 已发布，旧文件内容保留 |
+| CLI 历史 | 新历史省略 ask 和 exec 正文，收紧旧文件权限 | [命令记录位置](../../cli/cli/doops/main.go#L615-L627) · [历史写入与权限](../../cli/cli/doops/history.go#L29-L68) · [路径测试](../../cli/cli/doops/auth_test.go) · [正式 CLI 回读](https://github.com/symansun/doops/pull/30#issuecomment-7073177628) | 已发布。用 v0.3.21 源码和临时 HOME 验证：写入合成 exec 记录后新旧文件均为 0600，旧内容未变。正式 macOS ARM64 CLI 单独回读时只显示 v2 记录，不显示旧内容。 |
 | Operator Skill 示例 | SSH、Kubernetes 和凭证配置示例经过真实 CLI 的参数校验 | [合同测试](../../test/test_sql_skill_contract.py) | 已发布 |
 | DoWeb 安装挂载 | 将自定义目录作为完整挂载参数传递 | [DoWeb 脚本](../../agent/skills/doweb/scripts/doweb.mjs) | 已发布 |
 
@@ -57,15 +57,28 @@
 | 撤销时部分目标尚未清理 | 撤销、恢复目标后重试 | 在清理通过前保留撤销中状态。[撤销回归](../../agent/internal/server/credential_resource_revocation_test.go#L113) |
 | 写入合成载荷 | 读取 HTTP 响应和审计 | 可读元数据不含载荷。[脱敏回归](../../agent/internal/server/credential_http_test.go#L13) |
 
+## 未发布的集成候选
+
+本地候选 `93352ff8` 同时包含 Gateway 多路由核验（`b120e928`）与 DoSQL 部分提交日志（`265ae9a3`）。两者的实现与各自原分支一致；后续修正只调整测试夹具的初始文件权限和诊断请求中的 `start_ticks` 字段，不改变产品逻辑。
+
+在隔离 HOME 中，Gateway 与 CLI 模块测试通过，后端合同测试 494 项及 8 个子测试通过。Git 接收钩子取消用例最初单跑 5 次有 2 次在钩子启动前超时；夹具只使用合成凭据，提交 `ed675e9c` 禁止该次 Git push 调用宿主凭据助手或交互提示，未改产品逻辑、超时或取消断言。调整后该用例连续 15 次通过。
+
+同一提交在本机单次运行整个 Agent 模块时收到 `signal: terminated`，日志未给出信号来源，不能将这次运行记为通过，也没有证据表明是 Helm 断言失败。当时正在执行的 Helm 凭据选择用例单独复跑 5 次通过。随后将 Agent 的 9 个 Go 包分为 11 组进行离线验证；`internal/server` 的 956 个顶层测试与 Go 枚举清单逐一对账，无遗漏或重复。各组均正常退出，合计 2651 个通过事件（含子测试），另有 12 个跳过事件，涉及双 GPU 硬件和真实数据库。以上为分组回归结果，不等同于单次整包 CI、真实引擎验收或线上 T2。
+
+对齐上游 `580db2c7` 后，CLI 增加了 `ENROLLED` 列及独立的未登记提示行。部署脚本现在区分目标行和对应的登记提示，保留警告并拒绝错配提示；重连通过不等于登记或凭据验收通过。合并工作树的 CLI 包测试通过，部署合同及文档链接检查 19 项通过。前述 11 组 Agent 结果仅属于 `ed675e9c`，不作为合并后提交的 CI 结果。
+
+**真实 MySQL 复验（`4750e340`）：** 在本机回环地址的临时 MySQL 8.4.13 上，事务边界用例及全部 10 个子用例均实际执行并通过。另用临时驱动调用生产 DoSQL Handler，仅模拟凭据交付：同一批次第二次建表失败，独立连接确认第一条建表已提交；错误包含版本 1 和已提交 DDL 数 1。经哈希链校验的结束记录及重新读取的摘要均为 `partially_committed`、`committed=true`、`implicit_commits=1`，读取摘要前后日志字节一致。已移除临时容器和数据卷。此项只验证候选版本的数据库行为，不代表线上 T2 已验收。
+
 ## 实际服务验收
 
 2026-11-22 10:21（Asia/Shanghai）只读回读：`gw-test` 指向 `doops-zyj/zyj-test`，Agent 报告 `e1d2ba7c24b4283efe7a1d2c0c1fa19bba960358`，与 v0.3.21 发布提交不符。当时有 1 个活动 Gateway 操作，排队为 0。本次未变更共享服务。部署及在线合成凭证验收仍待确认维护范围或指定隔离目标。
 
 同日从 v0.3.21 标签导出源码（不使用当前开发工作区），禁用 Go 测试缓存，复跑并确认以下四个用例均执行且通过：`TestModelProviderCleanupRecoversInterruptedDelivery`、`TestRegistryOwnershipWriteFailureRestoresAuthfile`、`TestRegistryAuthfileCleanupKeepsLiveVersion`、`TestCredentialResourceRevocationRetryAfterRevoking`。这是发布版本的本地回归证据，不是共享服务验收。
+**部署前提：** 隔离试验中的 Agent 和 Web 均已核对源提交与 linux/amd64 平台。Agent 二进制报告 v0.3.21，内置 do-agent 报告 0.2.46，但该隔离 Agent 的基础镜像引用未按 digest 固定。正式构建脚本已验证会在调用 Docker 前拒绝这一输入；不能把本地镜像 ID 当作可部署的仓库地址。操作方需指定获准的镜像仓库和目标，在受控构建中固定基础镜像，再记录可拉取的 Agent/Web `repository@sha256` 及回滚依据。[镜像核对结果](https://github.com/symansun/doops/pull/30#issuecomment-7073286252)
 
 | 验收项 | 需记录的证据 |
 | --- | --- |
-| Gateway | 发布资产 SHA-256、运行中进程的可执行文件 SHA-256、发布提交及目标重连结果。见 [Gateway 发布规程](../BUILD_DEPLOY_SOP.md#一-gateway-发布边界)。 |
+| Gateway | v0.3.21 正式 Linux AMD64 资产的期望 SHA-256 是 `4dbd24b34aeee3bbf8b25e8ae715ff29632db336b630724f50ec5aebdca1f081`。须与目标上实际运行进程的可执行文件比对，并按发布前受影响目标清单逐路由记录重连结果。正式 v0.3.21 CLI 的双目标回环验证表明：B 离线时，对仍在线的 A 的检查继续成功，对 B 的检查失败。单路由结果不能证明全部重连。后续脚本改动（尚未发布）支持显式多路由；成功、基线拒绝、重连缺失及身份互换后的回退路径已用[隔离部署测试](../../test/test_gateway_deploy_contract.py)验证，不能替代现场回读。见 [Gateway 发布规程](../BUILD_DEPLOY_SOP.md#一-gateway-发布边界)。 |
 | Agent | 测试目标、候选镜像 digest、实际 Pod imageID、Ready 状态、Gateway 回读的 release_commit。见 [Agent 发布规程](../BUILD_DEPLOY_SOP.md)。 |
 | Web | 发布提交、实际运行的 Web 镜像 digest、公开 HTTPS origin、允许来源和跨源登录响应。见 [Web 部署规程](../DOOPS_WEBUI.md#部署)。 |
 | 合成凭证 | 创建与暂存回执、两个用户的列表隔离结果、持久化回读、验证与提升回执、撤销终态和 Secret 清理结果。保留元数据和审计结果。见 [凭据生命周期](../CREDENTIAL_RESOURCES.md#分步创建和首次激活) 与 [交付规程](../../../AGENTS.md)。 |
