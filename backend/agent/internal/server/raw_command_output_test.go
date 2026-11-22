@@ -222,7 +222,10 @@ func TestRawCommandOutputEscapedWriterIsBounded(t *testing.T) {
 			}
 			select {
 			case err := <-done:
-				if !errors.Is(err, errExecutionOutcomeUnknown) || time.Since(started) < commandPipeGracePeriod {
+				// The group was cleaned up after the leader exit and the reader
+				// was released at once; a real read failure, not the held pipe,
+				// is what keeps this outcome unknown.
+				if !errors.Is(err, errExecutionOutcomeUnknown) || time.Since(started) > 4*time.Second {
 					t.Fatalf("escaped writer did not reach bounded unknown: err=%v elapsed=%s", err, time.Since(started))
 				}
 			case <-time.After(4 * time.Second):

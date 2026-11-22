@@ -130,7 +130,7 @@ func TestWorkspaceInterruptionCancelAcceptsRealLocalTerminal(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Run the actual local handler after cancellation, not a fabricated success.
-			(&Gateway{}).handleToolCallOverWS(ctx, call.id, tool, raw, func(v interface{}) {
+			(&Gateway{}).handleToolCallOverWS(ctx, call.id, tool, raw, 0, func(v interface{}) {
 				agent.writeMu.Lock()
 				defer agent.writeMu.Unlock()
 				if err := agent.conn.WriteJSON(v); err != nil {

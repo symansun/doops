@@ -1181,8 +1181,15 @@ func maxWebSocketMessageBytes() int64 {
 	return positiveEnvInt64("DOOPS_MAX_WS_MESSAGE_BYTES", defaultWebSocketMessageBytes)
 }
 
+// ToolTimeoutEnv names the Agent-side limit for one tool execution. It also
+// caps a Gateway timeout that the Agent is asked to honor.
+const ToolTimeoutEnv = "DOOPS_TOOL_TIMEOUT"
+
+// DefaultToolExecutionTimeout is the Agent-side limit when ToolTimeoutEnv is empty.
+const DefaultToolExecutionTimeout = defaultToolExecutionTimeout
+
 func maxToolExecutionDuration() time.Duration {
-	return positiveEnvDuration("DOOPS_TOOL_TIMEOUT", defaultToolExecutionTimeout)
+	return positiveEnvDuration(ToolTimeoutEnv, DefaultToolExecutionTimeout)
 }
 
 func maxCompletedTaskAge() time.Duration {

@@ -362,6 +362,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 							upgradeAuditProtocol:          upgradeAuditCapability(),
 							registryAuthfileProtocol:      registryAuthfileCapability(),
 							cosSnapshotExecutableProtocol: cosSnapshotExecutableCapability(),
+							toolDeadlineProtocol:          toolDeadlineCapability(),
 						},
 					},
 				},
@@ -594,14 +595,14 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 						activeToolMu.Unlock()
 						cancel()
 					}()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
+					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.TimeoutMS, writeJSON)
 				}()
 			} else {
 				executionWG.Add(1)
 				go func() {
 					defer executionWG.Done()
 					defer cancel()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
+					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.TimeoutMS, writeJSON)
 				}()
 			}
 		}
@@ -662,8 +663,93 @@ func errorNotification(text string) notificationEvent {
 	return notificationEvent{Kind: "error", Data: text}
 }
 
+// agentToolTimeoutMessage prefixes the reply when the Agent's own deadline ends
+// a tool. The Gateway classifies it as a timeout, never as a cancellation or an
+// unknown outcome.
+const agentToolTimeoutMessage = "agent_tool_timeout"
+
+// AgentToolTimeoutCategory is the stable error category reported in error.data.
+const AgentToolTimeoutCategory = "agent_tool_timeout"
+
+// toolDeadlineMargin ends the Agent's own limit slightly before the Gateway's,
+// so the Gateway receives a definite timeout reply instead of giving up the
+// request while the Agent is still running the tool.
+const toolDeadlineMargin = 5 * time.Second
+
+// toolDeadlineFloor is the smallest derived limit for a very short Gateway timeout.
+const toolDeadlineFloor = time.Second
+
+// toolDeadline derives the execution deadline for one tool call from the
+// Agent-side limit (ToolTimeoutEnv, default 30m) and the Gateway's advertised
+// timeout. Without a Gateway timeout the Agent-side limit applies.
+func toolDeadline(parent context.Context, gatewayTimeoutMS int64) (context.Context, context.CancelFunc, time.Duration) {
+	base := maxToolExecutionDuration()
+	effective := base
+	if gatewayTimeoutMS > 0 {
+		derived := time.Duration(gatewayTimeoutMS)*time.Millisecond - toolDeadlineMargin
+		if derived < toolDeadlineFloor {
+			derived = toolDeadlineFloor
+		}
+		// An explicitly configured DOOPS_TOOL_TIMEOUT is a hard cap.
+		if strings.TrimSpace(os.Getenv(ToolTimeoutEnv)) != "" && derived > base {
+			effective = base
+		} else {
+			effective = derived
+		}
+	}
+	execCtx, cancel := context.WithTimeout(parent, effective)
+	return execCtx, cancel, effective
+}
+
+// releaseToolDeadline is deferred right after toolDeadline. It releases the
+// timer on every path, but only cancels the context when this call did not
+// already end on its own deadline: cancelling then would replace
+// context.DeadlineExceeded with context.Canceled and hide the Agent timeout.
+func releaseToolDeadline(execCtx context.Context, cancel context.CancelFunc) {
+	if !errors.Is(execCtx.Err(), context.DeadlineExceeded) {
+		cancel()
+	}
+}
+
+// replyToolTimeout writes the timeout reply when the Agent deadline, not the
+// caller, ended the tool. It reports whether it wrote the terminal response.
+func replyToolTimeout(reqID interface{}, parent, execCtx context.Context, limit time.Duration, cmdErr error, writeJSON func(interface{})) bool {
+	if parent.Err() != nil || !errors.Is(execCtx.Err(), context.DeadlineExceeded) {
+		return false
+	}
+	writeJSON(api.JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      reqID,
+		Error: &api.RPCError{
+			Code: -32603,
+			Message: fmt.Sprintf("%s: the Agent stopped the tool after its %s limit and terminated the process; "+
+				"the command did not finish, so its remaining work did not run", agentToolTimeoutMessage, limit),
+			Data: map[string]interface{}{
+				"category": AgentToolTimeoutCategory,
+				"limit_ms": limit.Milliseconds(),
+			},
+		},
+	})
+	if cmdErr != nil {
+		log.Printf("tool deadline %s reached: %v", limit, cmdErr)
+	}
+	return true
+}
+
+// currentCommandExit returns the leader's exit status for audit. Residual
+// same-group processes were terminated after a known exit, so the audit records
+// that exit code instead of inventing a new failure.
+func currentCommandExit(err error) error {
+	var residual *residualProcessesTerminated
+	if errors.As(err, &residual) {
+		return residual.leaderErr
+	}
+	return err
+}
+
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）
-func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, writeJSON func(v interface{})) {
+// gatewayTimeoutMS is the Gateway's advertised timeout for this call (0 = none).
+func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, gatewayTimeoutMS int64, writeJSON func(v interface{})) {
 	var sessionID string
 	var argsMap map[string]interface{}
 	json.Unmarshal(argBytes, &argsMap)
@@ -729,8 +815,8 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		log.Printf("🖥️  WS Exec: [%s]", sessionID)
 
 		// 放弃过度设计的 PTY Sentinel 模式，换用标准 os/exec Streaming
-		execCtx, cancelExec := context.WithTimeout(ctx, maxToolExecutionDuration())
-		defer cancelExec()
+		execCtx, cancelExec, timeout := toolDeadline(ctx, gatewayTimeoutMS)
+		defer releaseToolDeadline(execCtx, cancelExec)
 		cmd, stdoutPipe, stderrPipe, err := executeRawCommand(execCtx, args.Command)
 		if err != nil {
 			if writePolicyDenial(err) {
@@ -742,16 +828,15 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		}
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
+		if replyToolTimeout(reqID, ctx, execCtx, timeout, cmdErr, writeJSON) {
+			return
+		}
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
 			log.Printf("⚠️  WS outcome unknown: [%s] %v", sessionID, cmdErr)
 			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
 			return
 		}
-		if execCtx.Err() != nil {
-			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
-			return
-		}
-		writeSessionCommandAudit(sessionID, args.Command, cmdErr)
+		writeSessionCommandAudit(sessionID, args.Command, currentCommandExit(cmdErr))
 
 		if cmdErr != nil {
 			finalText := fmt.Sprintf("Command failed with error: %v", cmdErr)
@@ -769,8 +854,8 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		log.Printf("🔐 WS SSH: [%s] host=%s options=%d remote_args=%d",
 			sessionID, args.Host, len(args.Options), len(args.Command))
 
-		execCtx, cancelExec := context.WithTimeout(ctx, maxToolExecutionDuration())
-		defer cancelExec()
+		execCtx, cancelExec, timeout := toolDeadline(ctx, gatewayTimeoutMS)
+		defer releaseToolDeadline(execCtx, cancelExec)
 		cmd, stdoutPipe, stderrPipe, err := executeStructuredSSHCommand(execCtx, args)
 		if err != nil {
 			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
@@ -778,16 +863,15 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		}
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
+		if replyToolTimeout(reqID, ctx, execCtx, timeout, cmdErr, writeJSON) {
+			return
+		}
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
 			log.Printf("⚠️  WS outcome unknown: [%s] %v", sessionID, cmdErr)
 			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
 			return
 		}
-		if execCtx.Err() != nil {
-			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
-			return
-		}
-		writeSessionCommandAudit(sessionID, sshAuditSummary(args), cmdErr)
+		writeSessionCommandAudit(sessionID, sshAuditSummary(args), currentCommandExit(cmdErr))
 		if cmdErr != nil {
 			if exitCode, ok := sshExitCode(cmdErr); ok {
 				writeJSON(buildStructuredToolErrorResponse(
@@ -814,8 +898,8 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		fullCmd := gw.containerRuntime + " " + args.Command
 		log.Printf("🐳 WS Docker: [%s] %s", sessionID, fullCmd)
 
-		execCtx, cancelExec := context.WithTimeout(ctx, maxToolExecutionDuration())
-		defer cancelExec()
+		execCtx, cancelExec, timeout := toolDeadline(ctx, gatewayTimeoutMS)
+		defer releaseToolDeadline(execCtx, cancelExec)
 		cmd, stdoutPipe, stderrPipe, err := executeRawCommand(execCtx, fullCmd)
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, "Error starting command: "+err.Error()))
@@ -823,13 +907,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		}
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
+		if replyToolTimeout(reqID, ctx, execCtx, timeout, cmdErr, writeJSON) {
+			return
+		}
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
 			log.Printf("⚠️  WS outcome unknown: [%s] %v", sessionID, cmdErr)
 			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
-			return
-		}
-		if execCtx.Err() != nil {
-			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
 		}
 
@@ -886,8 +969,8 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			"if [ -S /run/buildkit/buildkitd.sock ]; then echo 'buildkit-sock: OK /run/buildkit/buildkitd.sock'; else echo 'buildkit-sock: MISSING'; fi",
 			"if [ -f /root/.kube/config ]; then echo 'kubeconfig: OK /root/.kube/config'; elif [ -f /etc/rancher/k3s/k3s.yaml ]; then echo 'kubeconfig: OK /etc/rancher/k3s/k3s.yaml'; elif [ -f /etc/kubernetes/admin.conf ]; then echo 'kubeconfig: OK /etc/kubernetes/admin.conf'; else echo 'kubeconfig: MISSING'; fi",
 		}, "; ")
-		execCtx, cancelExec := context.WithTimeout(ctx, maxToolExecutionDuration())
-		defer cancelExec()
+		execCtx, cancelExec, timeout := toolDeadline(ctx, gatewayTimeoutMS)
+		defer releaseToolDeadline(execCtx, cancelExec)
 		cmd, stdoutPipe, stderrPipe, err := executeRawCommand(execCtx, cmdStr)
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, err.Error()))
@@ -895,12 +978,11 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		}
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, false)
-		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
-			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
+		if replyToolTimeout(reqID, ctx, execCtx, timeout, cmdErr, writeJSON) {
 			return
 		}
-		if execCtx.Err() != nil {
-			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
 			return
 		}
 
@@ -2992,12 +3074,44 @@ func startRawCommand(ctx context.Context, cmd *exec.Cmd) (*exec.Cmd, io.ReadClos
 	return cmd, stdoutPipe, stderrPipe, nil
 }
 
-// Wait for both the command and its process group. Cancellation escalation is
-// joined here, never left running after a terminal RPC response.
-const postLeaderDescendantGracePeriod = 10 * time.Second
-const commandPipeGracePeriod = time.Second
+// Grace periods are variables so tests can shrink them; production keeps 1s,
+// 10s and 2s. Cancellation escalation is joined in waitProcessGroup, never left
+// running after a terminal RPC response.
+var commandPipeGracePeriod = time.Second
+var postLeaderDescendantGracePeriod = 10 * time.Second
+var processGroupKillGracePeriod = 2 * time.Second
+
+// postLeaderCleanupGracePeriod bounds how long a group that was told to stop
+// may take to disappear before the outcome is unknown.
+var postLeaderCleanupGracePeriod = 10 * time.Second
+
+// groupProbable reports a group that still has members. A denied probe counts
+// as members, so cleanup still makes progress.
+func groupProbable(pid int) bool {
+	err := syscall.Kill(-pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// pipeHolder tracks a bounded group wait whose leader exited but whose group
+// did not. It is set when the group was cleaned up after the leader exited but after the leader exited but
+// its output pipes were still held by processes that left the group. Such a
+// holder can never be terminated through the group, so waiting for it would
+// only delay the response.
+type pipeHolder struct {
+	announced    bool
+	leaderExited bool
+	signalled    bool
+	// notify ends the output drain once a holder that escaped the group is
+	// known; the remaining readers never see EOF on their own.
+	notify func()
+}
 
 func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) error {
+	return waitProcessGroupWithHolder(ctx, pid, commandDone, nil)
+}
+
+func waitProcessGroupWithHolder(ctx context.Context, pid int, commandDone <-chan error, holder *pipeHolder) error {
+	leaderExited := false
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	ctxDone := ctx.Done()
@@ -3032,19 +3146,36 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 					return ctx.Err()
 				}
 				if forcedCleanup {
-					return fmt.Errorf("%w: detached process group was terminated", errExecutionOutcomeUnknown)
+					return &residualProcessesTerminated{leaderErr: commandErr}
 				}
 				return commandErr
 			}
-			// A canceled group remains owned until absence is observed or the
-			// cleanup deadline expires, including a temporarily denied status probe.
-			if err != nil && !(ctx.Err() != nil && errors.Is(err, syscall.EPERM)) {
-				return fmt.Errorf("%w: process group status: %v", errExecutionOutcomeUnknown, err)
+			if err != nil {
+				terminated := false
+				if forcedCleanup {
+					// Same-group processes we told to stop are survivors while
+					// the probe is denied; keep waiting for the cleanup deadline
+					// instead of inventing a failure. A denied probe must not
+					// turn a known leader exit into an unknown outcome.
+					log.Printf("process group %d status is unavailable after cleanup started: %v", pid, err)
+					terminated = true
+				} else if ctx.Err() != nil && errors.Is(err, syscall.EPERM) {
+					// A canceled group remains owned until absence is observed or
+					// the cleanup deadline expires.
+					terminated = true
+				}
+				if !terminated {
+					return fmt.Errorf("%w: process group status: %v", errExecutionOutcomeUnknown, err)
+				}
 			}
 		}
 		select {
 		case commandErr = <-commandDone:
 			commandDone = nil
+			leaderExited = true
+			if holder != nil {
+				holder.leaderExited = true
+			}
 			if ctx.Err() == nil {
 				postLeaderTimer = time.NewTimer(postLeaderDescendantGracePeriod)
 				postLeaderDeadline = postLeaderTimer.C
@@ -3056,8 +3187,8 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 				postLeaderDeadline = nil
 			}
 			_ = syscall.Kill(-pid, syscall.SIGTERM)
-			killTimer = time.NewTimer(2 * time.Second)
-			cleanupTimer = time.NewTimer(10 * time.Second)
+			killTimer = time.NewTimer(processGroupKillGracePeriod)
+			cleanupTimer = time.NewTimer(postLeaderCleanupGracePeriod)
 			killDeadline = killTimer.C
 			cleanupDeadline = cleanupTimer.C
 		case <-killDeadline:
@@ -3068,12 +3199,33 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 		case <-postLeaderDeadline:
 			postLeaderDeadline = nil
 			forcedCleanup = true
+			if leaderExited && holder != nil {
+				holder.announced = true
+				if holder.notify != nil {
+					holder.notify()
+				}
+			}
 			_ = syscall.Kill(-pid, syscall.SIGTERM)
-			killTimer = time.NewTimer(2 * time.Second)
-			cleanupTimer = time.NewTimer(10 * time.Second)
+			killTimer = time.NewTimer(processGroupKillGracePeriod)
+			cleanupTimer = time.NewTimer(postLeaderCleanupGracePeriod)
 			killDeadline = killTimer.C
 			cleanupDeadline = cleanupTimer.C
 		case <-ticker.C:
+			if holder != nil && holder.leaderExited && !holder.signalled && groupProbable(pid) {
+				// The leader is gone but live processes remain in its group, so
+				// they can no longer finish the leader's work. Stop them now and
+				// let the wait report a known residual exit instead of leaving
+				// them (and their output pipes) until the grace period.
+				holder.signalled = true
+				if holder.notify != nil {
+					holder.notify()
+				}
+				if killTimer == nil {
+					_ = syscall.Kill(-pid, syscall.SIGTERM)
+					killTimer = time.NewTimer(processGroupKillGracePeriod)
+					killDeadline = killTimer.C
+				}
+			}
 		}
 	}
 }
@@ -3084,18 +3236,61 @@ func waitCommandStreams(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Re
 	return waitCommandOutput(ctx, cmd, stdout, stderr, push, push, heartbeat)
 }
 
+// residualProcessesTerminated reports a leader that exited on its own while
+// same-process-group background processes kept the group alive. They were
+// terminated after postLeaderDescendantGracePeriod; this is a known local
+// outcome, not errExecutionOutcomeUnknown.
+type residualProcessesTerminated struct {
+	leaderErr error
+}
+
+func (e *residualProcessesTerminated) Error() string {
+	code := 0
+	var exitErr *exec.ExitError
+	if e != nil && e.leaderErr != nil {
+		code = -1
+		if errors.As(e.leaderErr, &exitErr) {
+			code = exitErr.ExitCode()
+		}
+	}
+	return fmt.Sprintf("command exited with exit code %d, but background processes in the same process group "+
+		"kept it running; doops terminated them after %s (SIGTERM, then SIGKILL). "+
+		"Start long-running processes detached so doops does not own or clean them up: "+
+		"systemd-run --unit <name> <command>, a container, or `setsid <command> </dev/null >/path/to/log 2>&1 &` "+
+		"with its standard output and error redirected to a file",
+		code, postLeaderDescendantGracePeriod)
+}
+
+// Unwrap exposes the leader's exit status to exit-code helpers.
+func (e *residualProcessesTerminated) Unwrap() error {
+	return e.leaderErr
+}
+
+func isResidualProcessesTerminated(err error) bool {
+	var residual *residualProcessesTerminated
+	return errors.As(err, &residual)
+}
+
+// commandOutputChunkBytes bounds every output notification; output lines have
+// no length limit and are split only at UTF-8 rune boundaries.
+const commandOutputChunkBytes = 64 << 10
+
+// commandOutputDrainNotice is emitted once when a process that is not the
+// command leader still holds an output pipe after the leader exited.
+const commandOutputDrainNotice = "[doops] command output is incomplete: the command exited, but a process still holds its output pipe (for example a background process in the same process group), so later output is not collected. " +
+	"To start a daemon, redirect its standard output and error, for example " +
+	"`setsid <command> </dev/null >/path/to/log 2>&1 &`, systemd-run --unit <name> <command>, or a container."
+
 func waitCommandOutput(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.ReadCloser, push, pushError notificationSender, heartbeat bool) error {
 	streamDone := make(chan error, 2)
 	readStream := func(pipe io.ReadCloser, send notificationSender) {
-		scanner := bufio.NewScanner(pipe)
-		defer func() {
-			_ = pipe.Close()
-			streamDone <- scanner.Err()
-		}()
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			send(rawNotification(scanner.Text() + "\n"))
+		readErr := streamCommandOutput(pipe, send)
+		if errors.Is(readErr, os.ErrClosed) {
+			// Closing our own read end is not a command failure.
+			readErr = nil
 		}
+		_ = pipe.Close()
+		streamDone <- readErr
 	}
 	go readStream(stdout, push)
 	go readStream(stderr, pushError)
@@ -3111,33 +3306,182 @@ func waitCommandOutput(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Rea
 	}
 	commandDone := make(chan error, 1)
 	go func() { commandDone <- cmd.Wait() }()
-	cmdErr := waitProcessGroup(ctx, cmd.Process.Pid, commandDone)
+	holder := &pipeHolder{}
+	released := make(chan struct{})
+	var releaseOnce sync.Once
+	holder.notify = func() {
+		releaseOnce.Do(func() {
+			_ = stdout.Close()
+			_ = stderr.Close()
+			close(released)
+		})
+	}
+	cmdErr := waitProcessGroupWithHolder(ctx, cmd.Process.Pid, commandDone, holder)
 	if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
 		_ = stdout.Close()
 		_ = stderr.Close()
 	}
+	// A known leader exit status (success, a normal exit code, cancellation, or
+	// residual same-group processes) is evidence the command itself finished or
+	// was stopped on request, so it is never downgraded to an unknown outcome.
+	// Only a read error or an unkillable group before the leader exit is unknown.
+	leaderKnown := !errors.Is(cmdErr, errExecutionOutcomeUnknown)
 	drainTimer := time.NewTimer(commandPipeGracePeriod)
 	defer drainTimer.Stop()
 	drainDeadline := drainTimer.C
-	for remaining := 2; remaining > 0; {
-		select {
-		case readErr := <-streamDone:
-			remaining--
-			if readErr != nil && !errors.Is(cmdErr, errExecutionOutcomeUnknown) {
-				cmdErr = fmt.Errorf("%w: command output read: %w", errExecutionOutcomeUnknown, readErr)
+	var readErr error
+	pending := 2
+	// drainEnded reports whether the pipes had to be closed, i.e. a process that
+	// is not the command leader (same group or escaped) still held them.
+	drainEnded := false
+	emitDrainNotices := func() {
+		if holder.announced && cmdErr != nil {
+			push(errorNotification(cmdErr.Error()))
+		}
+		push(errorNotification(commandOutputDrainNotice))
+	}
+	if holder.announced && leaderKnown {
+		// Cleanup already signalled the group, so the holder left the group and
+		// would never release its pipe on its own. Close now; later output cannot
+		// be collected.
+		drainEnded = true
+		go func(pending int) {
+			for ; pending > 0; pending-- {
+				<-streamDone
 			}
+		}(pending)
+		pending = 0
+		emitDrainNotices()
+	}
+drain:
+	for pending > 0 {
+		select {
+		case err := <-streamDone:
+			pending--
+			if err != nil && readErr == nil {
+				readErr = err
+			}
+		case <-released:
+			// The holder-notify path above already closed the pipes.
+			break drain
 		case <-drainDeadline:
 			drainDeadline = nil
+			drainEnded = true
 			_ = stdout.Close()
 			_ = stderr.Close()
-			cmdErr = fmt.Errorf("%w: command output drain timed out", errExecutionOutcomeUnknown)
+			if leaderKnown {
+				go func(pending int) {
+					for ; pending > 0; pending-- {
+						<-streamDone
+					}
+				}(pending)
+				emitDrainNotices()
+			} else {
+				cmdErr = fmt.Errorf("%w: command output drain timed out", errExecutionOutcomeUnknown)
+			}
+			break drain
 		}
+	}
+	if readErr != nil {
+		// A real read failure before the drain closed the pipes leaves the output
+		// outcome unproven. Residual same-group cleanup alone does not: with no
+		// read error the known leader exit stands, and a canceled parent keeps
+		// context.Canceled because the caller already owns the cancel semantics.
+		// Once the drain closed the pipes, later read errors say nothing about
+		// the command; an escaped holder is then reported as unknown below.
+		var residual *residualProcessesTerminated
+		switch {
+		case drainEnded:
+			if errors.As(cmdErr, &residual) {
+				cmdErr = residual
+			}
+		case errors.As(cmdErr, &residual), errors.Is(cmdErr, context.Canceled):
+			// Known outcome: the leader exit status (the residual) or the caller's
+			// cancellation already explains this result.
+		case errors.Is(cmdErr, errExecutionOutcomeUnknown):
+			cmdErr = fmt.Errorf("%w: command output read: %w", errExecutionOutcomeUnknown, readErr)
+		default:
+			cause := readErr
+			if cmdErr != nil {
+				cause = errors.Join(cmdErr, readErr)
+			}
+			cmdErr = fmt.Errorf("%w: command output read: %w", errExecutionOutcomeUnknown, cause)
+		}
+	}
+	if holder.announced && !errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+		// A holder that escaped the group kept the pipes open after cleanup, so
+		// the command's output is incomplete and the outcome cannot be claimed.
+		cmdErr = fmt.Errorf("%w: command output drain timed out", errExecutionOutcomeUnknown)
 	}
 	if done != nil {
 		close(done)
 		<-heartbeatDone
 	}
 	return cmdErr
+}
+
+// streamCommandOutput forwards output in bounded chunks as it arrives. There is
+// no per-line limit: a line longer than the buffer is forwarded piece by piece
+// instead of failing the read. A chunk never ends inside a multi-byte UTF-8
+// sequence. Bytes that are not valid UTF-8 are passed through unchanged, so the
+// concatenated notifications reproduce the command output exactly.
+func streamCommandOutput(pipe io.Reader, send notificationSender) error {
+	reader := bufio.NewReaderSize(pipe, commandOutputChunkBytes)
+	pending := make([]byte, 0, commandOutputChunkBytes)
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		pending = append(pending, chunk...)
+		complete := 0
+		if err == bufio.ErrBufferFull {
+			// The buffer is full: the only reason to hold bytes back is a rune
+			// split exactly at the end of the buffer.
+			complete = utf8ChunkBoundary(pending)
+		} else {
+			// The line, or the stream, ends here, so nothing can be split.
+			complete = len(pending)
+		}
+		if complete > 0 {
+			send(rawNotification(string(pending[:complete])))
+			pending = append(pending[:0], pending[complete:]...)
+		}
+		switch err {
+		case nil, bufio.ErrBufferFull:
+			continue
+		case io.EOF:
+			if len(pending) > 0 {
+				send(rawNotification(string(pending)))
+			}
+			return nil
+		default:
+			return err
+		}
+	}
+}
+
+// utf8ChunkBoundary returns how many leading bytes of data can be forwarded
+// without splitting a multi-byte UTF-8 sequence. A trailing invalid or
+// incomplete sequence is not held back: malformed input must still stream.
+func utf8ChunkBoundary(data []byte) int {
+	if utf8.Valid(data) {
+		return len(data)
+	}
+	// Scan back to the last rune start in the final UTFMax bytes and keep the
+	// sequence only when it is complete; otherwise it crosses the boundary.
+	start := len(data)
+	if start > utf8.UTFMax {
+		start -= utf8.UTFMax
+	}
+	for index := len(data) - 1; index >= start; index-- {
+		if !utf8.RuneStart(data[index]) {
+			continue
+		}
+		sequence := data[index:]
+		if runeValue, size := utf8.DecodeRune(sequence); runeValue != utf8.RuneError && size > 1 {
+			return len(data)
+		}
+		return index
+	}
+	return len(data)
 }
 
 func commandExitCode(err error) int {

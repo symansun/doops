@@ -162,6 +162,7 @@ type GatewayAgent struct {
 	UpgradeAudit           bool      `json:"upgrade_audit,omitempty"`
 	RegistryAuthfile       bool      `json:"registry_authfile,omitempty"`
 	COSSnapshotExecutable  bool      `json:"cos_snapshot_executable,omitempty"`
+	ToolDeadline           bool      `json:"tool_deadline,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
 	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
@@ -1492,6 +1493,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 					if finalErr == "operation canceled" {
 						finalErr = "operation_canceled"
 					}
+				} else if agentToolTimeoutResponse(msg.Parsed) {
+					// The Agent's own tool deadline fired and it replied with a
+					// terminal -32603. The command was stopped, not canceled, and
+					// its outcome is known.
+					finalStatus, finalErr = "timeout", AgentToolTimeoutCategory
 				} else if params.Name == "doops_agent_prompt" {
 					switch finalErr {
 					case "operation_timeout", doagentPromptAdmissionTimeout, "doagent_prompt_queue_timeout":
@@ -1590,6 +1596,9 @@ func clientCapabilities(agent *GatewayAgent) map[string]interface{} {
 	if agent != nil && agent.ExecutionLifecycle {
 		protocols[executionLifecycleProtocol] = executionLifecycleCapability()
 	}
+	if agent != nil && agent.ToolDeadline {
+		protocols[toolDeadlineProtocol] = toolDeadlineCapability()
+	}
 	if agent != nil && agent.UpgradeAudit {
 		protocols[upgradeAuditProtocol] = upgradeAuditCapability()
 	}
@@ -1645,14 +1654,38 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 // every prompt failure sanitize to credential_operation_failed and lose the
 // category the operator and the audit need.
 func relayErrorAuditText(tool string, rpcErr interface{}) string {
-	if tool == "doops_agent_prompt" {
-		if errorObject, ok := rpcErr.(map[string]interface{}); ok {
-			if message, _ := errorObject["message"].(string); strings.TrimSpace(message) != "" {
-				return strings.TrimSpace(message)
-			}
+	errorObject, _ := rpcErr.(map[string]interface{})
+	if tool == "doops_agent_prompt" || isAgentToolTimeout(errorObject) {
+		if message, _ := errorObject["message"].(string); strings.TrimSpace(message) != "" {
+			return sanitizeSecretText(strings.TrimSpace(message))
 		}
 	}
 	return fmt.Sprintf("%v", rpcErr)
+}
+
+// isAgentToolTimeout recognizes the Agent's own-deadline reply: -32603 with the
+// agent_tool_timeout message prefix or a matching error.data category. It is a
+// known terminal outcome, never a cancellation or execution_outcome_unknown.
+func isAgentToolTimeout(rpcErr map[string]interface{}) bool {
+	if rpcErr == nil {
+		return false
+	}
+	if code, ok := numericID(rpcErr["code"]); !ok || code != -32603 {
+		return false
+	}
+	if message, _ := rpcErr["message"].(string); strings.HasPrefix(strings.TrimSpace(message), AgentToolTimeoutCategory) {
+		return true
+	}
+	if data, ok := rpcErr["data"].(map[string]interface{}); ok {
+		category, _ := data["category"].(string)
+		return category == AgentToolTimeoutCategory
+	}
+	return false
+}
+
+func agentToolTimeoutResponse(response map[string]interface{}) bool {
+	rpcErr, _ := response["error"].(map[string]interface{})
+	return isAgentToolTimeout(rpcErr)
 }
 
 // agentPromptAuditCategory keeps only stable categories for prompt audits. An
@@ -1881,6 +1914,9 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 	// outright, because it decodes the materialization request strictly.
 	a.RegistryAuthfile = registryAuthfileCapabilityCompatible(protocols[registryAuthfileProtocol])
 	a.COSSnapshotExecutable = cosSnapshotExecutableCapabilityCompatible(protocols[cosSnapshotExecutableProtocol])
+	// Only an Agent that declares this understands a timeout_ms tools/call
+	// field and replies with agent_tool_timeout when its own deadline fires.
+	a.ToolDeadline = toolDeadlineCapabilityCompatible(protocols[toolDeadlineProtocol])
 	if !ok {
 		return
 	}
@@ -2085,6 +2121,7 @@ func promptReplyUnknownError(tool string, response map[string]interface{}) error
 	return nil
 }
 
+var lastProbe atomic.Value
 var errGatewayOperationTimeout = errors.New("operation timed out")
 
 func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallParams, timeout time.Duration, forward func(gatewayWSMessage) error) error {
@@ -2130,14 +2167,20 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		a.pendingMu.Unlock()
 	}()
 
+	callParams := map[string]interface{}{
+		"name":      params.Name,
+		"arguments": params.Arguments,
+	}
+	// Only an Agent that declared toolDeadline gets timeout_ms: an older Agent
+	// would ignore it and still end its own 30-minute limit as a cancellation.
+	if a.ToolDeadline && params.TimeoutMS > 0 {
+		callParams["timeout_ms"] = params.TimeoutMS
+	}
 	if err := a.writeJSON(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "tools/call",
 		"id":      id,
-		"params": map[string]interface{}{
-			"name":      params.Name,
-			"arguments": params.Arguments,
-		},
+		"params":  callParams,
 	}); err != nil {
 		if uncertainWithoutTerminal {
 			return fmt.Errorf("%w: dispatch failed: %v", errExecutionOutcomeUnknown, err)
