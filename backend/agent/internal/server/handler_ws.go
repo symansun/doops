@@ -50,34 +50,85 @@ func checkWebSocketOrigin(r *http.Request) bool {
 		return true
 	}
 	originURL, err := url.Parse(origin)
-	if err != nil {
+	if err != nil || originURL.Host == "" {
 		return false
 	}
-	originHost := strings.ToLower(originURL.Host)
-	if originHost == "" {
+	if originURL.Scheme != "http" && originURL.Scheme != "https" {
 		return false
 	}
-	// Same-host requests are always allowed.
-	if strings.EqualFold(originHost, r.Host) || strings.EqualFold(originURL.Hostname(), hostOnly(r.Host)) {
+	// Same origin means the same host AND port. Comparing only the hostname
+	// would let any page on another port of the same host open the socket.
+	if sameWebSocketOrigin(originURL, r.Host) {
 		return true
 	}
 	for _, allowed := range strings.Split(os.Getenv("DOOPS_ALLOWED_WS_ORIGINS"), ",") {
-		allowed = strings.ToLower(strings.TrimSpace(allowed))
-		if allowed == "" {
-			continue
-		}
-		if allowed == originHost || allowed == strings.ToLower(originURL.Hostname()) {
+		if allowedWebSocketOrigin(strings.TrimSpace(allowed), originURL) {
 			return true
 		}
 	}
 	return false
 }
 
-func hostOnly(hostport string) string {
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		return h
+// sameWebSocketOrigin compares scheme-independent host and effective port. The
+// scheme is deliberately not compared: TLS usually terminates in front of the
+// Gateway, so the request scheme seen here is not the browser's. Cross-port
+// origins are rejected; list them explicitly when a deployment needs them.
+func sameWebSocketOrigin(origin *url.URL, requestHost string) bool {
+	host, port, ok := originHostPort(origin)
+	if !ok {
+		return false
 	}
-	return hostport
+	requestName, requestPort := splitHostPortDefault(requestHost, defaultPort(origin.Scheme))
+	return strings.EqualFold(host, requestName) && port == requestPort
+}
+
+// allowedWebSocketOrigin accepts either a full origin ("https://console:8443")
+// or the legacy bare host[:port] form, which means the https default port.
+func allowedWebSocketOrigin(allowed string, origin *url.URL) bool {
+	allowed = strings.TrimSpace(allowed)
+	if allowed == "" {
+		return false
+	}
+	if strings.Contains(allowed, "://") {
+		parsed, err := url.Parse(allowed)
+		if err != nil || parsed.Host == "" {
+			return false
+		}
+		host, port, ok := originHostPort(parsed)
+		if !ok || !strings.EqualFold(parsed.Scheme, origin.Scheme) {
+			return false
+		}
+		originName, originPort, ok := originHostPort(origin)
+		return ok && strings.EqualFold(host, originName) && port == originPort
+	}
+	host, port := splitHostPortDefault(allowed, defaultPort("https"))
+	originName, originPort, ok := originHostPort(origin)
+	return ok && strings.EqualFold(host, originName) && port == originPort
+}
+
+func originHostPort(origin *url.URL) (string, string, bool) {
+	if origin == nil || origin.Hostname() == "" {
+		return "", "", false
+	}
+	port := origin.Port()
+	if port == "" {
+		port = defaultPort(origin.Scheme)
+	}
+	return origin.Hostname(), port, true
+}
+
+func splitHostPortDefault(hostport, fallbackPort string) (string, string) {
+	if host, port, err := net.SplitHostPort(hostport); err == nil {
+		return host, port
+	}
+	return strings.Trim(hostport, "[]"), fallbackPort
+}
+
+func defaultPort(scheme string) string {
+	if strings.EqualFold(scheme, "https") {
+		return "443"
+	}
+	return "80"
 }
 
 const (

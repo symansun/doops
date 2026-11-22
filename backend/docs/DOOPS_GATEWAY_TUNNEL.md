@@ -200,6 +200,12 @@ bash scripts/deploy-gateway.sh \
 - `WS /v1/agent/connect?cluster=<cluster>&instance=<instance>`。该 target 尚未确认 enrollment 时不需要请求头；确认之后带 `Authorization: Bearer <enrollment token>`
 - `WS /v1/rpc?cluster=<cluster>&instance=<instance>`
 - `WS /v1/edge/connect?cluster=<cluster>&instance=<instance>`（Edge 隧道；Gateway `-edge-listen` 默认空，未启用时不监听，见 [design/DOOPS_EDGE_TUNNEL.md](design/DOOPS_EDGE_TUNNEL.md)）
+
+WebSocket 升级的 `Origin` 校验：不带 `Origin` 的非浏览器客户端一律放行；浏览器来源必须与
+请求的 `Host` **主机和端口都相同**（默认端口按 `http=80`/`https=443` 归一，协议不比较，
+因为 TLS 通常在 Gateway 前面终止）。同主机不同端口的页面默认被拒绝；确有需要时把完整来源
+（例如 `https://console.example.com:8443`）加入 `DOOPS_ALLOWED_WS_ORIGINS`。只写主机名的
+旧写法仍然接受，含义是该主机的 https 默认端口。`DOOPS_ALLOW_ALL_WS_ORIGINS=1` 只用于开发。
 - `GET/POST /v1/git/<cluster>/<instance>/<session>.git/...`
 - `GET/POST /`（按 Host 匹配代理路由的公网网站代理）
 
