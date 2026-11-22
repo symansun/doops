@@ -115,10 +115,10 @@ func runHelmCommand(ctx context.Context, command helmCommand, _ notificationSend
 		if settleErr != nil {
 			if ctx.Err() != nil {
 				return "", helmStepUnknown("helm_interrupted", fmt.Sprintf(
-					"the call ran out of time; %s; check helm status before any retry; helm reported: %s", settleErr, err))
+					"the call ran out of time; %s; helm reported: %s", helmRetryHintOnce(settleErr.Error()), err))
 			}
 			return "", helmStepUnknown("helm_mutation_failed", fmt.Sprintf(
-				"%s; check helm status before any retry; helm reported: %s", settleErr.Error(), err.Error()))
+				"%s; helm reported: %s", helmRetryHintOnce(settleErr.Error()), err.Error()))
 		}
 		if note == "" {
 			return "", err
@@ -147,6 +147,16 @@ func runHelmCommand(ctx context.Context, command helmCommand, _ notificationSend
 		return "", err
 	}
 	return verified, nil
+}
+
+// helmRetryHintOnce keeps the operator hint in exactly one place when several
+// error layers describe the same interrupted release.
+func helmRetryHintOnce(text string) string {
+	const hint = "check helm status before any retry"
+	if strings.Contains(text, hint) {
+		return text
+	}
+	return text + "; " + hint
 }
 
 // A status read can describe the release after interruption, but cannot

@@ -32,7 +32,8 @@ for arg in "$@"; do
   if [ "$prev" = "--description" ]; then desc="$arg"; fi
   prev="$arg"
 done
-printf '[{"revision":5,"status":"deployed","description":"old"},{"revision":6,"status":"%s","description":"%s"}]' "$MINE_STATUS" "$desc" > "$ROOT/history.json"
+printf '[{"revision":5,"status":"deployed","description":"old"},{"revision":6,"status":"%s","description":"%s"}]' "$MINE_STATUS" "$desc" > "$ROOT/history.json.tmp"
+mv "$ROOT/history.json.tmp" "$ROOT/history.json"
 trap 'echo term > "$ROOT/terminated"; exit 1' TERM
 while :; do sleep 0.05; done
 `

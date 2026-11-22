@@ -142,8 +142,27 @@ func TestHelmCommandFilterAfterInterruptedUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 700*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	// Interrupt only after the fake Helm recorded the release, so under load the
+	// settle path cannot race the upgrade before history exists.
+	historyPath := filepath.Join(root, "history.json")
+	go func() {
+		deadline := time.Now().Add(10 * time.Second)
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if data, readErr := os.ReadFile(historyPath); readErr == nil && json.Valid(data) {
+				cancel()
+				return
+			}
+			if time.Now().After(deadline) {
+				cancel()
+				return
+			}
+			<-ticker.C
+		}
+	}()
 	_, err = runHelmCommand(ctx, command, nil)
 	if !errors.Is(err, errExecutionOutcomeUnknown) || !strings.Contains(err.Error(), "hold_rollback") || !strings.Contains(err.Error(), "Inspect the pending release") {
 		t.Fatalf("interrupted mutation lost its outcome or rollback denial: %v", err)
