@@ -55,6 +55,7 @@ func serve(args []string) {
 	retiredUserLimit := fs.Int("max-concurrent-per-user", 0, "Retired; ignored")
 	targetQueueTimeout := fs.Duration("target-queue-timeout", 10*time.Minute, "How long an operation waits for a busy target")
 	maxQueuedPerTarget := fs.Int("max-queued-per-target", 10, "Maximum queued operations per target; negative disables queueing")
+	targetReconnectGrace := fs.Duration("target-reconnect-grace", 10*time.Second, "How long an RPC or internal call waits for a reconnecting Agent; 0 fails immediately, negative uses the default")
 	// The issue scheduler was removed; the flag stays accepted so existing service units keep starting.
 	_ = fs.Duration("scheduler-tick", 0, "Removed; accepted and ignored")
 	edgeListen := fs.String("edge-listen", "", "TCP listen address for Edge public traffic; empty disables it")
@@ -89,6 +90,7 @@ func serve(args []string) {
 		LoginTokenMaxLifetime:      *loginTokenMaxLifetime,
 		OperationTimeout:           *operationTimeout,
 		TargetQueueTimeout:         *targetQueueTimeout,
+		TargetReconnectGrace:       server.ReconnectGraceOption(*targetReconnectGrace),
 		MaxQueuedPerTarget:         *maxQueuedPerTarget,
 		AllowOpenAgentRegistration: *allowOpenAgentRegistration,
 		// Environment only, never a flag: a flag would expose the secret in ps.

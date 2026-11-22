@@ -25,7 +25,7 @@ func newEdgeWSSession(conn *websocket.Conn) *edgeWSSession {
 		closed: make(chan struct{}),
 	}
 	conn.SetPongHandler(func(string) error {
-		_ = conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
+		_ = conn.SetReadDeadline(time.Now().Add(edgeWSReadTimeout))
 		return nil
 	})
 	return session
@@ -76,10 +76,10 @@ func (s *edgeWSSession) pingLoop(ctx context.Context) {
 }
 
 func (s *edgeWSSession) readLoop(onFrame func(edgeFrame) error) {
-	_ = s.conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
+	_ = s.conn.SetReadDeadline(time.Now().Add(edgeWSReadTimeout))
 	for {
 		messageType, payload, err := readWebSocketMessage(s.conn, func() {
-			_ = s.conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
+			_ = s.conn.SetReadDeadline(time.Now().Add(edgeWSReadTimeout))
 		})
 		if err != nil {
 			s.close()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -12,6 +13,25 @@ import (
 // ErrAgentEnrollmentRequired rejects a session without an enrollment for a
 // target whose enrollment is already confirmed.
 var ErrAgentEnrollmentRequired = errors.New("agent enrollment required")
+
+// explicitNoReconnectGrace disables the reconnect wait in GatewayHubOptions,
+// whose zero value means "unset" and therefore keeps the 10s default.
+const explicitNoReconnectGrace = -1 * time.Nanosecond
+
+// ReconnectGraceOption converts a configured reconnect grace for
+// GatewayHubOptions.TargetReconnectGrace. An explicit zero means "do not wait";
+// unset stays zero so the hub applies its 10s default, and negative values
+// describe that default explicitly. The min-int64 sentinel marks the explicit
+// no-wait choice because GatewayHubOptions zero values mean "unset".
+func ReconnectGraceOption(grace time.Duration) time.Duration {
+	if grace > 0 {
+		return grace
+	}
+	if grace < 0 {
+		return math.MinInt64
+	}
+	return explicitNoReconnectGrace
+}
 
 // AgentRegistry is the single owner of live agent sessions and their persisted
 // connectivity state.

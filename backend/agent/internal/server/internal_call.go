@@ -46,7 +46,9 @@ func (h *GatewayHub) RunInternalToolCall(ctx context.Context, cluster, instance,
 }
 
 func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instance, tool string, args map[string]interface{}) (output string, finalErr error) {
-	agent := h.registry.Get(cluster, instance)
+	// Internal calls follow the same reconnect grace as client RPCs, bounded by
+	// the caller's context: a canceled caller never waits for a reconnecting Agent.
+	agent := h.registry.Wait(ctx, cluster, instance, h.targetReconnectGrace(tool))
 	if agent == nil || agent.Cluster != cluster || agent.Instance != instance {
 		return "", fmt.Errorf("target offline: %s/%s", cluster, instance)
 	}
