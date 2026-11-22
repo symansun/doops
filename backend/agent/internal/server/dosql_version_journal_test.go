@@ -18,6 +18,82 @@ func newDoSQLJournalPath(t *testing.T) string {
 	return filepath.Join(t.TempDir(), "versions", "postgres__orders.jsonl")
 }
 
+func TestDoSQLVersionJournalPersistsPartialCommit(t *testing.T) {
+	path := newDoSQLJournalPath(t)
+	v, err := beginDoSQLVersion(path, "op", "cred", "fp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := doSQLDirectResult{Status: "partially_committed", Committed: true, ImplicitCommits: 1}
+	if err := endDoSQLVersion(path, v, "op", "cred", "fp", result, errors.New("statement 2 failed")); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	entries, err := readDoSQLJournal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want begin and end, got %d entries", len(entries))
+	}
+	end := entries[1]
+	if end.Status != "partially_committed" || end.ImplicitCommits != 1 || !end.Committed || end.Error == "" {
+		t.Fatalf("end status=%s committed=%v count=%d error=%q", end.Status, end.Committed, end.ImplicitCommits, end.Error)
+	}
+}
+
+func TestDoSQLVersionJournalReadsLegacyCommitEvidenceWithoutRewrite(t *testing.T) {
+	for _, tc := range []struct {
+		name, status string
+		committed    bool
+		count        int
+		want         string
+	}{
+		{"legacy partial", "failed", true, 2, "partially_committed"},
+		{"ordinary failure", "failed", false, 0, "failed"},
+		{"flag alone", "failed", true, 0, "failed"},
+		{"count alone", "failed", false, 1, "failed"},
+		{"successful DDL", "verified", true, 1, "verified"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := newDoSQLJournalPath(t)
+			v, err := beginDoSQLVersion(path, "op", "cred", "fp", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Construct the legacy on-disk representation, not a record from the new writer.
+			err = withDoSQLJournal(path, func(f *os.File, entries []doSQLVersionEntry) error {
+				return appendDoSQLJournal(f, entries, doSQLVersionEntry{Version: v, Event: doSQLJournalEnd, OperationID: "op", Credential: "cred", Fingerprint: "fp", Status: tc.status, Committed: tc.committed, ImplicitCommits: tc.count})
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			items, err := listDoSQLVersions(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(items) != 1 || items[0].Status != tc.want || items[0].ImplicitCommits != tc.count || items[0].Committed != tc.committed {
+				t.Fatalf("unexpected summary %+v", items)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("reading the journal rewrote its history")
+			}
+		})
+	}
+}
+
 func TestDoSQLVersionJournalAssignsOrderedVersionsAndPairsOutcomes(t *testing.T) {
 	path := newDoSQLJournalPath(t)
 	one, err := beginDoSQLVersion(path, "dbop_a", "cred-a", "sha256:aa", []string{"CREATE TABLE t (id int)"})

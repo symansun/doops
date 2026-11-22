@@ -22,8 +22,8 @@ Options:
   --gateway-port PORT     Gateway listen port. Default: 42222.
   --verify-url URL        Public Gateway URL used for health and target checks.
                           Default: https://doops.l8ai.cn.
-  --verify-target NAME    Configured DoOps target used for authenticated target
-                          baseline checks without exporting its token.
+  --verify-target NAME    Configured route to verify without exporting its token.
+                          Repeat for every affected online target on this Gateway.
   --verify-session NAME   Required session name for --verify-target.
                           Real deploys require both verification options.
   --source-commit SHA     Exact 40-character source commit embedded in the
@@ -67,7 +67,7 @@ REMOTE_BIN="/usr/local/bin/doops-gateway"
 DB_PATH="/var/lib/doops-gateway/gateway.db"
 GATEWAY_PORT="42222"
 VERIFY_URL="https://doops.l8ai.cn"
-VERIFY_TARGET=""
+VERIFY_TARGETS=()
 VERIFY_SESSION=""
 SOURCE_COMMIT=""
 AGENT_REGISTRATION="preserve" # preserve | open | required
@@ -110,7 +110,11 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --verify-target)
-      VERIFY_TARGET="${2:-}"
+      if [[ -z "${2:-}" || "$2" == --* ]]; then
+        echo "Error: --verify-target requires a configured route name" >&2
+        exit 2
+      fi
+      VERIFY_TARGETS+=("$2")
       shift 2
       ;;
     --verify-session)
@@ -172,7 +176,7 @@ EOF
 fi
 
 REQUIRED_COMMANDS=(ssh scp curl sha256sum strings)
-if [[ -n "${VERIFY_TARGET}" ]]; then
+if (( ${#VERIFY_TARGETS[@]} )); then
   REQUIRED_COMMANDS+=(doops)
 fi
 for command in "${REQUIRED_COMMANDS[@]}"; do
@@ -183,7 +187,7 @@ for command in "${REQUIRED_COMMANDS[@]}"; do
 done
 
 if [[ "${DRY_RUN}" != "true" ]]; then
-  if [[ -z "${VERIFY_TARGET}" || -z "${VERIFY_SESSION}" ]]; then
+  if [[ ${#VERIFY_TARGETS[@]} -eq 0 || -z "${VERIFY_SESSION}" ]]; then
     echo "Error: a real Gateway deployment requires --verify-target and --verify-session" >&2
     exit 2
   fi
@@ -223,14 +227,30 @@ BASELINE_TARGETS="${STATE_DIR}/baseline-targets"
 CURRENT_TARGETS="${STATE_DIR}/current-targets"
 
 fetch_target_keys() {
-  local destination="$1"
-  doops -session "${VERIFY_SESSION}" targets --target "${VERIFY_TARGET}" |
-    awk '/^-+$/ { rows = 1; next } rows && NF >= 2 { print $1 "/" $2 }' |
-    sort -u >"${destination}"
+  local destination="$1" route key
+  : >"${destination}" || return 1
+  for route in "${VERIFY_TARGETS[@]}"; do
+    # The CLI filters by route and prints a human-readable footer after its row.
+    # Require one identifiable row, never count the footer as another Agent.
+    if ! key=$(doops -session "${VERIFY_SESSION}" targets --target "$route" |
+      awk '$1 == "CLUSTER" && $2 == "INSTANCE" && $3 == "BUSY" { header = 1; next }
+           header && /^-+$/ { rows = 1; next }
+           rows && $1 == "ACTIVE/QUEUED" { rows = 0; next }
+           rows && NF {
+             if ($3 != "true" && $3 != "false") invalid = 1
+             n++; key = $1 "/" $2
+           }
+           END { if (invalid || n != 1) exit 1; print key }'); then
+      echo "Cannot verify one online target for route: $route" >&2
+      return 1
+    fi
+    printf '%s\n' "$key" >>"${destination}" || return 1
+  done
 }
 
 baseline_targets_present() {
-  ! comm -23 "${BASELINE_TARGETS}" "${CURRENT_TARGETS}" | grep -q .
+  # Same route order on both reads: even swapping the identities must fail.
+  cmp -s "${BASELINE_TARGETS}" "${CURRENT_TARGETS}"
 }
 
 wait_for_gateway_state() {
@@ -245,7 +265,7 @@ wait_for_gateway_state() {
     sleep 1
   done
   echo "Missing baseline targets after ${deadline_seconds}s:" >&2
-  comm -23 "${BASELINE_TARGETS}" "${CURRENT_TARGETS}" >&2 || true
+  diff -u "${BASELINE_TARGETS}" "${CURRENT_TARGETS}" >&2 || true
   return 1
 }
 
@@ -283,8 +303,8 @@ echo "  Verify URL:    ${VERIFY_URL}"
 if [[ -n "${SOURCE_COMMIT}" ]]; then
   echo "  Source commit: ${SOURCE_COMMIT}"
 fi
-if [[ -n "${VERIFY_TARGET}" ]]; then
-  echo "  Verify target: ${VERIFY_TARGET}"
+if (( ${#VERIFY_TARGETS[@]} )); then
+  printf '  Verify route: %s\n' "${VERIFY_TARGETS[@]}"
 fi
 
 "${SSH[@]}" "set -e
@@ -311,7 +331,11 @@ if [[ ! -s "${BASELINE_TARGETS}" ]]; then
   echo "Error: authenticated Gateway baseline contains no online targets" >&2
   exit 1
 fi
-echo "  Baseline targets: $(wc -l <"${BASELINE_TARGETS}" | tr -d ' ')"
+if [[ $(LC_ALL=C sort -u "${BASELINE_TARGETS}" | wc -l) -ne ${#VERIFY_TARGETS[@]} ]]; then
+  echo "Error: verification routes must identify distinct online targets" >&2
+  exit 1
+fi
+echo "  Baseline targets: ${#VERIFY_TARGETS[@]}"
 REMOTE_CURRENT_SHA="$("${SSH[@]}" "sudo -n sha256sum '${REMOTE_BIN}'" | awk '{print $1}')"
 test -n "${REMOTE_CURRENT_SHA}"
 REMOTE_BACKUP="${REMOTE_BIN}.rollback-${REMOTE_CURRENT_SHA:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"

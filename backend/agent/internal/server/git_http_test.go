@@ -307,7 +307,10 @@ wait
 	repoURL := gatewayGitTestURL(t, server.URL, "dev", "local", "hook", tokens.Targets[0].UserToken)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	push := exec.CommandContext(ctx, "git", "-C", src, "push", repoURL, "HEAD:master")
+	// The fixture URL already supplies its synthetic credential. Do not invoke
+	// a host credential helper (including the system keychain) for this push.
+	push := exec.CommandContext(ctx, "git", "-c", "credential.helper=", "-C", src, "push", repoURL, "HEAD:master")
+	push.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	pushDone := make(chan error, 1)
 	if err := push.Start(); err != nil {
 		t.Fatal(err)

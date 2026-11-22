@@ -89,7 +89,7 @@ bash scripts/deploy-gateway.sh \
   --binary bin/doops-gateway \
   --no-build \
   --source-commit <verified-main-commit> \
-  --verify-target gw-edu-coder \
+  --verify-target <route-a> --verify-target <route-b> \
   --verify-session gateway-release-<release>
 ```
 
@@ -114,9 +114,18 @@ bash scripts/deploy-gateway.sh \
 5. 替换二进制并重启 gateway。
 6. 校验 `/proc/<pid>/exe` hash 与下载的 Release Asset 一致。
 7. 校验 `/v1/targets` 未认证访问返回 `401`，并通过 `--verify-target` 复用 DoOps 已配置认证，
-   确认发布前的全部 target 均已重新连接；不得为发布导出或新建明文 token 文件。
+   等待显式列出的每条路由重新连接。`doops targets --target` 按路由的 `(cluster, instance)` 筛选。
+   新版部署脚本允许重复传 `--verify-target`；部署前每条路由必须对应一个不同的在线目标，重启后每条必须读回原身份。
 8. 校验候选二进制内嵌的 `source-commit` 与本次构建 commit 完全一致；
    旧的本地 `bin/doops-gateway` 或没有 provenance 的二进制会在上传前拒绝。
+
+共享 Gateway 的发布仍须验证变更前在线的全部受影响 target。维护人应在发布前确认授权覆盖的
+影响清单，确认路由都指向本次维护的 Gateway，逐一记录各在线 `(cluster, instance)` 对应的路由，并约定由谁执行回退。
+把清单中每条路由各传一次 `--verify-target`；该参数不自动发现其他目标。基线读取失败或身份重复时，脚本会在上传前退出。
+替换后有路由缺失或身份变化，超过重连检查窗口即触发原有回退流程。**`v0.3.21` 标签内的旧脚本只支持一条路由**，
+不要给旧脚本重复传参；若使用旧脚本，须按同一份清单逐路由执行 `doops -session <验收会话> targets --target <路由名>` 并核对身份。
+视图权限不足或缺少路由时，不要开始共享发布；某一目标未重连时，不得以另一目标成功或仅以 `/health`
+正常判定验收通过，按已批准的回退规程处理。不得为这些检查导出或新建明文 token 文件。
 
 禁止事项：
 
