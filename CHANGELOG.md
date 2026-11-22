@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 共享 Gateway 部署可重复指定 `--verify-target`，按路由检查基线和重连身份，避免单个在线 Agent 掩盖其他已列出目标的掉线。
+
 ## [0.3.21] — 2026-11-21
 
 ### Fixed

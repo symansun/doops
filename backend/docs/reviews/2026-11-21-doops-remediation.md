@@ -67,7 +67,7 @@
 
 | 验收项 | 需记录的证据 |
 | --- | --- |
-| Gateway | v0.3.21 正式 Linux AMD64 资产的期望 SHA-256 是 `4dbd24b34aeee3bbf8b25e8ae715ff29632db336b630724f50ec5aebdca1f081`。须与目标上实际运行进程的可执行文件比对，并按发布前受影响目标清单逐路由记录重连结果。正式 v0.3.21 CLI 的双目标回环验证表明：B 离线时，对仍在线的 A 的检查继续成功，对 B 的检查失败。单路由结果不能证明全部重连。见 [Gateway 发布规程](../BUILD_DEPLOY_SOP.md#一-gateway-发布边界)。 |
+| Gateway | v0.3.21 正式 Linux AMD64 资产的期望 SHA-256 是 `4dbd24b34aeee3bbf8b25e8ae715ff29632db336b630724f50ec5aebdca1f081`。须与目标上实际运行进程的可执行文件比对，并按发布前受影响目标清单逐路由记录重连结果。正式 v0.3.21 CLI 的双目标回环验证表明：B 离线时，对仍在线的 A 的检查继续成功，对 B 的检查失败。单路由结果不能证明全部重连。后续脚本改动（尚未发布）支持显式多路由；成功、基线拒绝、重连缺失及身份互换后的回退路径已用[隔离部署测试](../../test/test_gateway_deploy_contract.py)验证，不能替代现场回读。见 [Gateway 发布规程](../BUILD_DEPLOY_SOP.md#一-gateway-发布边界)。 |
 | Agent | 测试目标、候选镜像 digest、实际 Pod imageID、Ready 状态、Gateway 回读的 release_commit。见 [Agent 发布规程](../BUILD_DEPLOY_SOP.md)。 |
 | Web | 发布提交、实际运行的 Web 镜像 digest、公开 HTTPS origin、允许来源和跨源登录响应。见 [Web 部署规程](../DOOPS_WEBUI.md#部署)。 |
 | 合成凭证 | 创建与暂存回执、两个用户的列表隔离结果、持久化回读、验证与提升回执、撤销终态和 Secret 清理结果。保留元数据和审计结果。见 [凭据生命周期](../CREDENTIAL_RESOURCES.md#分步创建和首次激活) 与 [交付规程](../../../AGENTS.md)。 |
