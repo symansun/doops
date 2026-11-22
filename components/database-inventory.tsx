@@ -3,6 +3,7 @@
 import { Database, RefreshCw } from "lucide-react"
 import { useEffect, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
+import { useLoader } from "@/lib/use-loader"
 import { TOOLS } from "@/lib/gateway"
 import { Button, Input, Select } from "./ui"
 
@@ -58,31 +59,21 @@ export function DatabaseInventory({ session, target, sessionId, running, onOpen 
   running: boolean
   onOpen: (database: DatabaseCandidate) => void
 }) {
-  const [rows, setRows] = useState<DatabaseCandidate[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
   const [revision, setRevision] = useState(0)
   const [engine, setEngine] = useState("")
   const [filter, setFilter] = useState("")
   const { cluster, instance } = target
 
+  const { data, error, loading } = useLoader(
+    (signal) => readInventory(session, cluster, instance, sessionId, signal),
+    [session, cluster, instance, sessionId, revision],
+    { initialData: [] as DatabaseCandidate[] },
+  )
+  const rows = data ?? []
+  // 选中的引擎在新结果里不存在时回到"全部"，避免筛选框停在一个已消失的选项上。
   useEffect(() => {
-    const controller = new AbortController()
-    setLoading(true)
-    setError("")
-    void readInventory(session, cluster, instance, sessionId, controller.signal).then((next) => {
-      if (controller.signal.aborted) return
-      setRows(next)
-      setEngine((current) => next.some((row) => row.engine === current) ? current : "")
-    }).catch((reason) => {
-      if (controller.signal.aborted) return
-      setRows([])
-      setError(reason instanceof Error ? reason.message : String(reason))
-    }).finally(() => {
-      if (!controller.signal.aborted) setLoading(false)
-    })
-    return () => controller.abort()
-  }, [session, cluster, instance, sessionId, revision])
+    setEngine((current) => (rows.some((row) => row.engine === current) ? current : ""))
+  }, [rows])
 
   const term = filter.trim().toLowerCase()
   const visible = rows.filter((row) => (!engine || row.engine === engine) &&

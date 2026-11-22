@@ -1,9 +1,10 @@
 "use client"
 
 import { Globe2, RefreshCw } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
+import { useLoader } from "@/lib/use-loader"
 import { Button, Input } from "./ui"
 
 type Site = { site_id: string; domain: string; current_release: string; previous_release: string | null; updated_at: string }
@@ -25,39 +26,20 @@ export function WebsiteInventory({ session, target, sessionId, revision, running
   onRefresh: () => void
   onInspect: (siteId: string, domain: string) => void
 }) {
-  const [sites, setSites] = useState<Site[]>([])
-  const [error, setError] = useState("")
-  const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState("")
   const { cluster, instance } = target
+  const { data, error, loading } = useLoader(async (signal) => {
+    let text = ""
+    await callTool(session, { cluster, instance, tool: TOOLS.web, arguments: { session_id: sessionId, operation: "site-list" }, signal }, (event) => {
+      if (event.type === "result") text = extractText(event.result)
+    })
+    let result
+    try { result = JSON.parse(text) } catch { throw new Error("站点列表响应不是有效的 JSON") }
+    if (!Array.isArray(result?.sites) || !result.sites.every(isSite)) throw new Error("站点列表响应格式无效")
+    return result.sites as Site[]
+  }, [session, cluster, instance, sessionId, revision], { initialData: [] as Site[] })
 
-  useEffect(() => {
-    const controller = new AbortController()
-    async function load() {
-      setLoading(true)
-      setError("")
-      try {
-        let text = ""
-        await callTool(session, { cluster, instance, tool: TOOLS.web, arguments: { session_id: sessionId, operation: "site-list" }, signal: controller.signal }, (event) => {
-          if (event.type === "result") text = extractText(event.result)
-        })
-        if (controller.signal.aborted) return
-        let result
-        try { result = JSON.parse(text) } catch { throw new Error("站点列表响应不是有效的 JSON") }
-        if (!Array.isArray(result?.sites) || !result.sites.every(isSite)) throw new Error("站点列表响应格式无效")
-        setSites(result.sites)
-      } catch (reason) {
-        if (controller.signal.aborted) return
-        setSites([])
-        setError(reason instanceof Error ? reason.message : String(reason))
-      } finally {
-        if (!controller.signal.aborted) setLoading(false)
-      }
-    }
-    void load()
-    return () => controller.abort()
-  }, [session, cluster, instance, sessionId, revision])
-
+  const sites = data ?? []
   const term = filter.trim().toLowerCase()
   const visible = sites.filter((site) => site.site_id.includes(term) || site.domain.includes(term))
   return (
