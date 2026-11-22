@@ -28,7 +28,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: backend/agent/go.mod
+          go-version: "1.25.14"
           cache-dependency-path: |
             backend/agent/go.sum
             backend/gateway/go.sum
@@ -55,7 +55,7 @@ jobs:
           node-version: 24
 
       - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.7.0 --activate
+        run: corepack enable
 
       - name: Install web dependencies
         run: pnpm install --frozen-lockfile

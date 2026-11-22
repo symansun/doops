@@ -2,6 +2,8 @@ module github.com/user/doops/agent
 
 go 1.24.0
 
+toolchain go1.25.14
+
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.10
