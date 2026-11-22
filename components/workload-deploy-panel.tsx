@@ -89,7 +89,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
         <div className="min-w-0">
           <h2 className="text-base font-semibold">发布 Helm release</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            等同 <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">doops ask --target {target.cluster}/{target.instance} --apply</code>，由目标 Agent 执行用户给出的 Helm 请求并返回实时证据。
+            等同 <code className="rounded bg-muted px-1 py-0.5 font-mono text-2xs">doops ask --target {target.cluster}/{target.instance} --apply</code>，由目标 Agent 执行用户给出的 Helm 请求并返回实时证据。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -157,7 +157,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
           <div className="flex shrink-0 items-center justify-between border-b px-4 py-2">
             <div className="min-w-0">
               <h3 className="text-sm font-medium">执行过程</h3>
-              <p className="truncate text-[11px] text-muted-foreground">以 Helm release 的实际终态为准；工具失败、连接中断或缺少终态都不算成功</p>
+              <p className="truncate text-2xs text-muted-foreground">以 Helm release 的实际终态为准；工具失败、连接中断或缺少终态都不算成功</p>
             </div>
             {!readOnly && busy && snapshot.capabilities.interrupt && (
               <Button

@@ -40,3 +40,21 @@ printf '%s' "$body" | curl --fail-with-body --silent --show-error --proto '=http
 **3. 用获授该目标的普通账号验收。** 在「资产 → 监控」选择采集目标、机器和资产编号。两张网卡各有一条 bytes/s 曲线，两个挂载点各有三条 bytes 曲线。管理员可在具体曲线保存阈值和持续时间；现有规则按持续超过阈值触发。回读示例为 `GET /v1/assets/monitor?cluster=east&instance=node01&type=machine&asset_id=SRV-001&origin=exporter&metric=storage&device_id=%2Fdata`。省略 `device_id` 返回匹配的所有序列。`metric=storage&device_id=` 或 `metric=network&device_id=` 可精确回读旧的无设备维度序列。
 
 新建数据库使用 [监控基础表](migrations/asset_monitor.sql)。已经运行带 GPU `device_id` 版本的数据库，由受控数据库变更流程在专用 SQLite 连接上执行 [设备维度升级](migrations/asset_monitor_devices.sql)。升级保留序列 ID、样本、规则、告警及旧空设备标识。SQL 应在首个错误处终止并关闭连接。
+
+## 磁盘 I/O
+
+已有监控库先完成上述设备维度升级（若尚未升级），再在专用连接上执行
+[磁盘 I/O 迁移](migrations/asset_monitor_disk_io.sql)。新建库仅需当前监控基础表。
+在已核验的 Linux 宿主采样任务中，按 `/proc/diskstats` 中的内核设备名配置 `--disk nvme0n1`；
+可重复选择设备，不传 `/dev/` 路径。受控中心的设备与指标白名单需为每个选定设备加入下表六项，
+并同步调整批次大小校验。磁盘 I/O 不使用挂载点标识，也不代表 K8s Pod 的 I/O。
+
+| 指标 | 单位 | 含义 |
+| --- | --- | --- |
+| `disk_read_iops`、`disk_write_iops` | `ops/s` | 单位时间完成的读写次数 |
+| `disk_read_bytes_per_second`、`disk_write_bytes_per_second` | `bytes/s` | 读写扇区差分按每扇区 512 字节换算 |
+| `disk_read_latency_ms`、`disk_write_latency_ms` | `ms` | 区间读写累计耗时增量除以对应完成次数，不是 P95 |
+
+设备不存在、身份变化或计数回退时返回缺测。没有读写活动时相应 IOPS 和吞吐为零，
+平均延迟缺测，不记为零。通过「资产 → 监控」选择已上报的机器查看按设备分离的曲线；
+管理员可沿用现有阈值规则。也可用 `metric=disk_read_iops&device_id=nvme0n1` 精确读取序列。

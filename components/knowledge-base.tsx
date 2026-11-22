@@ -101,8 +101,8 @@ function DocumentPreviewPane({
                   "block w-full truncate rounded-md py-1 pr-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
                   item.level === 1 && "pl-2 font-medium text-foreground/95",
                   item.level === 2 && "pl-3.5",
-                  item.level === 3 && "pl-5 text-[11.5px]",
-                  item.level >= 4 && "pl-6.5 text-[11px]",
+                  item.level === 3 && "pl-5 text-2xs",
+                  item.level >= 4 && "pl-6.5 text-2xs",
                 )}
               >
                 {item.text}
@@ -603,7 +603,7 @@ export function KnowledgeBase({
                 <span className="truncate text-sm font-semibold text-foreground">
                   {openDoc.replace(/\.md$/i, "")}
                 </span>
-                <code className="hidden rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground md:inline">
+                <code className="hidden rounded bg-muted px-1.5 py-0.5 font-mono text-2xs text-muted-foreground md:inline">
                   {kbRoot}/{openDoc}
                 </code>
                 {dirty ? <Badge variant="warning">未保存</Badge> : <Badge variant="success">已同步</Badge>}
@@ -714,7 +714,7 @@ export function KnowledgeBase({
 
             {/* 底部状态与统计栏 */}
             <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t bg-card/60 px-3 py-1.5 text-xs text-muted-foreground">
-              <div className="flex items-center gap-3 font-mono text-[11px] tabular-nums">
+              <div className="flex items-center gap-3 font-mono text-2xs tabular-nums">
                 {mode !== "preview" && stats ? (
                   <span>
                     行 {stats.line}, 列 {stats.col}
@@ -745,7 +745,7 @@ export function KnowledgeBase({
                     {status.text}
                   </span>
                 )}
-                <span className="hidden font-mono text-[11px] text-muted-foreground/75 sm:inline">⌘S 保存</span>
+                <span className="hidden font-mono text-2xs text-muted-foreground/75 sm:inline">⌘S 保存</span>
               </div>
             </footer>
           </>

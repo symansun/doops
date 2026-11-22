@@ -253,7 +253,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
       ) : (
         <>
           {form && (
-            <div className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
+            <div data-assist-scope="" className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
               <div className="text-xs font-medium text-foreground">
                 {form.id ? `编辑路由 ${form.id}` : "新建路由"}
               </div>
@@ -367,7 +367,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                       <TableRow key={r.id}>
                         <TableCell>
                           <div className="font-medium text-foreground">{r.host}</div>
-                          <div className="font-mono text-[11px] text-muted-foreground">{r.id}</div>
+                          <div className="font-mono text-2xs text-muted-foreground">{r.id}</div>
                         </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
                           {r.cluster}/{r.instance}

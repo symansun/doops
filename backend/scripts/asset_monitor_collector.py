@@ -16,6 +16,7 @@ Repeat --mount for total, used and available bytes per exact mount point.
 Repeat --interface for RX+TX bytes/s per Linux network interface. --nginx-status
 reads a local nginx stub_status counter. Repeat --gpu for multiple NVIDIA cards.
 Select GPUs by UUID for scheduled jobs. Numeric indices resolve once per invocation.
+Repeat --disk for per-device Linux read/write IOPS, throughput and mean latency.
 """
 import argparse
 import http.client
@@ -60,6 +61,41 @@ def cpu_time(kernel):
 def network_bytes(interface):
     root = Path('/sys/class/net', interface, 'statistics')
     return sum(int((root / name).read_text()) for name in ('rx_bytes', 'tx_bytes'))
+
+
+DISK_METRICS = (
+    ('disk_read_iops', 'ops/s'), ('disk_write_iops', 'ops/s'),
+    ('disk_read_bytes_per_second', 'bytes/s'), ('disk_write_bytes_per_second', 'bytes/s'),
+    ('disk_read_latency_ms', 'ms'), ('disk_write_latency_ms', 'ms'),
+)
+
+
+def disk_snapshot():
+    rows = {}
+    for line in Path('/proc/diskstats').read_text().splitlines():
+        fields = line.split()
+        if len(fields) < 11:
+            continue
+        try:
+            counters = tuple(int(fields[i]) for i in (3, 7, 5, 9, 6, 10))
+        except ValueError:
+            continue
+        if all(value >= 0 for value in counters):
+            rows[fields[2]] = (tuple(fields[:2]), counters)
+    return rows
+
+
+def disk_rates(before, after, elapsed):
+    if before is None or after is None or before[0] != after[0] or elapsed <= 0:
+        return (None,) * len(DISK_METRICS)
+    reads, writes, read_sectors, write_sectors, read_ms, write_ms = (
+        b - a for a, b in zip(before[1], after[1]))
+    if min(reads, writes, read_sectors, write_sectors, read_ms, write_ms) < 0:
+        return (None,) * len(DISK_METRICS)
+    # The kernel reports sectors in 512-byte units, independent of disk block size.
+    return (reads / elapsed, writes / elapsed, read_sectors * 512 / elapsed,
+            write_sectors * 512 / elapsed, read_ms / reads if reads else None,
+            write_ms / writes if writes else None)
 
 
 def require_host():
@@ -175,7 +211,9 @@ def collect(args):
             return None, time.monotonic()
 
     prior = {k: observed(k, read) for k, (_, rate, read) in probes.items() if rate}
-    if prior:
+    if args.disk:
+        disks_before, disk_start = observed('diskstats', disk_snapshot)
+    if prior or args.disk:
         time.sleep(1)
     samples = []
     def append(metric, device, unit, value, at_ms):
@@ -184,6 +222,15 @@ def collect(args):
         if device:
             sample['device_id'] = device
         samples.append(sample)
+
+    if args.disk:
+        disks_after, disk_end = observed('diskstats', disk_snapshot)
+        at_ms = time.time_ns()//1000000
+        for disk in args.disk:
+            rates = disk_rates((disks_before or {}).get(disk), (disks_after or {}).get(disk),
+                               disk_end - disk_start)
+            for (metric, unit), value in zip(DISK_METRICS, rates):
+                append(metric, disk, unit, value, at_ms)
 
     for key, (unit, rate, read) in probes.items():
         value, tick = observed(key, read)
@@ -215,6 +262,7 @@ def main():
     ap.add_argument('--pid', type=int)
     ap.add_argument('--start-ticks', type=int, help='Expected /proc/PID/stat field 22')
     ap.add_argument('--interface', action='append', default=[], help='Linux network interface; repeat per device')
+    ap.add_argument('--disk', action='append', default=[], help='Linux kernel block device name (e.g. nvme0n1); repeat per device')
     ap.add_argument('--mount', action='append', default=[], help='Absolute mount point; repeat per filesystem')
     ap.add_argument('--gpu', action='append', default=[], help='NVIDIA index or full GPU UUID; repeat for multiple cards')
     ap.add_argument('--nginx-status', type=urlsplit, help='Explicit HTTP loopback stub_status URL')
@@ -226,13 +274,19 @@ def main():
         ap.error('interval must be 1–300 seconds')
     if args.count is not None and (not args.interval_seconds or args.count < 1):
         ap.error('--count requires periodic mode and a positive count')
-    probes = any((args.host,args.pid,args.interface,args.mount,bool(args.gpu),args.nginx_status))
+    probes = any((args.host,args.pid,args.interface,args.disk,args.mount,bool(args.gpu),args.nginx_status))
     if args.pod_namespace and (args.asset_id or probes) or not args.pod_namespace and not (args.asset_id and probes):
         ap.error('select --pod-namespace or --asset-id with at least one probe')
     if args.host and args.type not in ('machine','os','kernel') or args.pid is not None and (args.type not in ('process','app','database') or args.pid < 1 or args.start_ticks is None):
         ap.error('use --host for machine/os/kernel, or --pid with --start-ticks for process/app/database')
     if any(not re.fullmatch('[a-zA-Z0-9][a-zA-Z0-9_.-]{0,14}', dev) for dev in args.interface):
         ap.error('invalid interface name')
+    if args.disk:
+        if sys.platform != 'linux' or args.type != 'machine' or args.namespace:
+            ap.error('--disk requires a Linux machine observation without a namespace')
+        if len(args.disk) > 64 or len(set(args.disk)) != len(args.disk) or any(
+                not re.fullmatch('[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}', disk) for disk in args.disk):
+            ap.error('select up to 64 distinct kernel block device names')
     for mount in args.mount:
         if (not mount.startswith('/') or mount.startswith('//') or mount != os.path.normpath(mount)
                 or len(os.fsencode(mount)) >= 4096 or any(unicodedata.category(c) == 'Cc' for c in mount)):

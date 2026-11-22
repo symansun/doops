@@ -261,7 +261,7 @@ export function CurrentMachineSection({ selected }: { selected: Target }) {
             {selected.last_seen ? <span>最近心跳 {fmtRelative(selected.last_seen)}</span> : null}
           </div>
           {selected.remote ? (
-            <p className="mt-1 font-mono text-[11px] text-muted-foreground/80">{selected.remote}</p>
+            <p className="mt-1 font-mono text-2xs text-muted-foreground/80">{selected.remote}</p>
           ) : null}
           {selected.busy && selected.busy_reason ? (
             <p className="mt-1 text-xs text-warning">{busyReasonLabel(selected.busy_reason)}</p>
@@ -430,7 +430,7 @@ function Metric({
         : "text-foreground"
   return (
     <div className="rounded-md bg-muted/40 px-2.5 py-2">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-2xs text-muted-foreground">{label}</div>
       <div className={`mt-0.5 text-sm font-medium ${valueCls}`}>{value}</div>
     </div>
   )
@@ -470,7 +470,7 @@ function StatCard({
         <div className="min-w-0">
           <div className="text-2xl font-semibold leading-none tabular-nums text-foreground">{value}</div>
           <div className="mt-1 text-xs text-muted-foreground">{label}</div>
-          {hint ? <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">{hint}</div> : null}
+          {hint ? <div className="mt-0.5 truncate text-2xs text-muted-foreground/80">{hint}</div> : null}
         </div>
       </CardContent>
     </Card>
@@ -506,7 +506,7 @@ function ActionBadge({ action }: { action?: string }) {
   }
   const key = (action || "").replace(/^doops_/, "")
   return (
-    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground">
       {map[key] || key || "操作"}
     </span>
   )

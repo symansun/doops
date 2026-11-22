@@ -59,7 +59,7 @@ export default async function BlogPostPage({ params }: SlugPageProps) {
 
       <header className="mt-6 border-b border-border/40 pb-8">
         {post.series ? (
-          <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary ring-1 ring-inset ring-primary/20">
+          <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-2xs font-medium text-primary ring-1 ring-inset ring-primary/20">
             {post.series}
           </span>
         ) : null}
@@ -83,7 +83,7 @@ export default async function BlogPostPage({ params }: SlugPageProps) {
             {post.tags.map((tag) => (
               <span
                 key={tag}
-                className="rounded-md border border-border/60 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                className="rounded-md border border-border/60 px-1.5 py-0.5 text-2xs text-muted-foreground"
               >
                 {tag}
               </span>

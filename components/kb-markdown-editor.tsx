@@ -58,7 +58,7 @@ const doopsEditorTheme = EditorView.theme(
       height: "100%",
       backgroundColor: "var(--background)",
       color: "var(--foreground)",
-      fontSize: "13.5px",
+      fontSize: "var(--text-sm)",
     },
     "&.cm-focused": {
       outline: "none",
@@ -102,7 +102,7 @@ const doopsEditorTheme = EditorView.theme(
       borderBottom: "1px solid var(--border)",
     },
     ".cm-search": {
-      fontSize: "12px",
+      fontSize: "var(--text-xs)",
       padding: "6px 10px",
     },
     ".cm-textfield": {

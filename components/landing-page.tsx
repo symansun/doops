@@ -136,7 +136,7 @@ export function LandingPage() {
         <div aria-hidden className="hero-ambient pointer-events-none absolute inset-0" />
         <div className="relative mx-auto max-w-6xl px-4 pb-24 pt-24 text-center md:pb-32 md:pt-32">
           <div className="brand-gradient mx-auto mb-6 inline-flex rounded-full p-px shadow-[0_0_48px_-16px_color-mix(in_oklch,var(--primary)_60%,transparent)]">
-            <span className="inline-flex items-center gap-2 rounded-full bg-background/95 px-3.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground backdrop-blur">
+            <span className="inline-flex items-center gap-2 rounded-full bg-background/95 px-3.5 py-1 text-2xs font-medium uppercase tracking-[0.16em] text-muted-foreground backdrop-blur">
               <span className="h-1.5 w-1.5 rounded-full bg-primary" />
               智能驱动 · 全方位运维工具
             </span>
@@ -196,7 +196,7 @@ export function LandingPage() {
                   <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/15 text-primary shadow-[0_0_24px_-12px_color-mix(in_oklch,var(--primary)_80%,transparent)] ring-1 ring-inset ring-primary/25 transition-colors group-hover:bg-primary/20">
                     <Icon width={20} height={20} />
                   </div>
-                  <h3 className="text-[15px] font-semibold text-card-foreground">{f.title}</h3>
+                  <h3 className="text-sm font-semibold text-card-foreground">{f.title}</h3>
                   <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{f.desc}</p>
                 </div>
               )
@@ -233,7 +233,7 @@ export function LandingPage() {
                 <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary ring-1 ring-inset ring-primary/25">
                   {s.n}
                 </div>
-                <h3 className="text-[15px] font-semibold text-card-foreground">{s.title}</h3>
+                <h3 className="text-sm font-semibold text-card-foreground">{s.title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{s.desc}</p>
               </li>
             ))}

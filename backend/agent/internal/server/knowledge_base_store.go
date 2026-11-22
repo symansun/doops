@@ -14,24 +14,16 @@ import (
 // These bounds keep one Agent from filling its node with documents that no
 // session can read back.
 const (
-	defaultKnowledgeBaseMaxDocuments = 500
-	defaultKnowledgeBaseMaxBytes     = int64(256 << 20)
-	maxKnowledgeBaseDocumentBytes    = int64(1 << 20)
-	knowledgeBaseTrashDir            = ".trash"
+	maxKnowledgeBaseDocumentBytes = int64(1 << 20)
+	maxKnowledgeBaseImageBytes    = int64(8 << 20)
+	knowledgeBaseTrashDir         = ".trash"
 )
-
-func knowledgeBaseMaxDocuments() int64 {
-	return positiveEnvInt64("DOOPS_KB_MAX_DOCUMENTS", defaultKnowledgeBaseMaxDocuments)
-}
-
-func knowledgeBaseMaxBytes() int64 {
-	return positiveEnvInt64("DOOPS_KB_MAX_BYTES", defaultKnowledgeBaseMaxBytes)
-}
 
 type knowledgeBaseEntry struct {
 	Name     string `json:"name"`
 	Size     int64  `json:"size"`
 	Modified string `json:"modified"`
+	Kind     string `json:"kind"`
 }
 
 // listKnowledgeBaseDocuments returns the documents in the knowledge base root,
@@ -62,10 +54,15 @@ func listKnowledgeBaseDocuments(sessionID string) (string, []knowledgeBaseEntry,
 		if err != nil {
 			continue
 		}
+		kind := "document"
+		if knowledgeBaseImageName(name) {
+			kind = "image"
+		}
 		entries = append(entries, knowledgeBaseEntry{
 			Name:     name,
 			Size:     info.Size(),
 			Modified: info.ModTime().UTC().Format(time.RFC3339),
+			Kind:     kind,
 		})
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
@@ -147,29 +144,18 @@ func knowledgeBaseUsage(rootPath string) (int, int64, error) {
 // enforceKnowledgeBaseQuota rejects a save that would exceed the document count
 // or total size bound. Rewriting an existing document only has to respect the
 // total-size bound.
-func enforceKnowledgeBaseQuota(rootPath, name string, contentBytes int64) error {
-	if contentBytes > maxKnowledgeBaseDocumentBytes {
-		return fmt.Errorf(
-			"knowledge base document is %d bytes, over the %d-byte limit: split it into smaller documents before saving",
-			contentBytes, maxKnowledgeBaseDocumentBytes,
-		)
+// checkKnowledgeBaseDocumentSize keeps one saved file within the size the read
+// path can return. Screenshots get a larger bound than text documents; there is
+// no collection-wide quota.
+func checkKnowledgeBaseDocumentSize(name string, size int64) error {
+	limit := maxKnowledgeBaseDocumentBytes
+	if knowledgeBaseImageName(name) {
+		limit = maxKnowledgeBaseImageBytes
 	}
-	count, total, err := knowledgeBaseUsage(rootPath)
-	if err != nil {
-		return err
-	}
-	if _, statErr := os.Stat(filepath.Join(rootPath, name)); statErr == nil {
-		total -= int64(0)
-	} else if int64(count) >= knowledgeBaseMaxDocuments() {
+	if size > limit {
 		return fmt.Errorf(
-			"knowledge base is full: %d documents, limit %d; delete a document before creating another",
-			count, knowledgeBaseMaxDocuments(),
-		)
-	}
-	if total+contentBytes > knowledgeBaseMaxBytes() {
-		return fmt.Errorf(
-			"knowledge base is full: %d bytes in use, limit %d; delete documents before adding more",
-			total, knowledgeBaseMaxBytes(),
+			"knowledge base file is %d bytes, over the %d-byte limit for this kind of file",
+			size, limit,
 		)
 	}
 	return nil

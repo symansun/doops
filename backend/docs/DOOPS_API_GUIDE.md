@@ -22,7 +22,7 @@
 12. [旧版个人资产登记](migrations/personal_asset_records.sql)
 13. [业务资产台账与集群基本资料](migrations/asset_catalog.sql)
 
-升级已有 GPU 监控库时，按 [设备维度迁移说明](migrations/asset_monitor_devices.sql) 在专用数据库连接上执行迁移。新建库直接使用当前的 `asset_monitor.sql`。已有机器诊断库可重跑 `machine_diagnostics.sql` 增加隧道采样记录。所有迁移均按环境留存执行回执。
+已有监控库的迁移顺序见[设备指标说明](ASSET_MONITOR_DEVICES.md#磁盘-io)。新建库直接使用当前的 `asset_monitor.sql`。已有机器诊断库可重跑 `machine_diagnostics.sql` 增加隧道采样记录。所有迁移均按环境留存执行回执。
 
 `GET /v1/assets/machines?tag=prod&tag=gateway` 返回同时匹配全部标签、当前账号有权查看的机器。管理员可在 create/update 的 `machine.tags` 传字符串数组；不传保留旧值，`[]` 清除，更新必须携带 `expected_revision`。每台限 20 个标签，每项最多 32 个字符，可用中英文、数字、点、横线及下划线，自动去首尾空白、转小写和去重。CSV 重新导入不覆盖标签。
 

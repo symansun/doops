@@ -4,7 +4,7 @@ import { cn } from "@/lib/cn"
 
 // cva keeps the size/colour matrix in one place instead of a chain of ternaries.
 const badgeVariants = cva(
-  "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] font-medium leading-none",
+  "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-2xs font-medium leading-none",
   {
     variants: {
       variant: {

@@ -62,11 +62,10 @@ DoOps 采用**深色优先（Dark-first, `color-scheme: dark`）**的工业级�
   - 等宽技术字体 `--font-mono`: `"Geist Mono", ui-monospace, SFMono-Regular, monospace`。
 - **等宽铁律（Monospace Rule）**：凡涉及 `cluster/instance` 目标标识、`session_id`、资产编号（`asset_id`）、审计/操作 ID、镜像 Tag 与 SHA256 Digest、文件路径、IP/端口、环境变量键名、SQL 语句与 CLI 命令，**一律使用 `font-mono`**，防止字符混淆并保证列对齐。
 - **字号与行高标尺**：
-  - **页面主标题**：`20px` (`text-xl font-semibold`)，用于独立管理页或引导标题。
-  - **面板/区块标题**：`14px–16px` (`text-sm` / `text-base font-semibold`)，用于卡片头部、抽屉与弹窗标题。
-  - **控制台基准字号**：`14px` (`text-sm`，行高 `20px`)，用于登录页、目标选择器、表格主体、表单输入、AI 助手状态与消息输入。
-  - **侧栏导航项**：`15px`（分组标题 `13px font-semibold`），激活项使用 `font-weight: 700` 与左侧 `3px` 亮边。
-  - **高密工具条与元数据**：`12px` (`text-xs`) 用于表头列名、过滤标签、行内操作按钮；`11px` (`text-[11px]`) 仅限 `Badge` 胶囊徽章与辅助代码角标。
+  - 全站使用 `app/globals.css` 中的 `rem` 标尺，尊重浏览器默认字号。下列像素值以默认 `16px` 根字号为例，不通过更改根字号来缩放布局。
+  - **标题**：管理页标题 `text-xl`（22px），区块标题 `text-base`（18px）；整屏恢复会话等主要状态用 `text-lg`（20px）。公开页保留响应式大标题。
+  - **正文和控件**：`text-sm`（16px / 24px）用于常规正文、导航项和标准输入；长篇对话正文用 `text-base`。
+  - **辅助文字**：`text-xs`（14px / 20px）用于分组标题、表头与紧凑控件。`text-2xs`（13px / 18px）仅用于徽章、编号、耗时等次要信息。不另写固定像素小字。
 
 ---
 

@@ -266,7 +266,7 @@ export function AuditPanel({
                 {e.session && <span className="min-w-0 break-all font-mono"><strong className="font-sans font-medium text-foreground/80">Session</strong> {e.session}</span>}
               </div>
               {e.command_summary && (
-                <p className="mt-3 break-words rounded-md border border-border/80 bg-background/70 px-3 py-2.5 font-mono text-[13px] leading-6 text-foreground">
+                <p className="mt-3 break-words rounded-md border border-border/80 bg-background/70 px-3 py-2.5 font-mono text-xs leading-6 text-foreground">
                   {e.command_summary}
                 </p>
               )}
@@ -274,7 +274,7 @@ export function AuditPanel({
                 <StatusBanner tone="error" className="mt-3 break-words">错误：{e.error}</StatusBanner>
               )}
               {e.tail && (
-                <pre className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/80 p-3 font-mono text-[13px] leading-6 text-foreground/85">
+                <pre className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/80 p-3 font-mono text-xs leading-6 text-foreground/85">
                   {e.tail}
                 </pre>
               )}

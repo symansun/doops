@@ -51,7 +51,7 @@ func safeKnowledgeBaseName(name string) bool {
 		return false
 	}
 	ext := filepath.Ext(name)
-	if !strings.EqualFold(ext, ".md") {
+	if !strings.EqualFold(ext, ".md") && !knowledgeBaseImageName(name) {
 		return false
 	}
 	stem := strings.TrimSuffix(name, ext)
@@ -64,6 +64,31 @@ func safeKnowledgeBaseName(name string) bool {
 		}
 	}
 	return true
+}
+
+// knowledgeBaseImageName reports whether the file is an image the console can
+// show inside a document. The allowlist is closed: an extension that the
+// browser would execute is not accepted just because it is an image type.
+func knowledgeBaseImageName(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+		return true
+	}
+	return false
+}
+
+func knowledgeBaseImageMIME(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	}
+	return ""
 }
 
 func openKnowledgeBaseRoot() (*os.Root, string, error) {
@@ -118,7 +143,7 @@ func writeKnowledgeBaseFile(sessionID, rawPath, content string) (string, error) 
 	}
 	// Documents are read back into an agent or console session, so the save
 	// limit is the read limit, and the root has a document and byte budget.
-	if err := enforceKnowledgeBaseQuota(rootPath, name, int64(len(content))); err != nil {
+	if err := checkKnowledgeBaseDocumentSize(name, int64(len(content))); err != nil {
 		return "", err
 	}
 	root, rootPath, err := openKnowledgeBaseRoot()

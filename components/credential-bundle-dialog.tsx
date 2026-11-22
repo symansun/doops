@@ -224,7 +224,7 @@ function CreateBundle({
                 />
                 <span className="font-medium">{credential.name}</span>
                 <span className="text-muted-foreground">{credential.scope === "platform" ? "平台" : "个人"}</span>
-                <span className="ml-auto font-mono text-[11px] text-muted-foreground">{credential.id}</span>
+                <span className="ml-auto font-mono text-2xs text-muted-foreground">{credential.id}</span>
               </label>
             ))
           )}
@@ -252,10 +252,10 @@ function BundleSummary({ bundle }: { bundle: CredentialBundle }) {
         <span className="font-medium text-foreground">{bundle.name}</span>
         <span className="text-muted-foreground">{bundle.scope === "platform" ? "平台" : "个人"}</span>
         <Badge variant={bundle.state === "active" ? "success" : "default"}>{bundle.state}</Badge>
-        <span className="ml-auto font-mono text-[11px] text-muted-foreground">{bundle.id}</span>
+        <span className="ml-auto font-mono text-2xs text-muted-foreground">{bundle.id}</span>
       </div>
       <div className="text-muted-foreground">包含 {bundle.items.length} 个凭据：</div>
-      <ul className="space-y-0.5 font-mono text-[11px] text-foreground">
+      <ul className="space-y-0.5 font-mono text-2xs text-foreground">
         {bundle.items.map((item) => (
           <li key={item.credential_id}>{item.credential_id}</li>
         ))}

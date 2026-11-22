@@ -144,7 +144,7 @@ export function WebsitePanel({
         onRefresh={() => setRevision((n) => n + 1)} onInspect={inspectSite} />
       <details ref={operationsRef} className="card-surface mt-4 p-4">
         <summary className="cursor-pointer text-sm font-semibold">网站操作</summary>
-        <div className="mt-4 flex flex-col items-stretch gap-3">
+        <div data-assist-scope="" className="mt-4 flex flex-col items-stretch gap-3">
           <SegmentedControl
             value={mode}
             disabled={running}

@@ -339,7 +339,7 @@ function OperationGroup({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={title}>
-      <span className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{title}</span>
+      <span className="w-28 shrink-0 text-2xs font-medium uppercase tracking-wider text-muted-foreground">{title}</span>
       {operations.map((operation) => (
         <Button
           key={operation}

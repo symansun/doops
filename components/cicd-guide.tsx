@@ -27,7 +27,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
     <div className="group relative my-2 overflow-hidden rounded-lg border bg-muted">
       {lang && (
-        <div className="border-b bg-background/60 px-3 py-1 font-mono text-[11px] text-muted-foreground">
+        <div className="border-b bg-background/60 px-3 py-1 font-mono text-2xs text-muted-foreground">
           {lang}
         </div>
       )}

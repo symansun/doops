@@ -17,7 +17,13 @@ import (
 
 const monitorGap = 5 * time.Minute
 
-var monitorUnits = map[string]string{"cpu": "cores", "memory": "bytes", "gpu": "%", "network": "bytes/s", "requests": "req/s", "storage": "bytes", "storage_total": "bytes", "storage_available": "bytes"}
+var monitorUnits = map[string]string{
+	"cpu": "cores", "memory": "bytes", "gpu": "%", "network": "bytes/s", "requests": "req/s",
+	"storage": "bytes", "storage_total": "bytes", "storage_available": "bytes",
+	"disk_read_iops": "ops/s", "disk_write_iops": "ops/s",
+	"disk_read_bytes_per_second": "bytes/s", "disk_write_bytes_per_second": "bytes/s",
+	"disk_read_latency_ms": "ms", "disk_write_latency_ms": "ms",
+}
 var monitorKinds = map[string]bool{"machine": true, "os": true, "kernel": true, "process": true, "app": true, "database": true}
 var monitorRanges = map[string]time.Duration{"1h": time.Hour, "6h": 6 * time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour}
 
@@ -36,8 +42,12 @@ type monitorPoint struct {
 var monitorGPUUUID = regexp.MustCompile(`^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 var monitorInterface = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,14}$`)
+var monitorDisk = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$`)
 
 func validMonitorDevice(metric, device string) bool {
+	if strings.HasPrefix(metric, "disk_") {
+		return monitorDisk.MatchString(device)
+	}
 	switch metric {
 	case "gpu":
 		return monitorGPUUUID.MatchString(device)
@@ -86,6 +96,9 @@ func monitorValidValue(metric string, v float64) bool {
 }
 func (p monitorInput) valid(now time.Time) bool {
 	if !validMonitorDevice(p.Metric, p.DeviceID) || !monitorValidAsset(p.monitorAsset) || monitorUnits[p.Metric] == "" || p.Unit != monitorUnits[p.Metric] || p.At <= 0 || p.At > now.UnixMilli() {
+		return false
+	}
+	if strings.HasPrefix(p.Metric, "disk_") && (p.Type != "machine" || p.Namespace != "") {
 		return false
 	}
 	switch p.Status {

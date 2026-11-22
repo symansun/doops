@@ -226,10 +226,10 @@ export const Markdown = memo(function Markdown({
       className={cn(
         "min-w-0 break-words text-foreground [overflow-wrap:anywhere] [&_[data-streamdown^=heading-]]:scroll-mt-16 [&_.contains-task-list]:list-none [&_.contains-task-list]:pl-0 [&_li.task-list-item]:list-none [&_[data-streamdown=mermaid-block]_svg]:h-auto [&_[data-streamdown=mermaid-block]_svg]:max-w-full",
         variant === "document"
-          ? "text-[14.5px] leading-7 [&_h1]:border-b [&_h1]:border-border [&_h1]:pb-2 [&_h1]:text-2xl [&_h2]:border-b [&_h2]:border-border/60 [&_h2]:pb-1.5 [&_h2]:text-lg [&_h3]:text-base"
+          ? "text-sm leading-7 [&_h1]:border-b [&_h1]:border-border [&_h1]:pb-2 [&_h1]:text-2xl [&_h2]:border-b [&_h2]:border-border/60 [&_h2]:pb-1.5 [&_h2]:text-lg [&_h3]:text-base"
           : variant === "compact"
-            ? "text-xs leading-5 [&_h1]:text-sm [&_h2]:text-[13px] [&_h3]:text-xs"
-            : "text-sm leading-6 [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-[15px]",
+            ? "text-xs leading-5 [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs"
+            : "text-sm leading-6 [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm",
         className,
       )}
     >

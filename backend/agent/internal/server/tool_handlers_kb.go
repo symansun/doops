@@ -1,9 +1,11 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 type knowledgeBaseParams struct {
@@ -11,6 +13,7 @@ type knowledgeBaseParams struct {
 	Operation string `json:"operation"`
 	Name      string `json:"name"`
 	Content   string `json:"content"`
+	Encoding  string `json:"encoding"`
 }
 
 // handleToolKb serves the knowledge base to allowed callers without going
@@ -42,8 +45,18 @@ func handleKnowledgeBaseCall(argBytes json.RawMessage) (string, error) {
 	case "list":
 		return listKnowledgeBaseResult(params.SessionID)
 	case "read":
+		if knowledgeBaseImageName(params.Name) {
+			return readKnowledgeBaseImage(params.SessionID, filepath.Join(root, params.Name))
+		}
 		return readKnowledgeBaseFile(params.SessionID, filepath.Join(root, params.Name))
 	case "write":
+		if strings.EqualFold(strings.TrimSpace(params.Encoding), "base64") {
+			data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(params.Content))
+			if err != nil {
+				return "", fmt.Errorf("invalid base64 content: %w", err)
+			}
+			return writeKnowledgeBaseBytes(params.SessionID, filepath.Join(root, params.Name), data)
+		}
 		return writeKnowledgeBaseFile(params.SessionID, filepath.Join(root, params.Name), params.Content)
 	case "delete":
 		trashed, err := deleteKnowledgeBaseDocument(params.SessionID, filepath.Join(root, params.Name))
@@ -72,9 +85,8 @@ func listKnowledgeBaseResult(sessionID string) (string, error) {
 		"usage": map[string]interface{}{
 			"documents":     count,
 			"bytes":         bytes,
-			"max_documents": knowledgeBaseMaxDocuments(),
-			"max_bytes":     knowledgeBaseMaxBytes(),
 			"max_document":  maxKnowledgeBaseDocumentBytes,
+			"max_image":     maxKnowledgeBaseImageBytes,
 		},
 	}
 	encoded, err := json.Marshal(result)

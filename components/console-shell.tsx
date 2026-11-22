@@ -618,7 +618,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   }
 
   if (authLoading || disconnecting) {
-    return <main className="flex min-h-dvh items-center justify-center text-sm text-muted-foreground">{disconnecting ? "正在断开连接..." : "正在恢复登录会话..."}</main>
+    return (
+      <main className="grid min-h-dvh place-items-center px-4">
+        <p role="status" className="text-center text-lg font-medium text-foreground">
+          {disconnecting ? "正在断开连接..." : "正在恢复登录会话..."}
+        </p>
+      </main>
+    )
   }
 
   if (!session) {

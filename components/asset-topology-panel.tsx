@@ -125,7 +125,7 @@ function RuntimeControls({ scopes, canBind, read }: { scopes: RuntimeScope[]; ca
     } catch (reason) { setError((reason as Error).message); await read() }
     finally { setBusy(false) }
   }
-  return <section className="card-surface space-y-2 p-3" aria-label="运行快照"><h3 className="font-semibold">运行快照</h3>
+  return <section data-assist-scope="" className="card-surface space-y-2 p-3" aria-label="运行快照"><h3 className="font-semibold">运行快照</h3>
     <label className="text-sm">来源与纳管命名空间<Select value={scope ? key : ""} disabled={busy} onChange={e => {setKey(e.target.value); setApp(""); setUID(""); setError("")}}><option value="">选择采集范围</option>{scopes.map(s => <option value={scopeKey(s)} key={scopeKey(s)}>{s.cluster}/{s.instance} · {s.namespace} · {s.status === "online" ? "在线" : "离线"}</option>)}</Select></label>
     {!scopes.length && <p className="text-sm text-muted-foreground">暂无可见且已纳管的命名空间。</p>}
     {scope && <><p className="text-sm">{scope.observed_at ? `最近成功快照 ${new Date(scope.observed_at).toLocaleString()}` : "尚无成功快照"} · {scope.workloads.length} 个工作负载</p>

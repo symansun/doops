@@ -54,7 +54,7 @@ export default async function BlogLangIndexPage({ params }: LangPageProps) {
               >
                 <div className="min-w-0 flex-1">
                   {post.series ? (
-                    <span className="mb-2 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                    <span className="mb-2 inline-block rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
                       {post.series}
                     </span>
                   ) : null}
@@ -78,7 +78,7 @@ export default async function BlogLangIndexPage({ params }: LangPageProps) {
                       {post.tags.map((tag) => (
                         <span
                           key={tag}
-                          className="rounded-md border border-border/60 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                          className="rounded-md border border-border/60 px-1.5 py-0.5 text-2xs text-muted-foreground"
                         >
                           {tag}
                         </span>

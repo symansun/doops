@@ -267,7 +267,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                           <p className="truncate text-sm font-medium text-foreground">{c.name}</p>
-                          <span className="shrink-0 rounded border px-1 py-0.5 text-[10px] text-muted-foreground">
+                          <span className="shrink-0 rounded border px-1 py-0.5 text-2xs text-muted-foreground">
                             {isFile ? "配置文件" : "大模型"}
                           </span>
                         </div>
@@ -278,7 +278,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <span
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                        className={`rounded px-1.5 py-0.5 text-2xs font-medium ${
                           unpublished
                             ? "bg-warning/15 text-warning"
                             : "bg-success/15 text-success"
@@ -472,7 +472,7 @@ function ConfigEditor({
   const set = (patch: Partial<ModelConfig>) => onChange({ ...cfg, ...patch })
   const isFile = configKind(cfg) === "file"
   return (
-    <div className="flex flex-col gap-3 rounded-lg border bg-card p-4">
+    <div data-assist-scope="" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
       <div className="flex items-center gap-2">
         <span
           className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium ${

@@ -44,7 +44,7 @@ function Cmd({ children }: { children: string }) {
       <button
         onClick={copy}
         aria-label="复制命令"
-        className="absolute right-1.5 top-1.5 flex items-center gap-1 rounded-md border bg-background px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        className="absolute right-1.5 top-1.5 flex items-center gap-1 rounded-md border bg-background px-1.5 py-1 text-2xs text-muted-foreground transition-colors hover:text-foreground"
       >
         {copied ? (
           <>
@@ -265,7 +265,7 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
                 </div>
               </div>
               {/* 拓扑示意 */}
-              <div className="mb-3 flex items-center justify-between gap-1 rounded-lg border bg-background px-3 py-3 text-center text-[11px] text-muted-foreground">
+              <div className="mb-3 flex items-center justify-between gap-1 rounded-lg border bg-background px-3 py-3 text-center text-2xs text-muted-foreground">
                 <span className="flex flex-col items-center gap-1">
                   <FileIcon width={15} height={15} className="text-foreground" />
                   Web / 客户端

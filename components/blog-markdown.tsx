@@ -42,7 +42,7 @@ function BlogImage({ src, alt }: { src?: string; alt?: string }) {
     return (
       <span className="my-6 flex flex-col items-center gap-1 rounded-xl border border-dashed border-border bg-muted/30 px-4 py-10 text-center">
         <span className="text-sm text-muted-foreground">{label || "配图"} · 图片未找到</span>
-        <span className="font-mono text-[11px] break-all text-muted-foreground/70">{url}</span>
+        <span className="font-mono text-2xs break-all text-muted-foreground/70">{url}</span>
       </span>
     )
   }
@@ -103,7 +103,7 @@ const BLOG_COMPONENTS: Components = {
   ),
   p: ({ children, node }) =>
     isCaptionParagraph(node as HastNode | undefined) ? (
-      <p className="mt-2 mb-7 text-center text-[13px] leading-relaxed text-muted-foreground">{children}</p>
+      <p className="mt-2 mb-7 text-center text-xs leading-relaxed text-muted-foreground">{children}</p>
     ) : (
       <p className="my-4 break-words">{children}</p>
     ),
@@ -130,7 +130,7 @@ export function BlogMarkdown({ content }: { content: string }) {
       codeBlockMaxHeight={0}
       tableMaxHeight={0}
       components={BLOG_COMPONENTS}
-      className="text-[15px] leading-[1.9] text-foreground/90 sm:text-base [&_.contains-task-list]:list-none [&_.contains-task-list]:pl-0 [&_li.task-list-item]:list-none [&_[data-streamdown=mermaid-block]_svg]:h-auto [&_[data-streamdown=mermaid-block]_svg]:max-w-full"
+      className="text-sm leading-[1.9] text-foreground/90 sm:text-base [&_.contains-task-list]:list-none [&_.contains-task-list]:pl-0 [&_li.task-list-item]:list-none [&_[data-streamdown=mermaid-block]_svg]:h-auto [&_[data-streamdown=mermaid-block]_svg]:max-w-full"
     >
       {content}
     </Streamdown>

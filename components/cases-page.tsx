@@ -139,7 +139,7 @@ export function CasesPage() {
         <div aria-hidden className="hero-ambient pointer-events-none absolute inset-0" />
         <div className="relative mx-auto max-w-6xl px-4 pb-20 pt-24 text-center md:pb-24 md:pt-28">
           <div className="brand-gradient mx-auto mb-6 inline-flex rounded-full p-px">
-            <span className="inline-flex items-center gap-2 rounded-full bg-background/95 px-3.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground backdrop-blur">
+            <span className="inline-flex items-center gap-2 rounded-full bg-background/95 px-3.5 py-1 text-2xs font-medium uppercase tracking-[0.16em] text-muted-foreground backdrop-blur">
               <RocketIcon width={13} height={13} className="text-primary" />
               使用案例
             </span>

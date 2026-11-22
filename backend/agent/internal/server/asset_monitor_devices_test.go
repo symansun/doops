@@ -18,6 +18,7 @@ func TestAssetMonitorIndependentDeviceSeriesHTTP(t *testing.T) {
 		value          float64
 	}
 	channels := []channel{{"network", "", 13}, {"network", "eth0", 71}, {"network", "eth1", 12}, {"storage", "", 10}}
+	channels = append(channels, channel{"disk_read_latency_ms", "nvme0n1", 71}, channel{"disk_read_latency_ms", "nvme1n1", 12})
 	for _, m := range []string{"storage_total", "storage", "storage_available"} {
 		channels = append(channels, channel{m, "/", 73}, channel{m, "/mnt/data 2", 15})
 	}
@@ -71,5 +72,14 @@ func TestAssetMonitorIndependentDeviceSeriesHTTP(t *testing.T) {
 	}
 	for _, q := range []string{"metric=network&device_id=%2Fdev", "metric=storage&device_id=relative", "metric=storage&device_id=%2Fmnt%2F..%2Ffoo", "metric=memory&device_id=eth0"} {
 		f.http(t, f.admin, "GET", monitorPath+"?cluster=dev&instance=local&"+q, "", 400)
+	}
+	for _, sample := range []string{
+		`"type":"machine","device_id":"/dev/sda","unit":"ops/s"`,
+		`"type":"machine","device_id":"sda","unit":"bytes/s"`,
+		`"type":"app","device_id":"sda","unit":"ops/s"`,
+		`"type":"machine","namespace":"orders","device_id":"sda","unit":"ops/s"`,
+	} {
+		body := fmt.Sprintf(`{"action":"ingest","cluster":"dev","instance":"local","samples":[{"asset_id":"multi","metric":"disk_read_iops","at_ms":%d,"status":"ok","value":1,%s}]}`, last, sample)
+		f.http(t, f.admin, "POST", monitorPath, body, 400)
 	}
 }

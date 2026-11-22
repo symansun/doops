@@ -23,6 +23,12 @@ const metrics: Record<string, string> = {
   storage_total: "存储总量",
   storage: "存储已用",
   storage_available: "存储可用",
+  disk_read_iops: "磁盘读 IOPS",
+  disk_write_iops: "磁盘写 IOPS",
+  disk_read_bytes_per_second: "磁盘读吞吐",
+  disk_write_bytes_per_second: "磁盘写吞吐",
+  disk_read_latency_ms: "磁盘平均读延迟",
+  disk_write_latency_ms: "磁盘平均写延迟",
 }
 const units: Record<string, string> = {
   cpu: "cores",
@@ -33,6 +39,12 @@ const units: Record<string, string> = {
   storage_total: "bytes",
   storage: "bytes",
   storage_available: "bytes",
+  disk_read_iops: "ops/s",
+  disk_write_iops: "ops/s",
+  disk_read_bytes_per_second: "bytes/s",
+  disk_write_bytes_per_second: "bytes/s",
+  disk_read_latency_ms: "ms",
+  disk_write_latency_ms: "ms",
 }
 const states: Record<string, string> = {
   missing: "缺数据",
@@ -86,6 +98,7 @@ const sourceName = (origin: string) => (origin === "k8s_top" ? "Agent · kubectl
 const assetKey = (a: Asset) => JSON.stringify([a.type, a.asset_id, a.namespace, a.origin])
 
 function deviceLabel(metric: string, id?: string) {
+  if (metric.startsWith("disk_")) return id ? `块设备 ${id}` : ""
   if (metric === "network") return id ? `网卡 ${id}` : "未指定网卡"
   if (metric === "storage" || metric === "storage_total" || metric === "storage_available")
     return id ? `挂载点 ${id}` : "未指定挂载点"
@@ -418,6 +431,7 @@ export function AgentMonitor({
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {Object.keys(metrics).flatMap((metric) => {
               const matches = detail.data!.series.filter((series) => series.metric === metric)
+              if (metric.startsWith("disk_") && !matches.length) return []
               const cards: Array<Series | undefined> = matches.length ? matches : [undefined]
               return cards.map((series) => (
                 <MetricCard

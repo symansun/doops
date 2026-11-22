@@ -96,8 +96,8 @@ export function DeploymentForm({ target, loadDraft, saveDraft, canSubmit, blocke
                   </span>
                   {field.multiline
                     ? <Textarea aria-label={field.label} required={!field.optional} rows={2} value={input[field.key]} placeholder={field.placeholder} onChange={(e) => change(field.key, e.target.value)} className="w-full resize-y" />
-                    : <Input aria-label={field.label} required={!field.optional} value={input[field.key]} placeholder={field.placeholder} spellCheck={false} autoComplete="off" onChange={(e) => change(field.key, e.target.value)} className={`w-full ${field.mono ? "font-mono text-[13px]" : ""}`} />}
-                  {field.hint && <span className="text-[11px] text-muted-foreground">{field.hint}</span>}
+                    : <Input aria-label={field.label} required={!field.optional} value={input[field.key]} placeholder={field.placeholder} spellCheck={false} autoComplete="off" onChange={(e) => change(field.key, e.target.value)} className={`w-full ${field.mono ? "font-mono text-xs" : ""}`} />}
+                  {field.hint && <span className="text-2xs text-muted-foreground">{field.hint}</span>}
                 </label>
               ))}
             </div>
@@ -124,7 +124,7 @@ export function DeploymentForm({ target, loadDraft, saveDraft, canSubmit, blocke
         <Button type="submit" variant="primary" disabled={controls.submitDisabled} className="mt-4 w-full">
           <Rocket aria-hidden="true" className="size-4" />{submitting ? "正在提交…" : "提交发布"}
         </Button>
-        {!canSubmit && blockedReason && <p className="mt-2 text-center text-[11px] text-muted-foreground">{blockedReason}</p>}
+        {!canSubmit && blockedReason && <p className="mt-2 text-center text-2xs text-muted-foreground">{blockedReason}</p>}
       </Card>
     </form>
   )

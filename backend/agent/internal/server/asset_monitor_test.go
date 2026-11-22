@@ -166,6 +166,9 @@ func TestAssetMonitorScopeHistoryAndRecovery(t *testing.T) {
 	}
 	for kind := range monitorKinds {
 		for metric, unit := range monitorUnits {
+			if strings.HasPrefix(metric, "disk_") {
+				continue // Disk I/O has its own machine-only HTTP coverage.
+			}
 			p := monitorInput{monitorAsset: monitorAsset{Type: kind, AssetID: "asset-1"}, Metric: metric, Unit: unit, monitorPoint: monitorPoint{At: start, Status: "ok", Value: &value}}
 			if metric == "storage_total" || metric == "storage_available" {
 				p.DeviceID = "/"

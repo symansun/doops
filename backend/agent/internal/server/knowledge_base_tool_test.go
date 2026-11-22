@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -54,7 +55,7 @@ func TestKnowledgeBaseToolLifecycle(t *testing.T) {
 	if len(parsed.Documents) != 1 || parsed.Documents[0].Name != "runbook.md" || parsed.Documents[0].Size == 0 {
 		t.Fatalf("list documents = %+v", parsed.Documents)
 	}
-	if parsed.Usage.Documents != 1 || parsed.Usage.Max != knowledgeBaseMaxDocuments() {
+	if parsed.Usage.Documents != 1 {
 		t.Fatalf("list usage = %+v", parsed.Usage)
 	}
 
@@ -99,24 +100,6 @@ func TestKnowledgeBaseToolRejectsPathsOutsideRoot(t *testing.T) {
 	if _, err := handleKnowledgeBaseCall(args); err == nil {
 		t.Fatal("deleting a missing document was reported as success")
 	}
-}
-
-func TestKnowledgeBaseQuotaStopsNewDocuments(t *testing.T) {
-	kb := t.TempDir()
-	t.Setenv("DOOPS_KB_ROOT", kb)
-	t.Setenv("DOOPS_KB_MAX_DOCUMENTS", "1")
-
-	knowledgeBaseCall(t, map[string]interface{}{"operation": "write", "name": "first.md", "content": "one"})
-	args, err := json.Marshal(map[string]string{"session_id": "kb-tool", "operation": "write", "name": "second.md", "content": "two"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = handleKnowledgeBaseCall(args)
-	if err == nil || !strings.Contains(err.Error(), "knowledge base is full") {
-		t.Fatalf("second document was accepted: %v", err)
-	}
-	// Rewriting an existing document does not consume a new slot.
-	knowledgeBaseCall(t, map[string]interface{}{"operation": "write", "name": "first.md", "content": "one again"})
 }
 
 func TestKnowledgeBaseTrashExpiresWithTheSameSchedule(t *testing.T) {
@@ -182,5 +165,64 @@ func TestKnowledgeBaseAuditSummaryOmitsContent(t *testing.T) {
 	unknown, _ := json.Marshal(map[string]string{"operation": "drop"})
 	if action := knowledgeBaseToolAction(unknown); action != "" {
 		t.Fatalf("unknown operation action = %q, want empty so the Gateway rejects it", action)
+	}
+}
+// A document can embed screenshots, so an attachment is stored, listed and read
+// back as base64 with its MIME type; it is not treated as a text document.
+func TestKnowledgeBaseImageRoundTrip(t *testing.T) {
+	kb := t.TempDir()
+	t.Setenv("DOOPS_KB_ROOT", kb)
+
+	// Minimal PNG signature plus a payload; the bytes never need to decode.
+	raw := []byte("\x89PNG\r\n\x1a\n-synthetic-screenshot")
+	result := knowledgeBaseCall(t, map[string]interface{}{
+		"operation": "write",
+		"name":      "chart.png",
+		"encoding":  "base64",
+		"content":   base64.StdEncoding.EncodeToString(raw),
+	})
+	if !strings.Contains(result, "Wrote") {
+		t.Fatalf("image write result = %q", result)
+	}
+
+	read := knowledgeBaseCall(t, map[string]interface{}{"operation": "read", "name": "chart.png"})
+	var payload struct {
+		Kind     string `json:"kind"`
+		Mime     string `json:"mime"`
+		Encoding string `json:"encoding"`
+		Data     string `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(read), &payload); err != nil {
+		t.Fatalf("image read is not JSON: %v (%q)", err, read)
+	}
+	if payload.Kind != "image" || payload.Mime != "image/png" || payload.Encoding != "base64" {
+		t.Fatalf("image read payload = %+v", payload)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(payload.Data)
+	if err != nil || string(decoded) != string(raw) {
+		t.Fatalf("image bytes did not round trip: %v", err)
+	}
+
+	list := knowledgeBaseCall(t, map[string]interface{}{"operation": "list"})
+	var listed struct {
+		Documents []struct {
+			Name string `json:"name"`
+			Kind string `json:"kind"`
+		} `json:"documents"`
+	}
+	if err := json.Unmarshal([]byte(list), &listed); err != nil {
+		t.Fatalf("list result is not JSON: %v", err)
+	}
+	if len(listed.Documents) != 1 || listed.Documents[0].Kind != "image" {
+		t.Fatalf("list documents = %+v", listed.Documents)
+	}
+
+	// An extension the browser would execute is not an accepted image.
+	args, _ := json.Marshal(map[string]string{
+		"session_id": "kb-tool", "operation": "write", "name": "chart.svg",
+		"encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte("<svg/>")),
+	})
+	if _, err := handleKnowledgeBaseCall(args); err == nil {
+		t.Fatal("svg attachment was accepted")
 	}
 }
