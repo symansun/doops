@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGatewayTargetsURLUsesVersionedEndpoint(t *testing.T) {
@@ -83,5 +85,37 @@ func TestGatewayTargetUnavailableMessageDoesNotClaimOffline(t *testing.T) {
 		if !strings.Contains(message, want) {
 			t.Fatalf("message missing %q: %s", want, message)
 		}
+	}
+}
+
+func TestPrintTargetsMarksUnenrolledTargets(t *testing.T) {
+	var out strings.Builder
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	printTargets(&out, []GatewayTarget{
+		{Cluster: "dev", Instance: "local", Key: "dev/local", Status: "idle", Enrolled: true, LastSeen: now},
+		{Cluster: "dev", Instance: "other", Key: "dev/other", Status: "idle", Enrolled: false, LastSeen: now},
+	})
+	rendered := out.String()
+	if !strings.Contains(rendered, "ENROLLED") {
+		t.Fatalf("target table has no enrollment column:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "  NOT ENROLLED: dev/other connected without a target enrollment token") {
+		t.Fatalf("unenrolled target has no marker:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "NOT ENROLLED: dev/local") {
+		t.Fatalf("enrolled target was marked unenrolled:\n%s", rendered)
+	}
+}
+
+func TestGatewayTargetEnrollmentDecodesAsBooleanOnly(t *testing.T) {
+	var target GatewayTarget
+	if err := json.Unmarshal([]byte(`{"cluster":"dev","instance":"local","enrolled":false}`), &target); err != nil {
+		t.Fatal(err)
+	}
+	if target.Enrolled || target.enrollmentLabel() != "NO (not enrolled)" {
+		t.Fatalf("enrolled=%v label=%q", target.Enrolled, target.enrollmentLabel())
+	}
+	if err := json.Unmarshal([]byte(`{"cluster":"dev","instance":"local","enrolled":"dga_aen_x_canary"}`), &target); err == nil {
+		t.Fatal("a non-boolean enrollment value must not decode")
 	}
 }

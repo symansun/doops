@@ -237,6 +237,10 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 
 `doops targets` 的状态：
 
+`ENROLLED=NO (not enrolled)` 表示该在线 Agent 只带 `cluster/instance` 连入、没有使用该 target
+的 enrollment token；Gateway 不向它下发或发送任何凭据，行下会打印 NOT ENROLLED 提示，
+迁移步骤见 [DOOPS_GATEWAY_TUNNEL.md](DOOPS_GATEWAY_TUNNEL.md)。
+
 这些状态只描述 Gateway 操作计数。`ACTIVE=0 / QUEUED=0` 不代表 do-agent 内部名额空闲。
 增加 `--admission` 会通过节点信息 RPC 读取 `runtime/gcStats` 的 `admission.current`：
 `limit`、`inUse`、`available`、`holders`（session/turn）及

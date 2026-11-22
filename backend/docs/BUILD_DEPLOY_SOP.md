@@ -63,6 +63,12 @@ CLI 安装必须把 Release Asset 内嵌 commit 对应的 skill/docs 一起安�
 自动释放锁，不能删除 `.lock` 文件强行接管。首次升级到此版本必须先停止未实现该锁
 的旧服务；这不是跨主机分布式租约。
 
+升级到要求 Agent enrollment 的版本时，`-allow-open-agent-registration` 默认关闭：没有
+enrollment token 的旧 Agent 会收到 `401` 并按退避重试。发布前先按
+[DOOPS_GATEWAY_TUNNEL.md](DOOPS_GATEWAY_TUNNEL.md) 为每个 target 签发 token 并注入 Agent；
+`doops targets` 的 `ENROLLED` 列为 `NO (not enrolled)` 即表示尚未完成。仅在迁移期可以
+临时以 `-allow-open-agent-registration` 启动，启动日志会打印醒目警告，迁移完成后必须移除。
+
 固定发布入口：
 
 ```bash

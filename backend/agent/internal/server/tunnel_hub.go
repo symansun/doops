@@ -31,6 +31,10 @@ type GatewayHubOptions struct {
 	LoginFailureLimit     int
 	LoginFailureWindow    time.Duration
 	MaxQueuedPerTarget    int
+	// AllowOpenAgentRegistration admits an Agent without an enrollment token
+	// to a target with no confirmed enrollment. Closed by default; it exists
+	// only to migrate Agents that were deployed before enrollment existed.
+	AllowOpenAgentRegistration bool
 }
 
 type GatewayHub struct {
@@ -215,8 +219,11 @@ type GatewayTarget struct {
 	BusyReason    string    `json:"busy_reason,omitempty"`
 	ActiveOps     int       `json:"active_ops"`
 	QueuedOps     int       `json:"queued_ops"`
-	Resources     []string  `json:"resources,omitempty"`
-	Sessions      []string  `json:"sessions,omitempty"`
+	// Enrolled reports whether the live session authenticated with a target
+	// enrollment token. The token and its ID never leave the Gateway.
+	Enrolled  bool     `json:"enrolled"`
+	Resources []string `json:"resources,omitempty"`
+	Sessions  []string `json:"sessions,omitempty"`
 }
 
 type gatewayWSMessage struct {
@@ -467,6 +474,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if err != nil {
 		panic(err)
 	}
+	registry.allowOpenRegistration = opts.AllowOpenAgentRegistration
 	if opts.AgentLease <= 0 {
 		opts.AgentLease = 90 * time.Second
 	}
@@ -499,6 +507,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		registry,
 		opts.AgentLease,
 		newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
+		opts.AllowOpenAgentRegistration,
 	)
 	hub.client = NewClientService(store, registry, opts)
 	hub.client.hub = hub
@@ -2745,6 +2754,7 @@ func (a *GatewayAgent) snapshot() GatewayTarget {
 		Key:           a.Key,
 		Remote:        a.Remote,
 		TokenID:       a.TokenID,
+		Enrolled:      a.TokenID != "",
 		ReleaseCommit: a.ReleaseCommit,
 		ConnectedAt:   a.ConnectedAt,
 		LastSeen:      a.LastSeen,

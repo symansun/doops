@@ -639,7 +639,9 @@ Grant：`active -> revoking -> revoked`。
 
 任何 CLI、Web、audit、verification 或 Agent 输出都不得出现 payload value。内部
 Gateway-to-Agent 凭据控制面会把解密 payload 临时传给目标 doops-agent 物化工具；
-payload 不进入公开 prompt、doagent 上下文或 metadata binding。
+payload 不进入公开 prompt、doagent 上下文或 metadata binding。只有用该 target 的
+enrollment token 认证的在线会话才会收到 payload；同一 cluster/instance 上未 enrollment
+的会话既拿不到重连交付，也会在物化前被拒绝（`credential_target_unenrolled`）。
 
 注意：Resource `state=active` 不等于存在 active Version。数据库执行必须同时满足：
 active resource、active version、目标上的 active target 绑定和当前用户的目标操作权限，
@@ -671,6 +673,10 @@ CLI 在该类别后给出 `next:` 步骤：先 `credential list --target` 查看
   对每个 active target 执行 `credential verify`。
 - `credential preflight failed`：清单中的 credentialRef 缺失、use 不匹配、grant 已吊销
   或同名资源不唯一。修复受管凭据和精确授权，不得读取本地 secret 文件兜底。
+- `credential_target_unenrolled`（409）：目标在线，但它的 Agent 会话没有用该 target 的
+  enrollment token 认证（`doops targets` 的 `ENROLLED` 为 `NO (not enrolled)`）。Gateway 在解密前
+  就拒绝，不向该会话发送任何 payload，也不记录物化。为该 target 签发 enrollment token、
+  让 Agent 带着它重连后重试；不要用开放注册绕过。
 - 物化失败按返回的错误类别定位目标或权限状态，不重试、不猜测，不把 payload 放入任务。
 
 ## 审计

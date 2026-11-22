@@ -102,6 +102,11 @@ doops -session preflight exec --target <自动发现的 target> --cmd hostname
    首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回
    `~/.agent/skills/doops/config.json`；已有路由的名称、别名和描述不会被改写。
    因此操作员不需要事先知道 Agent 的 `cluster/instance`。
+   `doops targets` 的 `ENROLLED` 列显示该 target 是否用该 target 的 enrollment token
+   连接：`NO (not enrolled)` 表示该 Agent 只用 `cluster/instance` 连入，Gateway 不会向它
+   下发或发送任何凭据，也不会把它当作该 target 的可信身份；为该 target 签发 enrollment
+   token 并以它重启该 Agent，步骤见
+   [DOOPS_GATEWAY_TUNNEL.md](DOOPS_GATEWAY_TUNNEL.md)。
 
 约束：
 
@@ -242,6 +247,8 @@ Kubernetes `cluster-admin` 也不等于已取得其他节点或 hypervisor 的�
    Agent 身份，不覆盖现有实例；失败按本次清理方案仅处理本次创建的资源。
 4. 检查 Deployment 收敛、实际新 Pod Ready 和 imageID，登录 Gateway 并核对唯一
    `cluster/instance`、`release_commit`、`upgradeAudit v1`，再完成下文安装验收。
+   Gateway 默认要求提前签发 enrollment token（`values.gateway.enrollmentTokenSecret`）；
+   只带 `cluster/instance` 的新 Agent 会被拒绝（`401`），`doops targets` 也不会出现它。
    未完成 Gateway 注册与验收前，不宣称 target 已可用。
 
 初装完成后，Agent 生命周期切换统一通过授权、受审计的 Gateway：
@@ -264,7 +271,10 @@ Kubernetes `cluster-admin` 也不等于已取得其他节点或 hypervisor 的�
 ## 空服务器 Docker 首装
 
 支持使用 systemd 的 Ubuntu/Debian，amd64/arm64（所选发布镜像必须包含对应架构）。
-这是首次安装入口，不用于覆盖已有容器。以下命令从仓库根执行，Unicom 示例：
+这是首次安装入口，不用于覆盖已有容器。Agent 必须带该 target 的 enrollment token 注册：
+在 Gateway 执行 `doops-gateway enroll create -cluster <cluster> -instance <instance>`，
+把输出的明文写入仅 root 可读的文件（含 `DOOPS_AGENT_ENROLL_TOKEN=<token>`），用
+`--enroll-token-file` 传入；不带该参数时 Agent 无法通过默认关闭的注册。以下命令从仓库根执行，Unicom 示例：
 
 ```bash
 sudo bash backend/scripts/bootstrap-host-agent.sh \

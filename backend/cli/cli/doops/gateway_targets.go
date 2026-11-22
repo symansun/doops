@@ -30,8 +30,19 @@ type GatewayTarget struct {
 	BusyReason    string    `json:"busy_reason"`
 	ActiveOps     int       `json:"active_ops"`
 	QueuedOps     int       `json:"queued_ops"`
-	Resources     []string  `json:"resources"`
-	Sessions      []string  `json:"sessions"`
+	// Enrolled is true when the live Agent authenticated with the enrollment
+	// token of this target. The Gateway never sends token IDs.
+	Enrolled  bool     `json:"enrolled"`
+	Resources []string `json:"resources"`
+	Sessions  []string `json:"sessions"`
+}
+
+// enrollmentLabel is the target's enrollment marker for user-facing columns.
+func (t GatewayTarget) enrollmentLabel() string {
+	if t.Enrolled {
+		return "yes"
+	}
+	return "NO (not enrolled)"
 }
 
 func fetchGatewayTargets(gateway, token string) ([]GatewayTarget, error) {
