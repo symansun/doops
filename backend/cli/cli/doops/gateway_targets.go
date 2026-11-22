@@ -200,3 +200,35 @@ func isLoopbackHost(host string) bool {
 	}
 	return false
 }
+
+// printTargets renders the live target table. It shows only the enrollment
+// boolean; the Gateway never sends enrollment token IDs.
+func printTargets(out io.Writer, targets []GatewayTarget) {
+	fmt.Fprintf(out, "%-18s %-18s %-8s %-16s %-7s %-7s %-17s %-40s %-28s %-24s\n", "CLUSTER", "INSTANCE", "BUSY", "STATUS", "ACTIVE", "QUEUED", "ENROLLED", "RELEASE_COMMIT", "RESOURCES", "LAST_SEEN")
+	fmt.Fprintln(out, strings.Repeat("-", 196))
+	for _, item := range targets {
+		status := item.Status
+		if status == "" {
+			if item.Busy {
+				status = "busy"
+			} else {
+				status = "idle"
+			}
+		}
+		if item.BusyReason != "" {
+			status += ":" + item.BusyReason
+		}
+		resources := strings.Join(item.Resources, ",")
+		if len(resources) > 27 {
+			resources = resources[:24] + "..."
+		}
+		releaseCommit := item.ReleaseCommit
+		if releaseCommit == "" {
+			releaseCommit = "<unknown>"
+		}
+		fmt.Fprintf(out, "%-18s %-18s %-8v %-16s %-7d %-7d %-17s %-40s %-28s %-24s\n", item.Cluster, item.Instance, item.Busy, status, item.ActiveOps, item.QueuedOps, item.enrollmentLabel(), releaseCommit, resources, item.LastSeen.Format(time.RFC3339))
+		if !item.Enrolled {
+			fmt.Fprintf(out, "  NOT ENROLLED: %s connected without a target enrollment token; it receives and can use no credentials. Issue its enrollment token with `doops-gateway enroll create` (see backend/docs/DOOPS_GATEWAY_TUNNEL.md) and connect this Agent with it.\n", item.Key)
+		}
+	}
+}
