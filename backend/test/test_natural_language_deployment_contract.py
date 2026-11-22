@@ -19,12 +19,18 @@ CREDENTIAL_DOC = BACKEND / "docs" / "CREDENTIAL_RESOURCES.md"
 CI_GUIDE = ROOT / "components" / "cicd-guide.tsx"
 
 
+def _server_implementation():
+    server = BACKEND / "agent" / "internal" / "server"
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(server.glob("*.go"))
+        if not path.name.endswith("_test.go")
+    )
+
+
 def test_v3_release_contract_is_explicit_natural_language_apply():
     cli = CLI.read_text(encoding="utf-8")
     ci_guide = CI_GUIDE.read_text(encoding="utf-8")
-    handler_ws = (BACKEND / "agent" / "internal" / "server" / "handler_ws.go").read_text(
-        encoding="utf-8"
-    )
     helm_mcp = (
         BACKEND / "agent" / "internal" / "server" / "k8s_mcp_stdio.go"
     ).read_text(encoding="utf-8")
@@ -45,7 +51,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "image: alpine:3.22@sha256:<PINNED_ALPINE_DIGEST>" in ci_guide
     assert "backend/scripts/install.sh" in ci_guide
     assert "dry-run" not in ci_guide
-    assert "Current DoOps session_id" not in handler_ws
+    assert "Current DoOps session_id" not in _server_implementation()
     assert '"value_files": map[string]interface{}' in helm_mcp
     assert '"values": map[string]interface{}' not in helm_mcp
 
@@ -61,17 +67,12 @@ def test_release_guidance_does_not_build_images_on_business_targets():
 
 
 def test_apply_does_not_depend_on_workspace_commit_evidence():
-    handler_ws = (BACKEND / "agent" / "internal" / "server" / "handler_ws.go").read_text(
-        encoding="utf-8"
-    )
-    workspace_upload = (
-        BACKEND / "agent" / "internal" / "server" / "workspace_upload.go"
-    ).read_text(encoding="utf-8")
+    server = _server_implementation()
     cli = CLI.read_text(encoding="utf-8")
 
-    assert "doagent_apply_workspace_commit_required" not in handler_ws
-    assert "validateWorkspaceCommitBinding" not in workspace_upload
-    assert "validateBareWorkspaceCommitBinding" not in workspace_upload
+    assert "doagent_apply_workspace_commit_required" not in server
+    assert "validateWorkspaceCommitBinding" not in server
+    assert "validateBareWorkspaceCommitBinding" not in server
     assert "workspace_commit" not in cli
 
 
