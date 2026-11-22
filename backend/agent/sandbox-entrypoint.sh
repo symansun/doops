@@ -255,19 +255,52 @@ start_doagent() {
     return 1
 }
 
+# probe_buildkit asks the daemon to solve a trivial scratch build. That is the
+# same code path an image build takes, so a daemon that started without the
+# privileges the worker needs fails here rather than in the first real build.
+probe_buildkit() {
+    local output
+    output="$(buildctl --addr unix:///run/buildkit/buildkitd.sock build \
+        --frontend dockerfile.v0 --local context=/ --local dockerfile=/opt/buildkit-probe \
+        2>&1)" && return 0
+    echo "${output}" >>/var/log/buildkitd.log
+    return 1
+}
+
 start_buildkit() {
-    if command -v buildkitd >/dev/null 2>&1 && command -v buildctl >/dev/null 2>&1; then
-        mkdir -p /run/buildkit
-        echo "🔨 Starting buildkitd (OCI worker)..."
-        buildkitd --containerd-worker=false \
-            --addr unix:///run/buildkit/buildkitd.sock \
-            &>/var/log/buildkitd.log &
-        PIDS_TO_CLEANUP+=("$!")
-        sleep 2
-        echo "✅ buildkitd started (PID: ${PIDS_TO_CLEANUP[-1]})"
-    else
-        echo "⚠️  buildkitd/buildctl not found, image build will not work"
+    if ! command -v buildkitd >/dev/null 2>&1 || ! command -v buildctl >/dev/null 2>&1; then
+        echo "image build unavailable: buildkitd/buildctl not installed in this image"
+        return 0
     fi
+    mkdir -p /run/buildkit
+    # A scratch-only Dockerfile: the probe never pulls a base image or reads the
+    # node root, and removes its own context after the probe.
+    rm -rf /opt/buildkit-probe
+    mkdir -p /opt/buildkit-probe
+    printf 'FROM scratch\n' >/opt/buildkit-probe/Dockerfile
+    echo "🔨 Starting buildkitd (OCI worker)..."
+    buildkitd --containerd-worker=false \
+        --addr unix:///run/buildkit/buildkitd.sock \
+        &>/var/log/buildkitd.log &
+    local buildkit_pid="$!"
+    PIDS_TO_CLEANUP+=("${buildkit_pid}")
+    for _ in $(seq 1 20); do
+        if probe_buildkit; then
+            rm -rf /opt/buildkit-probe
+            echo "✅ buildkitd started (PID: ${buildkit_pid})"
+            return 0
+        fi
+        if ! kill -0 "${buildkit_pid}" 2>/dev/null; then
+            break
+        fi
+        sleep 0.5
+    done
+    # The Agent keeps serving exec, doagent and Kubernetes tools without image
+    # builds. Say so instead of letting every build fail later with a raw
+    # buildctl error.
+    rm -rf /opt/buildkit-probe
+    echo "image build unavailable: buildkitd requires a privileged container (e.g. an Agent Helm install with securityContext.privileged=false)" >&2
+    tail -n 5 /var/log/buildkitd.log >&2 || true
 }
 
 DO_AGENT_PORT="${DO_AGENT_PORT:-9000}"

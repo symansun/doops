@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // rule is one command shape the Agent refuses. Every rule names the supported
@@ -27,14 +28,46 @@ var blockRules = []rule{
 	},
 }
 
-// BlockedError reports which rule refused a command and what to do instead.
+// MatchedLimit bounds the Matched excerpt in BlockedError. Only the first
+// MatchedLimit bytes of the submitted command are ever copied; the rest never
+// leaves the filter.
+const MatchedLimit = 80
+
+// matchContext bounds how much of the command on either side of the match is
+// kept. It stays well below MatchedLimit.
+const matchContext = 24
+
+var (
+	// Redactor redacts credential-like text from a Matched excerpt. The server
+	// package owns the single redaction helper and installs it at startup.
+	Redactor func(string) string
+	// MatchedCap keeps a Matched excerpt within limit bytes of valid UTF-8
+	// without splitting a rune. The server package installs its utf8 helper.
+	MatchedCap func(string, int) string
+)
+
+// BlockedError reports which rule refused a command, where the rule matched and
+// what to do instead.
+//
+// Rule and Hint are trusted configuration. Matched is derived from the
+// submitted command, so it is redacted and escaped before it is reported to a
+// caller. It is never raw tool output.
 type BlockedError struct {
 	Rule string
 	Hint string
+	// Matched is the redacted, quoted, at most MatchLimit-byte excerpt of the
+	// command where the rule matched. Empty when the excerpt cannot be shown.
+	Matched string
 }
 
+// Error keeps the historical blocked_command(rule): next: hint prefix, which
+// ReportedDenial and operators parse, and appends where the rule matched.
 func (e *BlockedError) Error() string {
-	return fmt.Sprintf("blocked_command(%s): next: %s", e.Rule, e.Hint)
+	message := fmt.Sprintf("blocked_command(%s): next: %s", e.Rule, e.Hint)
+	if e.Matched != "" {
+		message += fmt.Sprintf("; matched: %q", e.Matched)
+	}
+	return message
 }
 
 const RulesEnv = "DOOPS_COMMAND_DENY_RULES"
@@ -85,16 +118,61 @@ func Check(command string) error {
 	if err != nil {
 		return err
 	}
+	if denied := matchCommand(rules, command); denied != nil {
+		return denied
+	}
+	return nil
+}
+
+// matchCommand returns the first rule that matches command, with a bounded
+// excerpt of the match. The excerpt is escaped first, then redacted by the same
+// helper that redacts command summaries, and cut to MatchedLimit bytes.
+func matchCommand(rules []rule, command string) *BlockedError {
+	command = strings.TrimSpace(command)
 	for _, r := range rules {
-		if r.match.MatchString(strings.TrimSpace(command)) {
-			return &BlockedError{Rule: r.name, Hint: r.hint}
+		location := r.match.FindStringIndex(command)
+		if location == nil {
+			continue
 		}
+		denied := &BlockedError{Rule: r.name, Hint: r.hint}
+		start := max(location[0]-matchContext, 0)
+		if start > 0 {
+			for start < location[0] && !utf8.RuneStart(command[start]) {
+				start++
+			}
+		}
+		end := min(location[1]+matchContext, len(command))
+		for end < len(command) && !utf8.RuneStart(command[end]) {
+			end++
+		}
+		excerpt := command[start:end]
+		if Redactor != nil {
+			excerpt = Redactor(excerpt)
+		}
+		if MatchedCap != nil {
+			excerpt = MatchedCap(excerpt, MatchedLimit)
+		} else if len(excerpt) > MatchedLimit {
+			excerpt = ""
+		}
+		if strings.TrimSpace(excerpt) != "" {
+			if start > 0 {
+				excerpt = "..." + excerpt
+			}
+			if end < len(command) {
+				excerpt += "..."
+			}
+			denied.Matched = excerpt
+		}
+		return denied
 	}
 	return nil
 }
 
 // ReportedDenial extracts a public diagnostic from an already-failed native
 // tool call. Only return locally configured text, never arbitrary tool output.
+//
+// A legacy message without the matched excerpt is also accepted as a whole
+// line, so an older Agent's text still maps to its rule.
 func ReportedDenial(output string) *BlockedError {
 	rules, err := configuredRules()
 	if err != nil {
@@ -102,7 +180,13 @@ func ReportedDenial(output string) *BlockedError {
 	}
 	for _, r := range rules {
 		denied := &BlockedError{Rule: r.name, Hint: r.hint}
-		if strings.Contains(output, denied.Error()) {
+		prefix := fmt.Sprintf("blocked_command(%s): next: %s", denied.Rule, denied.Hint)
+		offset := strings.Index(output, prefix)
+		if offset < 0 {
+			continue
+		}
+		rest := output[offset+len(prefix):]
+		if rest == "" || rest[0] == '\n' || rest[0] == '\r' || rest[0] == ';' || strings.HasPrefix(rest, `; matched: `) {
 			return denied
 		}
 	}

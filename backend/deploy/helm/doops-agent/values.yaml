@@ -1,5 +1,8 @@
 image:
   repository: ""
+  # Recommended: leave tag empty and pin image.digest to the verified
+  # sha256 the publisher built. `latest` is kept as the default for backward
+  # compatibility only; it is not an immutable reference.
   tag: latest
   digest: ""
   pullPolicy: Always
@@ -16,9 +19,19 @@ serviceAccount:
   name: ""
 
 rbac:
-  # Explicitly manage a dedicated ServiceAccount and its cluster-admin binding.
-  # Requires kubeconfig.source=serviceAccount and serviceAccount.name.
+  # Explicitly manage a dedicated ServiceAccount and its RoleBinding (or
+  # ClusterRoleBinding when namespaces is empty). Requires
+  # kubeconfig.source=serviceAccount and serviceAccount.name.
   create: false
+  # The ClusterRole granted to the ServiceAccount; existing ClusterRole or
+  # namespaced Role name, never a rule list here.
+  clusterRole: cluster-admin
+  # Empty binds clusterRole cluster-wide through a ClusterRoleBinding named
+  # <namespace>-<serviceAccount>-cluster-admin. A non-empty list binds the role
+  # in each namespace through RoleBindings named
+  # <namespace>-<serviceAccount>-<clusterRole>. roleRef is immutable, so the
+  # binding name follows the role.
+  namespaces: []
 
 kubeconfig:
   # mounted: /root/.kube/config comes from a volume.
@@ -39,6 +52,10 @@ proxy:
   # Empty rejects every public proxy upstream until an operator explicitly allows one.
   allowedHosts: ""
 
+# Additional command deny rules, as guardrails against mistakes: [{name, match,
+# hint}]. This is not a security boundary. A target grant still authorizes every
+# command, and any rule can be bypassed by a caller. Do not present these rules
+# as protection of one user from another.
 commandDenyRules: []
 
 # Agent 侧单条命令的保险上限（例如 "2h"）。留空表示跟随 Gateway 的
@@ -57,6 +74,15 @@ hostAliases: []
 # grants and audit still control the nsenter command.
 hostAccess:
   enabled: true
+
+securityContext:
+  # Privileged is required for hostAccess and for the Containerfile-style image
+  # builds that buildkitd serves. With false the Pod still runs as root in its
+  # own namespaces, cannot escalate, and drops every Linux capability; host
+  # access and image builds then do not work. The render fails for
+  # hostAccess.enabled with privileged=false instead of installing a Pod that
+  # silently misses what the values ask for.
+  privileged: true
 
 volumeMounts: []
 
