@@ -45,10 +45,23 @@ func (h *GatewayHub) RunInternalToolCall(ctx context.Context, cluster, instance,
 	return h.client.RunInternalToolCall(ctx, cluster, instance, tool, args)
 }
 
+// internalNoReconnectWait marks best-effort cleanup calls that must not hold a
+// request (or a revocation) for the full reconnect grace. Delivery paths keep
+// the grace; cleanup fails fast and leaves the record for a later retry.
+type internalNoReconnectWait struct{}
+
+func withoutReconnectWait(ctx context.Context) context.Context {
+	return context.WithValue(ctx, internalNoReconnectWait{}, true)
+}
+
 func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instance, tool string, args map[string]interface{}) (output string, finalErr error) {
 	// Internal calls follow the same reconnect grace as client RPCs, bounded by
 	// the caller's context: a canceled caller never waits for a reconnecting Agent.
-	agent := h.registry.Wait(ctx, cluster, instance, h.targetReconnectGrace(tool))
+	grace := h.targetReconnectGrace(tool)
+	if ctx.Value(internalNoReconnectWait{}) != nil {
+		grace = 0
+	}
+	agent := h.registry.Wait(ctx, cluster, instance, grace)
 	if agent == nil || agent.Cluster != cluster || agent.Instance != instance {
 		return "", fmt.Errorf("target offline: %s/%s", cluster, instance)
 	}

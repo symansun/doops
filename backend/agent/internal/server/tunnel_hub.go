@@ -1110,6 +1110,11 @@ func clientRPCRequestKey(id interface{}) (string, bool) {
 func (h *ClientService) targetReconnectGrace(tool string) time.Duration {
 	switch tool {
 	case "doops_node_info", "doops_task_status":
+		// Liveness probes must report the current state.
+		return 0
+	case "doops_credential_materialize", "doops_credential_cleanup", "doops_credential_import":
+		// Credential delivery and cleanup bind to one target and must fail (or
+		// succeed) promptly instead of holding a request for the reconnect grace.
 		return 0
 	}
 	return h.opts.TargetReconnectGrace

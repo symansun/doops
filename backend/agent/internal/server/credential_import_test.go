@@ -104,6 +104,7 @@ fi
 		requireEventually(t, 3*time.Second, func() bool { return f.hub.client.registry.Get("dev", "local") == nil })
 	})
 	waitForGatewayAgent(t, f.hub, "dev", "local")
+	markTestAgentEnrolled(t, f.hub, "dev", "local")
 	return f, argsLog
 }
 

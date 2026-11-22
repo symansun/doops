@@ -949,7 +949,7 @@ func (h *GatewayHub) cleanupCredentialVersion(ctx context.Context, request Crede
 		// not remove it.
 		arguments["authfile_only"] = true
 	}
-	if _, err := h.RunInternalToolCall(ctx, request.Cluster, request.Instance, "doops_credential_cleanup", arguments); err != nil {
+	if _, err := h.RunInternalToolCall(withoutReconnectWait(ctx), request.Cluster, request.Instance, "doops_credential_cleanup", arguments); err != nil {
 		return err
 	}
 	return h.store.MarkCredentialMaterializationCleaned(request)
@@ -965,7 +965,7 @@ func (h *GatewayHub) cleanupCredentialMaterializationContext(
 		"namespace": request.Scope.Namespace, "workload": request.Scope.Workload,
 		"credential_type": request.CredentialType,
 	}
-	if _, err := h.RunInternalToolCall(ctx, request.Cluster, request.Instance, "doops_credential_cleanup", arguments); err != nil {
+	if _, err := h.RunInternalToolCall(withoutReconnectWait(ctx), request.Cluster, request.Instance, "doops_credential_cleanup", arguments); err != nil {
 		return err
 	}
 	return h.store.MarkCredentialMaterializationContextCleaned(request)
