@@ -233,9 +233,18 @@ fetch_target_keys() {
     # The CLI filters by route and prints a human-readable footer after its row.
     # Require one identifiable row, never count the footer as another Agent.
     if ! key=$(doops -session "${VERIFY_SESSION}" targets --target "$route" |
-      awk '$1 == "CLUSTER" && $2 == "INSTANCE" && $3 == "BUSY" { header = 1; next }
+      awk '$1 == "CLUSTER" && $2 == "INSTANCE" && $3 == "BUSY" {
+             header = 1; has_enrollment = ($7 == "ENROLLED"); next
+           }
            header && /^-+$/ { rows = 1; next }
            rows && $1 == "ACTIVE/QUEUED" { rows = 0; next }
+           # Newer CLIs annotate an unenrolled row. Only associate a warning
+           # with the target we actually read; never parse it as a target.
+           rows && $1 == "NOT" && $2 == "ENROLLED:" {
+             if (!has_enrollment || n != 1 || $3 != key || warned++) invalid = 1
+             else print "NOT ENROLLED: " key > "/dev/stderr"
+             next
+           }
            rows && NF {
              if ($3 != "true" && $3 != "false") invalid = 1
              n++; key = $1 "/" $2

@@ -74,6 +74,9 @@ def test_gateway_deploy_rejects_binary_without_exact_source_commit():
 @pytest.mark.parametrize(("mode", "routes", "expected"), [
     ("normal", ["first"], "success"),
     ("normal", ["first", "second"], "success"),
+    ("enrolled", ["first", "second"], "success"),
+    ("unenrolled", ["first", "second"], "success"),
+    ("foreign-warning", ["first", "second"], "baseline_failure"),
     ("alias", ["first", "alias"], "baseline_failure"),
     ("denied", ["first", "second"], "baseline_failure"),
     ("empty", ["first", "second"], "baseline_failure"),
@@ -107,9 +110,21 @@ def test_route_reconnect_gate(tmp_path, mode, routes, expected):
     echo "$stage:$route" >> "$TRACE"
     identity=$route
     if [[ $MODE == alias && $route == alias ]]; then identity=first; fi
-    echo 'CLUSTER INSTANCE BUSY STATUS ACTIVE QUEUED RELEASE_COMMIT RESOURCES LAST_SEEN'
+    case "$MODE" in
+      enrolled|unenrolled|foreign-warning) echo 'CLUSTER INSTANCE BUSY STATUS ACTIVE QUEUED ENROLLED RELEASE_COMMIT RESOURCES LAST_SEEN' ;;
+      *) echo 'CLUSTER INSTANCE BUSY STATUS ACTIVE QUEUED RELEASE_COMMIT RESOURCES LAST_SEEN' ;;
+    esac
     echo '--------------------------------------------------'
-    row(){ printf 'demo %s false idle 0 0 <unknown> 2026-01-01T00:00:00Z\n' "$1"; }
+    row(){
+      local label='' warning=''
+      case "$MODE:$1" in
+        enrolled:*|unenrolled:first|foreign-warning:first) label='yes' ;;
+        unenrolled:second|foreign-warning:second) label='NO (not enrolled)'; warning="demo/$1" ;;
+      esac
+      if [[ "$MODE:$1" == 'foreign-warning:second' ]]; then warning='demo/other'; fi
+      printf 'demo %s false idle 0 0 %s <unknown> 2026-01-01T00:00:00Z\n' "$1" "$label"
+      if [[ -n "$warning" ]]; then echo "  NOT ENROLLED: $warning connected without a target enrollment token; it receives and can use no credentials."; fi
+    }
     case "$MODE:$stage:$route" in
       denied:before:second) row "$identity"; exit 1 ;;
       empty:before:second) ;;
@@ -138,6 +153,8 @@ def test_route_reconnect_gate(tmp_path, mode, routes, expected):
     if expected == "success":
         assert events == [*("before:" + r for r in routes), "upload", *("after:" + r for r in routes)]
         assert f"Baseline targets: {len(routes)}" in result.stdout
+        if mode == "unenrolled":
+            assert "NOT ENROLLED: demo/second" in result.stderr
     elif expected == "baseline_failure":
         assert "upload" not in events
     else:

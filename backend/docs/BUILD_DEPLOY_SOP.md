@@ -116,6 +116,7 @@ bash scripts/deploy-gateway.sh \
 7. 校验 `/v1/targets` 未认证访问返回 `401`，并通过 `--verify-target` 复用 DoOps 已配置认证，
    等待显式列出的每条路由重新连接。`doops targets --target` 按路由的 `(cluster, instance)` 筛选。
    新版部署脚本允许重复传 `--verify-target`；部署前每条路由必须对应一个不同的在线目标，重启后每条必须读回原身份。
+   当前 CLI 输出的 `NOT ENROLLED` 是对应目标的登记状态提示，脚本保留提示但不把它算作第二个目标；提示与目标不符时拒绝验收。连通性核验不证明已登记或可投递凭据。
 8. 校验候选二进制内嵌的 `source-commit` 与本次构建 commit 完全一致；
    旧的本地 `bin/doops-gateway` 或没有 provenance 的二进制会在上传前拒绝。
 
