@@ -1,8 +1,27 @@
 #!/usr/bin/env sh
 set -eu
 
-if ! command -v kubectl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
-  printf '```json\n{"status":"skipped","summary":"节点未配置 kubectl 或 python3，跳过集群直采","metrics":[],"checks":[{"id":"k8s.client","name":"kubectl 客户端","category":"availability","status":"skipped","value":"missing","detail":"未找到 kubectl 或 python3"}]}\n```\n'
+MISSING=""
+if ! command -v kubectl >/dev/null 2>&1; then
+  MISSING="kubectl"
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  if [ -n "$MISSING" ]; then
+    MISSING="$MISSING, python3"
+  else
+    MISSING="python3"
+  fi
+fi
+
+if [ -n "$MISSING" ]; then
+  printf '## Kubernetes 集群巡检\n\n- **综合结论**：warning — 缺少依赖（%s），未直采集群\n\n' "$MISSING"
+  cat <<'MD'
+```json
+MD
+  printf '{"status":"warning","summary":"缺少依赖（%s），未直采 Kubernetes 集群","metrics":[],"checks":[{"id":"k8s.client","name":"采集依赖","category":"availability","status":"warning","value":"missing","detail":"未找到 %s，无法执行 kubectl 采集"}]}\n' "$MISSING" "$MISSING"
+  cat <<'MD'
+```
+MD
   exit 0
 fi
 
@@ -10,6 +29,49 @@ python3 - <<'PY'
 import json
 import subprocess
 from datetime import datetime, timezone
+
+MAX_PAYLOAD_BYTES = 200 * 1024  # spec L28 单条产物硬上限 256 KiB，预留保护余量
+TRIM_LIST_KEYS = ("abnormal_pods", "unready_workloads", "checks")
+
+def _nbytes(obj):
+    return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+def finish(payload):
+    """保证单条产物 <= MAX_PAYLOAD_BYTES；发生裁剪时追加 output.size 检查项（真实反映）。"""
+    for c in payload.get("checks") or []:
+        if isinstance(c.get("detail"), str) and len(c["detail"]) > 600:
+            c["detail"] = c["detail"][:600] + "...(已截断)"
+    original = _nbytes(payload)
+    if original <= MAX_PAYLOAD_BYTES:
+        payload["output_bytes"] = _nbytes(payload)
+        return payload
+    for limit in (50, 10, 5):
+        for k in TRIM_LIST_KEYS:
+            v = payload.get(k)
+            if isinstance(v, list) and len(v) > limit:
+                payload[k] = v[:limit]
+        if _nbytes(payload) <= MAX_PAYLOAD_BYTES:
+            break
+    if _nbytes(payload) > MAX_PAYLOAD_BYTES:
+        for k in TRIM_LIST_KEYS:
+            if isinstance(payload.get(k), list) and k != "charts":
+                payload[k] = []
+        if _nbytes(payload) > MAX_PAYLOAD_BYTES:
+            payload["charts"] = []
+            payload["checks"] = (payload.get("checks") or [])[:20]
+            for c in payload["checks"]:
+                c["detail"] = (c.get("detail") or "")[:120]
+            payload["metrics"] = (payload.get("metrics") or [])[:20]
+    payload.setdefault("checks", []).append({
+        "id": "output.size",
+        "name": "输出体积保护",
+        "category": "runtime",
+        "status": "warning",
+        "value": "%dB" % original,
+        "detail": "载荷超过 %d 字节保护阈值，非必需列表已裁剪；原始 %d 字节" % (MAX_PAYLOAD_BYTES, original),
+    })
+    payload["output_bytes"] = _nbytes(payload)
+    return payload
 
 def kget(args):
     try:
@@ -29,6 +91,7 @@ if nodes_doc is None:
         "metrics": [{"key": "k8s_nodes_total", "label": "节点总数", "value": 0, "unit": "", "status": "warning"}],
         "checks": [{"id": "k8s.apiserver", "name": "Kubernetes API 连通性", "category": "availability", "status": "warning", "value": "unreachable", "detail": err[:240]}],
     }
+    finish(payload)
     print(f"## Kubernetes 集群巡检\n\n- 无法连接集群 API：`{err[:160]}`\n\n```json\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```")
     raise SystemExit(0)
 
@@ -102,5 +165,6 @@ payload = {
     "abnormal_pods": bad_pods[:30],
     "unready_workloads": unready_wl[:20],
 }
+finish(payload)
 print(f"## Kubernetes 集群巡检\n\n- {summary}\n\n```json\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```")
 PY

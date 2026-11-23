@@ -2,7 +2,6 @@
 name: 应用服务与 Web 安全巡检 Skill
 description: 检查本机监听服务端口、Nginx 配置基线及可选 HTTP/HTTPS 端点可用性与安全头
 entrypoint: scripts/inspect.sh
-required_mcp: doops
 ---
 
 # 应用服务与 Web 安全巡检 Skill
