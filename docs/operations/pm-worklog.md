@@ -169,3 +169,10 @@
 - **INT-07 留下的真缺口**：只有 inspect-vm-host 一个包走过真执行，其余 5 个有脚本的包（container-runtime、k8s-cluster、app-web、package-vuln、proxy-evasion）从未被后端流水线执行过 → 立项 **INT-10** 派 integrator-gm：把 e2e 推广到全部有 scripts/inspect.sh 的包，断言结构契约（status ∈ pass|warning|critical、metrics[] 键类型、checks[] 非空、工件落盘、指标落库），不断言宿主相关数值；无脚本的 database / ssh-host 如实 t.Logf 跳过并说明原因。
 - **SF-16 派 dev-state-01**（dev-sf-01 名字被占用无法复用）：monitor_engine_store.go:554-559 静默 200 空正文 → 新增 artifact_state: present|missing（missing 指目录在但读不到文件；truncated 是 present 的子状态）、老数据走 DB 文本列回退仍为 present；反向实验两组；边界只许改 monitor_engine_store.go / monitor_engine_types.go / 同目录测试 / spec。
 - 台账 98d97b45 已推（SF-15 入已完成、spec §3.5→§3.3、CHANGELOG 补保留策略条目）。
+## 02:31 第 12 轮巡检：INT-08 收官、SF-05 补丁落地、INT-09 待派
+
+- **INT-08 完成**（integrator-ars，代码 655fd9de + 台账 584edbfd）：列级守卫推广到全部 61 张导出表（`TestGatewayMySQLColumnsMatchExport` 双向集合比对）+ 新增 `TestGatewayMySQLInsertDefaultsMatchSchema`（无列清单的 INSERT 直接记 skip，零覆盖即失败）。当轮修 18 列 / 10 表：13 个 TEXT 列改在运行时 INSERT 显式写空串（依据 schema 头部既有约定「SQLite TEXT 不设默认，由方言层显式赋值」），5 个可内联的补 DDL 字面默认。反向实验：删 `revoked_at` → 红且指名 `credentials.revoked_at`；逐个删 5 个 DDL 默认 → 全红（指出 `skills_registry.go:255`、`mcp_registry.go:81` 两个真实调用点）；给 TEXT 加 `DEFAULT ('x')` → copier 报 `mysql_copy_schema_mismatch`；真机修复前 `Error 1364 Field 'error' doesn't have a default value`、修复后回读空串。10 张未迁移表进 `gatewayMySQLUnmigratedTables` 交 INT-09。导出未重抓（有意保留 4 个遗留索引）。
+- **SF-05 补丁已落地**（dev-artifact-01，bbe4b9c8 `feat(monitor): wire run diff and metric trends into the run-detail viewer`）：详情页把 diff / session / 趋势上下文传给 viewer，并把 props 映射抽成可单测的纯函数（尚在自验中，等它的报告确认 tsc 与反向实验）。
+- 推送纪律执行：584edbfd 在共享树未推 → `git archive 584edbfd` 干净树 `env -u GOROOT go build ./...` rc=0 才 push，origin/main 现为 584edbfd，ahead=0。
+- **INT-09 已解锁**（INT-08 收官，`gateway_mysql_*_test.go` 与 schema/导出已让出），但当前 6 个会话全在跑（skill-dev-01 / dev-artifact-01 / qa-skill-01 / integrator-ars / dev-state-01 / integrator-e2e-01），达并发上限 → 本轮不派，等 integrator-ars 或 skill-dev-01 转 inactive 立即派。INT-09 内容：先把 `TestGatewayMySQLSchemaCoversRuntimeDDL` 扩到扫 `backend/docs/migrations/*.sql` 让它**先红**，再补 10 张表 DDL + 冻结导出 + 真机写入回读。
+- QA-02 已收到我的分组收口要求（02:30），尚无回话；skll-dev-01 仍在改 `.github/workflows/ci.yml`（SF-14 收尾）。
