@@ -11,7 +11,7 @@
 | SF-08 | 内置巡检包鲁棒性矩阵（畸形环境 10 场景真跑，治崩溃/非法 JSON/静默 fallback） | skill-dev-01 | `skills_builtin/**`、`testdata/skills_builtin_verify/**` | 2026-11-24 01:15 | 运行中 |
 | SF-04 | `inspection_metric_points` 通用时序表 + 标准键桥接快照 + `GET /v1/monitor/metrics` + 跨次 diff | dev-artifact-01 | `monitor_metric*.go`、`monitor_engine_{store,types,http}.go`、`gateway_store_schema.go` | 2026-11-24 01:05 | 运行中 |
 | INT-04 | MySQL 迁移覆盖率补齐：`platform_skills`/`platform_mcp_servers` 纳入导出与原生 DDL，parity 改全等断言 | integrator-gm | `testdata/gateway-sqlite-schema.sql`、`gateway_mysql_schema*.go`、`gateway_mysql_copy*.go`、`GATEWAY_MYSQL_MIGRATION_PLAN.md` | 2026-11-24 01:10 | 运行中 |
-| INT-02 | Agent 资源同步移植（**隔离 /tmp 目录**解冲突，产出 `rescue/agent-resource-sync-v2`） | integrator-ars | 隔离目录，不动主工作区 | 2026-11-24 00:49 | 运行中 |
+| INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）并补 MySQL census + `agent_status` DDL/导出 | integrator-ars | 等 INT-04 落定后开工；动 `gateway_mysql_schema.sql`、`testdata/gateway-sqlite-schema.sql`、`gateway_mysql_runtime_test.go` | 2026-11-24 01:18 | 待办（阻塞于 INT-04） |
 
 ## 待办（排队，等前置合入）
 
