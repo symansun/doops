@@ -9,7 +9,11 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
-| QA-02 | 全仓回归：`go test ./...` 全包 + pytest + verify.sh + 残留扫描（SF-09 删 2186 行的保险） | qa-skill-01 | 只新增 `docs/reviews/2026-11-24-main-regression.md` | 01:52 | 运行中 |
+| INT-09 | 补 10 张被 INSERT 引用却无 DDL/导出的表；先扩守卫扫 `backend/docs/migrations/*.sql` 让它先红，再补 DDL/导出 + 真机回读 | integrator-ars | `gateway_mysql_*` + `backend/docs/migrations/**` | 02:05 | 运行中 |
+| INT-10 | e2e 推广到全部有 `scripts/inspect.sh` 的包（发现式），只断言结构契约；「脚本根本没跑」零容忍 | integrator-e2e-01 | 仅 `skills_builtin_e2e_test.go` | 02:10 | 运行中 |
+| SF-17 | 前端消费 `artifact_state`：missing 时正文区中文明示、指标/趋势照常、纯函数三态 + 接线锁 | dev-viewer-01 | `components/inspection-artifact-viewer.tsx` 等 viewer 文件 | 02:30 | 运行中 |
+| QA-03 | 对抗性复核 6 条反向实验（SF-08 x2 / INT-08 / SF-16 / SF-15 / 审计 cutoff F5），干净树重做、破坏只在 /tmp | qa-recheck-01 | 只新增 `docs/reviews/2026-11-24-adversarial-recheck.md` | 02:38 | 运行中 |
+| SB-02 | 补回 `host.disk_io`（inspect-vm-host）与 `k8s.metrics`（inspect-k8s-cluster）+ verify.sh 覆盖 + 反向实验 | skill-dev-01 | `skills_builtin/**`、`testdata/skills_builtin_verify/**`、spec 指标清单 | 02:41 | 运行中 |
 
 ## 待办（排队/待决策）
 
@@ -17,7 +21,6 @@
 |---|---|---|---|
 | SF-11 | 真实 Gateway↔Agent 隧道端到端验收（SF-06 §5 红线5「未覆盖」） | 需要可用 target 与凭据 | 未派：需先确认有可连的 agent 与允许的 canary 凭据，不能编造证据 |
 | INT-09 | 补 10 张"被 INSERT 引用但 MySQL DDL 与冻结导出都没有"的表（`agent_resource_state`/`agent_observations`/`agent_resource_audit`、`credential_*_v2`、`grants_v2`、`inventory_agent_assets`/`inventory_machine_tags`/`inventory_resource_catalog`、`personal_asset_records`）；**先扩守卫到扫 `backend/docs/migrations/*.sql` 让它先红**，再补 DDL/导出，真机写入回读 | INT-08（同改 `gateway_mysql_*_test.go` 与 schema/导出） | 根因：`TestGatewayMySQLSchemaCoversRuntimeDDL` 只扫包内 .go 的 CREATE TABLE，迁移建的表在范围外；不补则 MySQL 迁移后这些能力无表 |
-| SB-02 | 补回 SF-09 删采集器后**真丢的两项能力**：`host.disk_io`（磁盘 I/O 与延迟）进 `inspect-vm-host`、`k8s.metrics`（metrics-server 用量）进 `inspect-k8s-cluster`；先在 spec §2.4.1 核对旧字段（`git show 0226da5a^:backend/agent/internal/server/monitor_engine_agent.go`）再实现，验收进 `verify.sh` | SF-14（同占 `testdata/skills_builtin_verify/**`） | 能力真实丢失，不是文档问题；owner 只能是 skill-dev-01（脚本归属） |
 | INT-06 | Console 侧展示 agent_resource 同步状态 | INT-05 | **已阻塞（02:38）**：`target-manifest-card.tsx` 已具备四态同步状态 + 五态资源徽章 + 八类资源（`manifestStatus()`/`resourceStates`/`resourceKinds`），由 `console-shell.tsx:64/:936` 渲染；剩余「TS 校验 + 浏览器实测」需真实 target，与 SF-11/D8 同条件 |
 | — | `CHANGELOG.md` [Unreleased] 统一补写（SF-04/SF-05/SF-09/INT-05 的用户可见变化） | SF-05/SF-09 完成 | 该文件被前端会话占用，由我或前端会话统一写，避免共享索引互扫 |
 
@@ -32,7 +35,7 @@
 | INT-07 | 真 Skill 包执行链路 e2e（inspect.sh 经 doops_shell 回流产物与指标） | 33c7147f | 仅新增 skills_builtin_e2e_test.go 372 行；真容器 python:3.12-slim 跑通；11 个指标落库且 metrics 接口可读回；4 组反向实验全红。**缺口**：只覆盖 vm-host 一包 → 已立项 INT-10 |
 | SF-15 | 巡检产物与指标点保留策略（30d/90d、keep-runs 50、running 保护、先删文件后删行、force 兜底） | d979459c | 10 新测试绿；4 组反向实验全红；干净树 build/vet/`-run Monitor|Skill|Retention` ok 57.2s。**取舍**：keep-runs=50 意味着老 schedule 停跑后再跑时历史不被时间窗口清掉 |
 | SF-16 | 产物不可读时显式返回 `artifact_state=present|missing`（老数据回退仍 present，truncated 是 present 子状态） | 43e8a8cb | 干净树 build/vet/`-run Monitor|Artifact|Retention` ok 30.2s；真实 HTTP 测试（删产物目录后 run/item 均 missing、结构完整、索引行仍在）；反向实验 2 组红（禁用判定 `/` 去序列化）；spec §3.2 四条 + §3.3 一处 |
-| QA-03 | 对抗性复核 5 条反向实验（SF-08 x2 / INT-08 / SF-16 / SF-15），干净树重做、破坏只在 /tmp | qa-recheck-01 | 报告 `docs/reviews/2026-11-24-adversarial-recheck.md`，只提交该文件 |
+| QA-02 | 全仓回归基线（全包 go test + pytest + verify.sh + 残留扫描） | 93f9e92e、b9229eb8 | 三模块 build/vet rc=0；`internal/server` 三分组 45s/171s/193s 全 ok；pytest 真实检出 32 passed；verify.sh b5765106 20/20、b733e6fd 34/34；残留 grep 51→27、生产代码 0 使用。**F5（审计 cutoff 字符串比较误删）在报告基线 b5765106/b733e6fd 上确定性红，但 main 上 1446b965 已改按 `started_at_ms` 比较，我复跑 `TestAuditTimeRangePreservesSecondBoundary` 0.825s 绿**（第三方补验见 QA-03 第 6 条）。**未覆盖**：`internal/server` 全量 1389s 超 20m 窗口、前端 `pnpm test:console`/`build`、真实端到端 |
 | SF-13 | legacy strategy 残留清扫：删死码 `buildBuiltinStrategyArtifact` 与 `doops_monitor_inspect` RPC 类型、`strategies_json` DDL 退役注释、遗留列清单入迁移文档、spec §2.4.1 六采集器→Skill 映射（`host.disk_io`/`k8s.metrics` 标待补）、WebUI/API guide 措辞、`retiredStrategySkillSlugs` 加 slug 钉子 | 3e66d588 | build/vet 绿，`-run 'Monitor\|Skill\|Strategy'` 78.0s 绿（干净树 80.0s）；反向实验：映射改成不存在的 slug 时钉子测试 FAIL |
 | SF-01 | Skill 包 `//go:embed all:skills_builtin` + `Entrypoint`/exec_mode 派生 + 落盘复用 | 7457bd56、d41bc318 | build 绿，`-run 'Skill\|Monitor'` 12/12 |
 | SF-02 | 移除 `DriverMode`/`StrategyID` 双轨，分派只从 SKILL.md 派生 | ee192275、a47ed50d | 8 slug 全产出，20/20 绿（60.3s），主工作区 build rc=0 |
