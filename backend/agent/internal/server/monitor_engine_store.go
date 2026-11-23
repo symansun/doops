@@ -530,6 +530,7 @@ func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, 
 	}
 	defer rows.Close()
 	items := []monitorRunItemRecord{}
+	missingArtifacts := 0
 	for rows.Next() {
 		var item monitorRunItemRecord
 		var metricsRaw, checksRaw, evidenceRaw, artifactJSONRaw string
@@ -551,12 +552,25 @@ func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, 
 		// File-first: a row with an artifact directory reads the full payload
 		// back from disk. Legacy rows without one keep their SQLite text
 		// columns, so upgrades stay lossless.
+		artifactFilesRead := false
 		if item.ArtifactDir != "" {
 			if content, ok := s.readMonitorArtifactFiles(item.ArtifactDir); ok {
+				artifactFilesRead = true
 				item.ArtifactMarkdown = content.Markdown
 				item.ArtifactJSON = content.JSON
 				item.RawOutput = content.Raw
 			}
+		}
+		// The index row survives its payload when retention deletes the files
+		// first (spec §3.3), or when an operator removes the directory by hand.
+		// Report that instead of returning a silent 200 with an empty body.
+		// Rows without artifact_dir are legacy text fallbacks (or gap items that
+		// never had an artifact) and stay present.
+		if item.ArtifactDir != "" && !artifactFilesRead {
+			item.ArtifactState = monitorArtifactStateMissing
+			missingArtifacts++
+		} else {
+			item.ArtifactState = monitorArtifactStatePresent
 		}
 		if len(item.ArtifactJSON) == 0 {
 			if compact, ok := compactValidJSON(artifactJSONRaw); ok {
@@ -567,6 +581,10 @@ func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, 
 	}
 	if err := rows.Err(); err != nil {
 		return run, nil, err
+	}
+	run.ArtifactState = monitorArtifactStatePresent
+	if missingArtifacts > 0 {
+		run.ArtifactState = monitorArtifactStateMissing
 	}
 	if !isAdmin && len(items) == 0 && run.TriggeredBy != auth.UserID {
 		return run, nil, sql.ErrNoRows

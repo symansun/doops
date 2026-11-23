@@ -131,6 +131,17 @@ type monitorScheduleRecord struct {
 	UpdatedAt       string                       `json:"updated_at"`
 }
 
+// Inspection artifact availability states (spec §3.2). present means the
+// payload can be rendered, either from the file-first directory or from the
+// legacy SQLite text columns; missing means the index row still names an
+// artifact_dir but no artifact file under it could be read. artifact_truncated
+// is orthogonal and only refines present (the file exists but hit the 256 KiB
+// cap).
+const (
+	monitorArtifactStatePresent = "present"
+	monitorArtifactStateMissing = "missing"
+)
+
 type monitorRunRecord struct {
 	ID             string   `json:"id"`
 	ScheduleID     string   `json:"schedule_id,omitempty"`
@@ -153,6 +164,10 @@ type monitorRunRecord struct {
 	FinishedAtMs   int64    `json:"finished_at_ms"`
 	DurationMs     int64    `json:"duration_ms"`
 	Summary        string   `json:"summary,omitempty"`
+	// ArtifactState is the run-level aggregate filled by GetMonitorRunDetail:
+	// missing when at least one item's file-backed payload is unreadable. It is
+	// omitted from list responses, which do not load items.
+	ArtifactState string `json:"artifact_state,omitempty"`
 }
 
 type monitorRunItemRecord struct {
@@ -183,6 +198,7 @@ type monitorRunItemRecord struct {
 	ArtifactBytes     int64  `json:"-"`
 	ArtifactSHA256    string `json:"-"`
 	ArtifactTruncated bool   `json:"artifact_truncated,omitempty"`
+	ArtifactState     string `json:"artifact_state"` // present | missing (spec §3.2)
 	// Diff compares this item with the previous terminal run of the same
 	// (cluster, instance, strategy) series (spec §4.3); nil when there is none.
 	Diff *monitorRunDiff `json:"diff"`
