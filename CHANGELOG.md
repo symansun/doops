@@ -13,6 +13,7 @@
 - 智能巡检改为由内置 **Skill 包** 驱动：内置 8 个巡检 Skill（虚拟机、容器运行时、Kubernetes 集群、应用站点、软件包漏洞、代理与暴露面、数据库、SSH 主机），每个包含 `SKILL.md` 与 `scripts/inspect.sh`，随镜像以真实目录嵌入并在首次运行时落盘到 `<dbDir>/skills/`，控制台可直接查看脚本内容并在线试跑。
 - 「巡检详情」新增 **「与上次对比」** 与 **「历史趋势」** 两个面板：前者展示指标增减与检查项的新增、消失、变化，后者按 Skill 与节点展示时间序列；后端新增 `/v1/monitor/metrics` 时序接口，指标点写入 `inspection_metric_points`。
 - 巡检产物改为 **File-First** 落盘：产物写入 `<dbDir>/artifacts/<日期>/<run_id>/<item_id>/`，数据库只保留路径、sha256、字节数与截断标记；单个产物文件超过 256 KiB 会被截断并注明原始字节数。
+- 巡检产物与指标点开始按生命周期清理：产物默认保留 30 天、指标点默认保留 90 天（趋势图因此连续），每个巡检计划最近 50 次运行无条件保留，正在运行的巡检不会被清理；清理先删磁盘产物再删索引记录，目录删不掉时记告警并放弃该索引行，不影响下一轮。可用 `DOOPS_MONITOR_ARTIFACT_RETENTION_DAYS`、`DOOPS_MONITOR_ARTIFACT_KEEP_RUNS`、`DOOPS_MONITOR_METRIC_RETENTION_DAYS` 调整。
 
 ### Changed
 

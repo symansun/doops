@@ -144,9 +144,9 @@ required_mcp: doops
 - 新产生的巡检记录一律落盘至 `artifact_dir`，SQLite 对应文本列（`artifact_markdown` / `artifact_json` / `raw_output`）置空不再重复存储大文本。
 - 读取 `GET /v1/monitor/runs/<id>` 时，优先从 `artifact_dir` 透明加载；若 `artifact_dir` 为空（历史升级前旧数据），自动回读 SQLite 旧文本列，保证平滑无损升级。
 - 落盘前统一执行凭据脱敏（`redactSecretText`）与 `maxInspectionArtifactBytes` 字节上限保护：Markdown 与原始输出按字节截断并追加 `... [truncated]`；JSON 不得截断成非法结构，超限时改写为 `{"truncated":true,"original_bytes":N,"limit_bytes":262144}` 信封，截断后的原文保留在 `raw.txt`。上限按单个文件（`artifact.md` / `artifact.json` / `raw.txt`）各自 ≤256 KiB 执行，不做单条记录合计。
-- 超期记录由 §3.5 的保留策略清理：删除对应磁盘产物目录并回收空日期目录。
+- 超期记录由 §3.3 的保留策略清理：删除对应磁盘产物目录并回收空日期目录。
 
-### 3.5 产物与指标的生命周期（保留策略）
+### 3.3 产物与指标的生命周期（保留策略）
 
 巡检产物与指标点都不是只增不减。清理必须满足三条：不影响正在跑的巡检、不抹掉每个 schedule 的近期历史、指标比产物留得久。
 

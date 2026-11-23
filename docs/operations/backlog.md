@@ -12,7 +12,6 @@
 | QA-02 | 全仓回归：`go test ./...` 全包 + pytest + verify.sh + 残留扫描（SF-09 删 2186 行的保险） | qa-skill-01 | 只新增 `docs/reviews/2026-11-24-main-regression.md` | 01:52 | 运行中 |
 | SF-14 | 把 `verify.sh` 接进 CI（现在 34 项真跑证据只在开发者机器上）：新增 `skills-packages` job、CI 镜像、`SB01_NO_PRIVILEGED` 显式降级、本地干净树等价验证 | skill-dev-01 | `.github/workflows/ci.yml`、`testdata/skills_builtin_verify/**`、`BUILD_DEPLOY_SOP.md` CI 小节 | 02:01 | 运行中 |
 | INT-07 | 真 Skill 包执行链路 e2e：从 `SKILL.md` 取 entrypoint 并把 `scripts/inspect.sh` 的真实产物喂回流水线，断言 `artifact_dir`/sha256/bytes、`metrics[]` 落 `inspection_metric_points`、两次 run 的 `previous_run_id`+`metric_deltas` | integrator-gm | 新增 `skills_builtin_e2e_test.go`(+helper) | 02:04 | 运行中 |
-| SF-15 | 巡检产物与指标点的保留策略（现在只增不减）：spec 新节 + \`monitor_retention.go\`，产物 30 天/每 schedule 最近 50 次 run 保护、指标 90 天、先删文件后删索引行、不删 running 与最新一次 | dev-sf-01 | 新增 \`monitor_retention.go\`(+test)、spec 新节；必要时小改 \`monitor_artifact_store.go\`/\`monitor_metric_store.go\` | 02:08 | 运行中 |
 | INT-08 | MySQL 列级守卫推广到全部导出表 + "NOT NULL 无默认且被真实 INSERT 省略"守卫（从源码 AST 抽列，不手维护清单） | integrator-ars | `backend/agent/internal/server/gateway_mysql_*_test.go`、`gateway_mysql_schema.sql`、`testdata/gateway-sqlite-schema.sql` | 01:59 | 运行中 |
 
 ## 待办（排队/待决策）
@@ -31,6 +30,7 @@
 |---|---|---|---|
 | INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）+ `agent_status` 两列 + census 刷新 + 真机回读 | 15e75cf1、755e4bab、998e536c | B 方案原子三方写回 `console-shell.tsx`（sha256 二次比对一致）一次成功；`kubernetes_available` 改 `TINYINT(1) NULL`（`NOT NULL` 被真机 `Error 1048` 拒）、`archived_at` 改 `VARCHAR(64)`（`TEXT DEFAULT ('')` 是 `DEFAULT_GENERATED`，被离线 copier fail closed）；真机 mysql:8.4 反向实验三组；未覆盖：浏览器实测、Gateway↔Agent 端到端（INT-07 接手部分） |
 | SF-05 | 前端接 SF-04：viewer Diff/Trends + 删死开关 + 停发 strategies/ssh_hosts；补丁：详情页把 diff 传给 viewer | 3e1e6d8a | tsc/13-13/699-699/build 全绿；反向实验（demo 加回 strategies → 红）；ego-browser 四张截图；**更正**：后端无 actions 字段，只收 skills[] |
+| SF-15 | 巡检产物与指标点保留策略（30d/90d、keep-runs 50、running 保护、先删文件后删行、force 兜底） | d979459c | 10 新测试绿；4 组反向实验全红；干净树 build/vet/`-run Monitor|Skill|Retention` ok 57.2s。**取舍**：keep-runs=50 意味着老 schedule 停跑后再跑时历史不被时间窗口清掉 |
 | SF-13 | legacy strategy 残留清扫：删死码 `buildBuiltinStrategyArtifact` 与 `doops_monitor_inspect` RPC 类型、`strategies_json` DDL 退役注释、遗留列清单入迁移文档、spec §2.4.1 六采集器→Skill 映射（`host.disk_io`/`k8s.metrics` 标待补）、WebUI/API guide 措辞、`retiredStrategySkillSlugs` 加 slug 钉子 | 3e66d588 | build/vet 绿，`-run 'Monitor\|Skill\|Strategy'` 78.0s 绿（干净树 80.0s）；反向实验：映射改成不存在的 slug 时钉子测试 FAIL |
 | SF-01 | Skill 包 `//go:embed all:skills_builtin` + `Entrypoint`/exec_mode 派生 + 落盘复用 | 7457bd56、d41bc318 | build 绿，`-run 'Skill\|Monitor'` 12/12 |
 | SF-02 | 移除 `DriverMode`/`StrategyID` 双轨，分派只从 SKILL.md 派生 | ee192275、a47ed50d | 8 slug 全产出，20/20 绿（60.3s），主工作区 build rc=0 |
