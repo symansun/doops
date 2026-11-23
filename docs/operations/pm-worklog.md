@@ -246,3 +246,11 @@
 - **合规报告的 6 项「部分符合」我在当前 HEAD（2a29ed67）逐项复核，4 项已经消失**：legacy native strategy 路径（`monitor_engine_agent.go` 已删、`plan.Strategies`/`monitorStrategyCatalog` 零命中）、spec 环境变量名（已是 `DOOPS_TARGET_*`）、proxy 端口超集（`PROXY_PORTS` 与 spec 七端口逐项一致，20171 已不在）、ssh-host 未指名受管通道（SKILL.md 已指名 `doops_ssh` 为唯一受管通道并写退化分支）。第 5 项可视化基本闭环（SF-05/SF-17 已进 main，只剩 charts 原语抽象）；第 6 项真实隧道 e2e 仍卡凭据。已把这份复核写成报告第七节（带回查表与逐条证据命令），避免后续读者拿 282d338c 的旧结论当现状。
 - **SF-21 派 dev-viewer-01**：`lib/skills-registry.ts` 里 `driver_mode`/`strategy_id`/`SKILL_DRIVER_LABELS` 已是纯死代码（后端不返回、前端无消费者），删掉并加「旧概念不得复活」静态守卫（要求先加回一行验证测试变红）。只拥有该文件与其测试，禁碰 `components/console-shell.tsx`、`lib/server/agent-*`、`lib/shell-blocks.ts`、backend/**、CHANGELOG、package.json、pnpm-lock。
 - 在跑 5：integrator-e2e-01（SF-18）、qa-skill-01（QA-04）、qa-recheck-01（QA-03）、dev-viewer-01（SF-21）。origin/main = 2a29ed67 起步，无后台 job。
+
+## 03:03 第 18 轮巡检：QA-04 收口（干净树 1113 项跑完，1092 过 / 5 失败 / 16 环境跳过）
+
+- **QA-04 完成**（5afc95b6 + 9e70e567）：干净树 `0e749395`，`go test -list` 枚举 1113 个顶层测试，轮转取模 6 路并行跑完，`=== RUN` 与 `-list` 集合比对 missing 0 / extra 0，最慢一片 401s；`1092 PASS + 5 FAIL + 16 SKIP = 1113`。这终于补上 QA-02 最大的证据缺口——「本机 1389s 跑不完」不再是黑箱：**单进程整包慢，分片后完全可跑**，且没有一片触发 `-timeout`。
+- **5 个 FAIL 逐条定性**：4 个是并行争用假阳性（`TestCredentialVerifySuccessAuditFiltersRequestTextTarget`、`TestCredentialVerifyUsesStoredGrantScope`、`TestRegistryAuthIsNotDeliveredAfterRevocation`、`TestRunHelmCommandInterruptedUpgradeNeverStaysPending`，隔离 `-run '^X$' -count=3` 全 3/3 过，失败文本全是 `5s Client.Timeout`）；1 个 `TestDoSQLVersionJournalVerifiesHistoricalEscapedReplacementEntry` 3/3 确定失败，是**本机 Go 1.27.4 与 CI 1.25.14 的 `json.Marshal` 转义差异**（QA-02 已记录过同一项）。所以「全绿」的准确口径是 1092 PASS + 16 项本机环境不具备。这项不算产品缺陷，但要在结论里写清，避免下次又被当成红的。
+- **前端干净树也补齐了**：`pnpm run test:console` 706/706（37.68s）、`pnpm build` rc=0（90s）。顺带记一个环境坑：干净树没有 `node_modules`，用符号链接会被 Turbopack 拒（`Symlink [project]/node_modules is invalid`），要用 APFS clone（`cp -Rc`）。
+- **基线漂移要补一次**：它实测期间 main 从 `0e749395` 走到 `8001ce4f`（SF-18 的 monitor 证据、vm-host 的 disk_io、k8s metrics 桥接）。测试数会变，等 SF-18 与 SF-21 都落完再以当时的 HEAD 重跑同一套分片，结果才可作为发布前基线；已记进 backlog 待办。
+- 在跑 3：integrator-e2e-01（SF-18）、qa-recheck-01（QA-03）、dev-viewer-01（SF-21）。qa-skill-01 释放。本轮不空转派活（分片重跑必须等前置落定，否则又是跑一个会漂移的基线）。
