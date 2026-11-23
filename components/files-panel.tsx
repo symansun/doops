@@ -1,6 +1,8 @@
 "use client"
 
-import { Button, Input, StatusBanner, Textarea } from "./ui"
+import { Button, SegmentedControl, StatusBanner, Textarea } from "./ui"
+import { Markdown } from "./markdown"
+import { cn } from "@/lib/cn"
 import { SessionInput } from "./session-input"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
@@ -33,15 +35,11 @@ import {
 } from "@/lib/files-transfer"
 import { appendShellOutput, shellResultOutcome } from "@/lib/shell-blocks"
 import {
-  checkDeploymentRequest,
+  cleanResultText,
   cleanWorkspaceRequest,
-  EMPTY_CHECK_INPUT,
   EMPTY_MAINTENANCE_LOG,
   maintenanceFailure,
   maintenanceOutput,
-  maintenanceResultText,
-  type CheckDeploymentInput,
-  type MaintenanceKind,
   type MaintenanceLog,
 } from "@/lib/files-maintenance"
 import {
@@ -55,7 +53,6 @@ import {
   FolderUpIcon,
   CopyIcon,
   CheckIcon,
-  RocketIcon,
   TrashIcon,
   DownloadIcon,
   PencilIcon,
@@ -150,10 +147,10 @@ export function FilesPanel({
   const [upload, setUpload] = useState<UploadProgress | null>(null)
   const [showCmd, setShowCmd] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [maint, setMaint] = useState<({ tool: MaintenanceKind; running: boolean } & MaintenanceLog) | null>(null)
-  const [checkOpen, setCheckOpen] = useState(false)
-  const [checkInput, setCheckInput] = useState<CheckDeploymentInput>(EMPTY_CHECK_INPUT)
-  const [checkErr, setCheckErr] = useState("")
+  const [maint, setMaint] = useState<({ running: boolean } & MaintenanceLog) | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const dragDepth = useRef(0)
+  const [preview, setPreview] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
   const { prompt, dialog } = useAppDialog()
@@ -331,28 +328,27 @@ export function FilesPanel({
   }
 
   // 返回是否成功；callTool 的 error 事件和随后抛出的同一错误只记一次。
-  async function runMaintenance(kind: MaintenanceKind, args: Record<string, string>) {
-    setMaint({ tool: kind, ...EMPTY_MAINTENANCE_LOG, running: true })
+  async function runClean(args: Record<string, string>): Promise<boolean> {
+    setMaint({ ...EMPTY_MAINTENANCE_LOG, running: true })
     let failed = false
     const fail = (raw: string) => {
       failed = true
-      setMaint((p) => (p ? { ...p, ...maintenanceFailure(p, kind, raw) } : p))
+      setMaint((p) => (p ? { ...p, ...maintenanceFailure(p, raw) } : p))
     }
-    const tool = kind === "check" ? TOOLS.checkDeployment : TOOLS.cleanWorkspace
     try {
       await callTool(
         session,
         {
           cluster: target.cluster,
           instance: target.instance,
-          tool,
+          tool: TOOLS.cleanWorkspace,
           arguments: args,
         },
         (ev) => {
           if (ev.type === "output") {
             setMaint((p) => (p ? { ...p, ...maintenanceOutput(p, ev.data) } : p))
           } else if (ev.type === "result") {
-            const text = maintenanceResultText(kind, extractText(ev.result))
+            const text = cleanResultText(extractText(ev.result))
             setMaint((p) => (p ? { ...p, ...maintenanceOutput(p, text) } : p))
           } else if (ev.type === "error") {
             fail(ev.error)
@@ -367,30 +363,15 @@ export function FilesPanel({
     return !failed
   }
 
-  async function submitCheck(e: React.FormEvent) {
-    e.preventDefault()
-    let args: Record<string, string>
-    try {
-      args = checkDeploymentRequest(sessionId, checkInput)
-    } catch (err) {
-      setCheckErr((err as Error).message)
-      return
-    }
-    setCheckErr("")
-    setCheckOpen(false)
-    await runMaintenance("check", args)
-  }
-
   async function cleanWorkspace() {
     let args: Record<string, string>
     try {
       args = cleanWorkspaceRequest(sessionId)
     } catch (err) {
-      setMaint({ tool: "clean", lines: [], errors: [(err as Error).message], running: false })
+      setMaint({ lines: [], errors: [(err as Error).message], running: false })
       return
     }
-    setCheckOpen(false)
-    if (await runMaintenance("clean", args)) {
+    if (await runClean(args)) {
       // 工作区已整体删除：不再展示旧目录和已打开的文件，也不重新列举（列根目录会重建空工作区）。
       drafts.current.clear()
       setEntries([])
@@ -747,10 +728,55 @@ export function FilesPanel({
     }
   }
 
+  // Markdown 文件额外提供预览：编辑器里的原文和渲染结果可随时切换。
+  const isMarkdown = Boolean(openPath && /\.(md|markdown|mdx)$/i.test(openPath))
+  useEffect(() => {
+    setPreview(false)
+  }, [openPath])
+
+  // 整页拖放上传：拖到面板任意位置都落到当前目录。
+  function hasFiles(e: React.DragEvent) {
+    return Array.from(e.dataTransfer.types).includes("Files")
+  }
+  function onDragEnter(e: React.DragEvent) {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    dragDepth.current += 1
+    setDragging(true)
+  }
+  function onDragOver(e: React.DragEvent) {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = locked ? "none" : "copy"
+  }
+  function onDragLeave() {
+    // dragleave 的 dataTransfer.types 常常是空的，不能用它判断，只能按计数递减。
+    if (dragDepth.current === 0) return
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragging(false)
+  }
+  function onDrop(e: React.DragEvent) {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    dragDepth.current = 0
+    setDragging(false)
+    if (locked) {
+      setStatus({ kind: "err", text: "正在执行其他操作，完成后再拖入文件" })
+      return
+    }
+    void handleUpload(e.dataTransfer.files)
+  }
+
   const crumbs = (workspaceRelativePath(sessionId, cwd) || "").split("/").filter(Boolean)
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="relative flex h-full min-h-0 flex-col"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       {/* 上传工具条（含 session） */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card/60 px-4 py-2">
         {onSessionChange ? (
@@ -765,37 +791,42 @@ export function FilesPanel({
           {cwd}
         </code>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => handleUpload(e.target.files)}
-          />
-          <input
-            ref={dirInputRef}
-            type="file"
-            className="hidden"
-            // @ts-expect-error 非标准但被主流浏览器支持
-            webkitdirectory=""
-            directory=""
-            multiple
-            onChange={(e) => handleUpload(e.target.files)}
-          />
-          <Button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={locked}
-            size="sm"
+          {/* label + 原生 file input：点击区域由浏览器自己激活，不依赖脚本调用 input.click() */}
+          <label
+            className={cn("btn btn-sm btn-file", locked && "pointer-events-none opacity-50")}
+            aria-disabled={locked ? "true" : undefined}
+            title="选择文件上传，也可以把文件直接拖进本页"
           >
             <UploadIcon width={14} height={14} /> 上传文件
-          </Button>
-          <Button
-            onClick={() => dirInputRef.current?.click()}
-            disabled={locked}
-            size="sm"
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              aria-label="上传文件"
+              className="sr-only"
+              disabled={locked}
+              onChange={(e) => handleUpload(e.target.files)}
+            />
+          </label>
+          <label
+            className={cn("btn btn-sm btn-file", locked && "pointer-events-none opacity-50")}
+            aria-disabled={locked ? "true" : undefined}
+            title="选择一个文件夹，按原有目录结构上传"
           >
             <FolderUpIcon width={14} height={14} /> 上传文件夹
-          </Button>
+            <input
+              ref={dirInputRef}
+              type="file"
+              aria-label="上传文件夹"
+              className="sr-only"
+              // @ts-expect-error 非标准但被主流浏览器支持
+              webkitdirectory=""
+              directory=""
+              multiple
+              disabled={locked}
+              onChange={(e) => handleUpload(e.target.files)}
+            />
+          </label>
           <Button
             onClick={() => setShowCmd((v) => !v)}
             size="sm"
@@ -804,18 +835,6 @@ export function FilesPanel({
             <CopyIcon width={14} height={14} /> 上传命令
           </Button>
           <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-          <Button
-            onClick={() => {
-              setCheckErr("")
-              setCheckOpen((v) => !v)
-            }}
-            disabled={maint?.running}
-            title="核对 Deployment 主容器镜像是否与期望一致"
-            size="sm"
-            className={checkOpen ? "border-primary/50" : ""}
-          >
-            <RocketIcon width={14} height={14} /> 检查部署
-          </Button>
           <Button
             onClick={cleanWorkspace}
             disabled={maint?.running}
@@ -827,83 +846,13 @@ export function FilesPanel({
         </div>
       </div>
 
-      {/* 检查部署参数 */}
-      {checkOpen && (
-        <form onSubmit={submitCheck} noValidate className="shrink-0 border-b bg-muted/30 px-3 py-3">
-          <p className="mb-2 text-xs text-muted-foreground">
-            在目标节点用 kubectl 读取 Deployment 主容器镜像，与期望镜像比对。三项均为必填。
-          </p>
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-              命名空间
-              <Input
-                name="namespace"
-                value={checkInput.namespace}
-                onChange={(e) => setCheckInput((p) => ({ ...p, namespace: e.target.value }))}
-                className="w-40 font-mono"
-                placeholder="apps"
-                autoComplete="off"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-              Deployment
-              <Input
-                name="deployment"
-                value={checkInput.deployment}
-                onChange={(e) => setCheckInput((p) => ({ ...p, deployment: e.target.value }))}
-                className="w-44 font-mono"
-                placeholder="api"
-                autoComplete="off"
-              />
-            </label>
-            <label className="flex min-w-64 flex-1 flex-col gap-1 text-xs text-muted-foreground">
-              期望镜像
-              <Input
-                name="image"
-                value={checkInput.image}
-                onChange={(e) => setCheckInput((p) => ({ ...p, image: e.target.value }))}
-                className="w-full font-mono"
-                placeholder="registry.example.com/team/api:1.2.3"
-                autoComplete="off"
-              />
-            </label>
-            <div className="flex gap-2">
-              <Button
-                type="submit"
-                variant="primary"
-                size="sm"
-                disabled={maint?.running}
-              >
-                开始检查
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => setCheckOpen(false)}
-              >
-                取消
-              </Button>
-            </div>
-          </div>
-          {checkErr && (
-            <StatusBanner tone="error" compact className="mt-2">
-              {checkErr}
-            </StatusBanner>
-          )}
-        </form>
-      )}
-
       {/* 维护动作结果 */}
       {maint && (
         <div className="shrink-0 border-b bg-muted/30 px-3 py-3">
           <div className="mb-1.5 flex items-center justify-between">
             <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-              {maint.tool === "check" ? (
-                <RocketIcon width={13} height={13} className="text-primary" />
-              ) : (
-                <TrashIcon width={13} height={13} className="text-primary" />
-              )}
-              {maint.tool === "check" ? "部署检查" : "工作区清理"}
+              <TrashIcon width={13} height={13} className="text-primary" />
+              工作区清理
               {maint.running && <span className="text-muted-foreground">· 执行中…</span>}
             </p>
             {!maint.running && (
@@ -1109,6 +1058,17 @@ export function FilesPanel({
               {dirty && <span className="ml-1 text-warning">●</span>}
             </span>
             <span className="flex shrink-0 items-center gap-1">
+              {isMarkdown && (
+                <SegmentedControl
+                  value={preview ? "preview" : "edit"}
+                  options={[
+                    { value: "edit", label: "编辑" },
+                    { value: "preview", label: "预览" },
+                  ]}
+                  onChange={(next) => setPreview(next === "preview")}
+                  ariaLabel="查看方式"
+                />
+              )}
               {openPath && (
                 <Button
                   onClick={() => void downloadFile(openPath, openPath.split("/").pop() || "file")}
@@ -1141,27 +1101,51 @@ export function FilesPanel({
 
           <div className="relative min-h-0 flex-1 p-3">
             {openPath ? (
-              <Textarea
-                value={content}
-                onChange={(e) => {
-                  const next = e.target.value
-                  drafts.current.set(openPath, next)
-                  setContent(next)
-                  setDirty(true)
-                }}
-                spellCheck={false}
-                className="h-full w-full resize-none p-3 font-mono leading-relaxed"
-              />
+              isMarkdown && preview ? (
+                <div className="h-full overflow-auto rounded-lg border bg-background px-5 py-4">
+                  {content.trim() ? (
+                    <Markdown content={content} variant="document" allowImages={false} />
+                  ) : (
+                    <p className="text-xs text-muted-foreground">空文件</p>
+                  )}
+                </div>
+              ) : (
+                <Textarea
+                  value={content}
+                  onChange={(e) => {
+                    const next = e.target.value
+                    drafts.current.set(openPath, next)
+                    setContent(next)
+                    setDirty(true)
+                  }}
+                  spellCheck={false}
+                  className="h-full w-full resize-none p-3 font-mono leading-relaxed"
+                />
+              )
             ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+              <div className="flex h-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border text-muted-foreground">
                 <FileIcon width={28} height={28} />
-                <p className="text-pretty text-center text-sm">从左侧选择文件打开编辑，或用上方按钮上传文件/文件夹</p>
-                <p className="text-xs">小文本走 file_write 一键上传 · 64 MiB 内自动分块校验上传 · 更大文件/目录请复制 doops push 命令</p>
+                <p className="text-pretty px-6 text-center text-sm">从左侧选择文件打开编辑，或用上方「上传文件/上传文件夹」选取</p>
+                <p className="px-6 text-center text-xs">也可以把文件或文件夹直接拖进本页，落到当前目录</p>
+                <p className="px-6 text-center text-xs">小文本走 file_write 一键上传 · 64 MiB 内自动分块校验上传 · 更大文件/目录请复制 doops push 命令</p>
               </div>
             )}
           </div>
         </section>
       </div>
+      {dragging && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/80">
+          <div className="rounded-xl border-2 border-dashed border-primary/60 bg-card px-6 py-4 text-center shadow-sm">
+            <UploadIcon width={22} height={22} className="mx-auto text-primary" />
+            <p className="mt-2 text-sm font-medium">
+              {locked ? "正在执行其他操作，稍后再拖入" : "松开鼠标，上传到当前目录"}
+            </p>
+            <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+              {cwd} · 小文本直接写入 · ≤64 MiB 自动分块
+            </p>
+          </div>
+        </div>
+      )}
       {dialog}
     </div>
   )

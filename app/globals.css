@@ -249,6 +249,20 @@ body {
     cursor: not-allowed;
     opacity: 0.5;
   }
+  /* 用 label 包住原生 file input：外观与 .btn 一致，键盘聚焦时由内部 input 触发出焦点样式。
+     不用脚本 input.click()，移动端浏览器和部分 WebView 会忽略它。 */
+  .btn-file {
+    position: relative;
+    cursor: pointer;
+  }
+  .btn-file:focus-within {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .btn-file[aria-disabled="true"] {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
 
   .segmented {
     display: inline-flex;

@@ -245,6 +245,18 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   size + SHA-256 first, then fetches 3 MiB base64 ranges via `doops_shell` and
   verifies the assembled bytes before saving. Row delete, rename and new-folder
   buttons submit directly without a confirmation dialog.
+- The Files section is labeled 部署包 in the sidebar (the tab id stays `files`).
+  Its 「上传文件」/「上传文件夹」 entries are native `label` + `<input type="file">`
+  pairs, so the browser opens the chooser itself instead of a scripted
+  `input.click()` that mobile browsers and some WebViews ignore. While another
+  operation runs the labels lose hover, the input is disabled, and a skipped drop
+  says why. Files and folders can also be dropped anywhere on the panel and land
+  in the current directory with the same progress block.
+- Markdown files (`.md`, `.markdown`, `.mdx`) open with an 编辑/预览 switch; the
+  preview renders through the shared Markdown component with images disabled, and
+  the editor keeps the plain-text source for saving.
+- The console-side 「检查部署」 action is removed from the Files panel; deployment
+  checks stay in the CLI (`doops check`) and the Agent tool.
 - Knowledge-base and Files panels keep unsaved drafts across tab, target and
   session switches, and lock target/session/navigation while an operation runs.
 - While a panel operation (Files, Knowledge base, Database, Website, Kubernetes,
