@@ -12,13 +12,13 @@
 | SF-05 | 前端接 SF-04：viewer Diff/Trends + 删 `builtin_strategy` 死开关 | dev-artifact-01 | `components/inspection-artifact-viewer.tsx`、`components/skill-registry-panel.tsx`、`lib/demo.ts`、新增 `lib/monitor-metrics.ts`(+test) | 01:26 | 运行中 |
 | SF-08 | 内置巡检包鲁棒性矩阵（10 场景真跑）+ 端口表收紧 + ssh-host 退化分支 + 消费 `DOOPS_TARGET_*` | skill-dev-01 | `skills_builtin/**`、`testdata/skills_builtin_verify/**` | 01:15，01:27 加附录 | 运行中 |
 | SF-09 | 彻底移除 legacy native strategy 双轨（`monitorStrategyCatalog`、`plan.Strategies` 分支、HTTP `strategies` 参数） | dev-sf-01 | `monitor_engine_{agent,runner,http}.go`、spec §1.1/§2.3、`DOOPS_WEBUI.md` | 01:26 | 运行中 |
+| SF-12 | SF-10 两条低危性能项：diff `ORDER BY` 避 TEMP B-TREE、series `skill_slug` 残差过滤（不改 schema） | integrator-gm | 只 `monitor_metric_store.go` + `monitor_metric_test.go` | 01:35 | 运行中 |
 | INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）+ `agent_status` 两列 + census 刷新 + 真机回读 | integrator-ars | `gateway_mysql_schema.sql`、`testdata/gateway-sqlite-schema.sql`、`gateway_mysql_runtime_test.go`、`gateway_store_schema.go` | 01:23 | 运行中 |
 
 ## 待办（排队/待决策）
 
 | 编号 | 任务 | 依赖 | 备注 |
 |---|---|---|---|
-| SF-12 | SF-10 两条低危性能项：diff `ORDER BY` 走临时 B 树改排序键、series `skill_slug` 残差过滤（均不改 schema） | SF-05 | dev-artifact-01；禁改 `gateway_store_schema.go`（INT-05 占用） |
 | SF-11 | 真实 Gateway↔Agent 隧道端到端验收（SF-06 §5 红线5「未覆盖」） | 需要可用 target 与凭据 | 未派：需先确认有可连的 agent 与允许的 canary 凭据，不能编造证据 |
 | INT-06 | Console 侧展示 agent_resource 同步状态（`components/target-manifest-card.tsx` 已随 INT-05 入库） | INT-05 | 无 TS 校验与浏览器实测，属 SF-05 之后的下一刀 |
 | — | `CHANGELOG.md` [Unreleased] 统一补写（SF-04/SF-05/SF-09/INT-05 的用户可见变化） | SF-05/SF-09 完成 | 该文件被前端会话占用，由我或前端会话统一写，避免共享索引互扫 |
