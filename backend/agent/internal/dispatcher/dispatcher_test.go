@@ -81,3 +81,85 @@ func TestCheckBlocksOnlyRootFilesystemDeletion(t *testing.T) {
 		})
 	}
 }
+
+func TestDenialReportsWhereTheRuleMatched(t *testing.T) {
+	t.Setenv(RulesEnv, `[{"name":"test_rule","match":"DENIED_MARKER","hint":"use a single word"}]`)
+	err := Check("touch denied; printf '%s' DENIED_MARKER")
+	denied, ok := err.(*BlockedError)
+	if !ok || denied.Rule != "test_rule" || denied.Hint != "use a single word" {
+		t.Fatalf("unexpected denial: %v", err)
+	}
+	if !strings.HasPrefix(err.Error(), "blocked_command(test_rule): next: use a single word; matched: ") {
+		t.Fatalf("denial must keep the parseable prefix: %q", err)
+	}
+	if !strings.Contains(denied.Matched, "DENIED_MARKER") || !strings.Contains(err.Error(), `matched: "`) {
+		t.Fatalf("denial must show where the rule matched: %#v / %q", denied, err)
+	}
+	if err := Check("printf '%s' 'safe text'"); err != nil {
+		t.Fatalf("unmatched command was denied: %v", err)
+	}
+}
+
+func TestDenialMatchHandlesMultilineAndLongCommands(t *testing.T) {
+	t.Setenv(RulesEnv, `[{"name":"marker","match":"(?m)^kubectl drain","hint":"wait for the window"}]`)
+	command := "set -e\necho first\nkubectl drain node-1 --ignore-daemonsets --delete-emptydir-data\necho done"
+	denied, ok := Check(command).(*BlockedError)
+	if !ok {
+		t.Fatal("multiline command was not denied")
+	}
+	if want := "set -e\necho first\nkubectl drain"; !strings.Contains(denied.Matched, want) {
+		t.Fatalf("matched excerpt = %q, want context around %q", denied.Matched, want)
+	}
+	for _, line := range strings.Split(denied.Matched, "\n") {
+		if len(line) > MatchedLimit {
+			t.Fatalf("matched excerpt line exceeds %d bytes: %q", MatchedLimit, line)
+		}
+	}
+
+	long := strings.Repeat("x", 4000) + " DENIED_MARKER " + strings.Repeat("y", 4000)
+	t.Setenv(RulesEnv, `[{"name":"marker","match":"DENIED_MARKER","hint":"stop"}]`)
+	denied, ok = Check(long).(*BlockedError)
+	if !ok {
+		t.Fatal("long command was not denied")
+	}
+	if len(denied.Matched) > MatchedLimit+len("......") {
+		t.Fatalf("long match was not bounded: %d bytes", len(denied.Matched))
+	}
+	if !strings.Contains(denied.Matched, "DENIED_MARKER") || !strings.HasPrefix(denied.Matched, "...") || !strings.HasSuffix(denied.Matched, "...") {
+		t.Fatalf("long match lacks a bounded excerpt: %q", denied.Matched)
+	}
+}
+
+func TestDenialMatchUsesTheInstalledRedactor(t *testing.T) {
+	t.Setenv(RulesEnv, `[{"name":"marker","match":"DENIED_MARKER","hint":"stop"}]`)
+	Redactor, MatchedCap = func(string) string { return "[REDACTED]" }, nil
+	t.Cleanup(func() { Redactor, MatchedCap = nil, nil })
+	denied, ok := Check("curl -H 'Authorization: Bearer synthetic-canary' DENIED_MARKER").(*BlockedError)
+	if !ok {
+		t.Fatal("command was not denied")
+	}
+	if strings.Contains(denied.Matched, "synthetic-canary") || !strings.Contains(denied.Matched, "[REDACTED]") {
+		t.Fatalf("matched excerpt was not redacted: %q", denied.Matched)
+	}
+}
+
+func TestReportedDenialAcceptsCurrentAndLegacyMessages(t *testing.T) {
+	t.Setenv(RulesEnv, `[{"name":"marker","match":"DENIED_MARKER","hint":"stop now"}]`)
+	current := `some shell noise
+blocked_command(marker): next: stop now; matched: "DENIED_MARKER"` + "\n"
+	for _, output := range []string{current, "blocked_command(marker): next: stop now\n"} {
+		denied := ReportedDenial(output)
+		if denied == nil || denied.Rule != "marker" || denied.Hint != "stop now" || denied.Matched != "" {
+			t.Fatalf("ReportedDenial(%q) = %#v", output, denied)
+		}
+	}
+	for _, output := range []string{
+		"",
+		"blocked_command(marker): next: stop now-suffix\n",
+		"unrelated output\n",
+	} {
+		if denied := ReportedDenial(output); denied != nil {
+			t.Fatalf("ReportedDenial(%q) = %#v, want nil", output, denied)
+		}
+	}
+}

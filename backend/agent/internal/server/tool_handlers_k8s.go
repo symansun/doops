@@ -62,6 +62,7 @@ func (gw *Gateway) handleToolNodeInfo(call toolInvocation) {
 		"if command -v buildctl >/dev/null 2>&1; then echo 'buildctl: OK '$(command -v buildctl); else echo 'buildctl: MISSING'; fi",
 		"if command -v skopeo >/dev/null 2>&1; then echo 'skopeo: OK '$(command -v skopeo); else echo 'skopeo: MISSING'; fi",
 		"if [ -S /run/buildkit/buildkitd.sock ]; then echo 'buildkit-sock: OK /run/buildkit/buildkitd.sock'; else echo 'buildkit-sock: MISSING'; fi",
+		"if [ ! -e /run/buildkit/buildkitd.sock ]; then echo 'image-build: MISSING no buildkitd socket'; elif buildctl --addr unix:///run/buildkit/buildkitd.sock debug workers >/dev/null 2>&1; then echo 'image-build: OK'; else echo 'image-build: UNAVAILABLE buildkitd requires a privileged container'; fi",
 		"if [ -f /root/.kube/config ]; then echo 'kubeconfig: OK /root/.kube/config'; elif [ -f /etc/rancher/k3s/k3s.yaml ]; then echo 'kubeconfig: OK /etc/rancher/k3s/k3s.yaml'; elif [ -f /etc/kubernetes/admin.conf ]; then echo 'kubeconfig: OK /etc/kubernetes/admin.conf'; else echo 'kubeconfig: MISSING'; fi",
 	}, "; ")
 	execCtx, cancelExec := context.WithTimeout(ctx, maxToolExecutionDuration())
