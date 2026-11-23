@@ -117,6 +117,20 @@ func validResourceMetadataToken(value string) bool {
 	return resourceIdentityToken.MatchString(value) && !credentialScalarContainsInlineMaterial(value)
 }
 
+// Observation keys are hierarchical (for example "namespace/service/engine"
+// for databases); each segment stays inside the metadata-token alphabet.
+func validObservationKey(key string) bool {
+	if key == "" || len(key) > 128 {
+		return false
+	}
+	for _, segment := range strings.Split(key, "/") {
+		if !validResourceMetadataToken(segment) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *agentResourceSnapshot) canonicalize() {
 	slices.Sort(s.Complete)
 	slices.SortFunc(s.Resources, func(a, b agentResourceObservation) int {
@@ -141,7 +155,7 @@ func (s agentResourceSnapshot) valid() bool {
 	keys := make(map[string]bool, len(s.Resources))
 	for _, resource := range s.Resources {
 		key := resource.Kind + "/" + resource.Key
-		if !validObservationKind(resource.Kind) || !validResourceMetadataToken(resource.Key) ||
+		if !validObservationKind(resource.Kind) || !validObservationKey(resource.Key) ||
 			!validResourceMetadataToken(resource.Name) || keys[key] || resource.Count < 0 ||
 			(resource.Identity != "" && !validResourceMetadataToken(resource.Identity)) ||
 			(resource.Kind != "container" && resource.Count != 0) {

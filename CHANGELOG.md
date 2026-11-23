@@ -6,6 +6,12 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [0.3.30] — 2026-11-24
+
+### Fixed
+
+- 修复 v0.3.29 升级到该版本的 Agent 上 `exec`/`ask`/shell/k8s/helm 等远程操作全部返回 `target_manifest_unavailable` 的问题：数据库观测项的 Key 采用 `命名空间/服务/引擎` 层级格式，但快照校验的元数据令牌规则不允许 `/`，Agent 端 `invalid_agent_observations` 被 Gateway 折叠成统一错误。校验改为按 `/` 分段逐项校验层级 Key；名称与身份的校验规则不变。
+
 ## [Unreleased]
 
 ### Added

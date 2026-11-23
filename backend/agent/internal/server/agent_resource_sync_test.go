@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -134,5 +135,61 @@ func TestReconcileAgentResourcesPublishesManifest(t *testing.T) {
 	}
 	if next.Revision != manifest.Revision+1 || next.Counts["namespace"] != 0 {
 		t.Fatalf("dropped namespace did not republish: revision %d counts %v", next.Revision, next.Counts)
+	}
+}
+
+func TestSnapshotValidAcceptsHierarchicalObservationKeys(t *testing.T) {
+	// Given a snapshot carrying the database probe's slash-delimited key
+	snapshot := agentResourceSnapshot{
+		Mode: "kubernetes",
+		Resources: []agentResourceObservation{
+			{Kind: "database", Key: "team-a/mysql-svc/mysql", Name: "mysql-svc", Identity: "id-3"},
+		},
+	}
+	// When the observation is validated
+	// Then the hierarchical key is accepted while malformed keys stay rejected
+	if !snapshot.valid() {
+		t.Fatal("hierarchical database key must be valid")
+	}
+	for _, bad := range []string{"", "/leading", "trailing/", "double//slash", "-bad-segment/x", "x/" + strings.Repeat("a", 129)} {
+		if (agentResourceSnapshot{Mode: "kubernetes", Resources: []agentResourceObservation{{Kind: "database", Key: bad, Name: "mysql-svc"}}}).valid() {
+			t.Fatalf("key %q must stay invalid", bad)
+		}
+	}
+}
+
+func TestReconcileAgentResourcesAcceptsDatabaseObservation(t *testing.T) {
+	// Given a migrated store and a snapshot with a slash-delimited database key
+	f := newMachineFixture(t)
+	for _, name := range []string{"agent_resource_sync", "cluster_inventory", "machine_diagnostics", "business_inventory", "asset_catalog", "agent_asset_scope"} {
+		data, err := os.ReadFile("../../../docs/migrations/" + name + ".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.exec(t, string(data))
+	}
+	connected := time.Date(2026, 11, 24, 1, 0, 0, 0, time.UTC)
+	available := true
+	if err := f.store.MarkAgentOnline(AgentStatus{Cluster: "ops", Instance: "left", Generation: 5, ConnectedAt: connected, Mode: "kubernetes", KubernetesAvailable: &available}); err != nil {
+		t.Fatal(err)
+	}
+	agent := &GatewayAgent{Cluster: "ops", Instance: "left", Generation: 5, ConnectedAt: connected}
+	snapshot := &agentResourceSnapshot{
+		Mode:                "kubernetes",
+		KubernetesAvailable: true,
+		Complete:            []string{"database"},
+		Resources: []agentResourceObservation{
+			{Kind: "database", Key: "team-a/mysql-svc/mysql", Name: "mysql-svc", Identity: "id-3"},
+		},
+	}
+	snapshot.canonicalize()
+	// When the observation is reconciled
+	manifest, err := f.store.reconcileAgentResources(context.Background(), agent, snapshot, agentResourceDigest(*snapshot))
+	// Then the manifest publishes without rejecting the hierarchical key
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Revision != 1 || manifest.Counts["database"] != 1 {
+		t.Fatalf("database observation not published: revision %d counts %v", manifest.Revision, manifest.Counts)
 	}
 }
