@@ -305,7 +305,7 @@ CREATE TABLE agent_status (
     last_seen TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     generation BIGINT NOT NULL DEFAULT 0,
-    archived_at TEXT NOT NULL DEFAULT (''),
+    archived_at VARCHAR(64) NOT NULL DEFAULT '',
     archived_by VARCHAR(64) NOT NULL DEFAULT '',
     release_commit VARCHAR(64) NOT NULL DEFAULT '',
     mode VARCHAR(16) NOT NULL DEFAULT '',

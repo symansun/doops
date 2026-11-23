@@ -60,6 +60,9 @@ func TestGatewayMySQLAgentStatusInsertMatchesSchema(t *testing.T) {
 		present[column] = true
 	}
 	for name, meta := range columns {
+		if meta.expressionDefault {
+			t.Fatalf("agent_status.%s uses an expression default, which the offline copier rejects as a generated column; give the column a VARCHAR default instead", name)
+		}
 		if present[name] || meta.nullable || meta.hasDefault {
 			continue
 		}
@@ -97,6 +100,10 @@ type gatewayMySQLAgentStatusColumn struct {
 	dataType   string
 	nullable   bool
 	hasDefault bool
+	// expressionDefault reports MySQL's DEFAULT_GENERATED flag. A TEXT column
+	// can only carry a default as an expression, and the offline copier refuses
+	// any column flagged generated, so a defaulted string column stays VARCHAR.
+	expressionDefault bool
 }
 
 func (c gatewayMySQLAgentStatusColumn) numeric() bool {
@@ -179,10 +186,12 @@ func gatewayMySQLAgentStatusMySQLColumns(t *testing.T, db *sql.DB, table string)
 		if err := rows.Scan(&name, &dataType, &nullable, &defaultValue, &extra); err != nil {
 			t.Fatalf("scan %s column: %v", table, err)
 		}
+		expressionDefault := strings.Contains(strings.ToUpper(extra), "DEFAULT_GENERATED")
 		columns[name] = gatewayMySQLAgentStatusColumn{
-			dataType:   strings.ToLower(dataType),
-			nullable:   strings.EqualFold(nullable, "YES"),
-			hasDefault: defaultValue.Valid || strings.Contains(strings.ToUpper(extra), "DEFAULT_GENERATED"),
+			dataType:          strings.ToLower(dataType),
+			nullable:          strings.EqualFold(nullable, "YES"),
+			hasDefault:        defaultValue.Valid || expressionDefault,
+			expressionDefault: expressionDefault,
 		}
 	}
 	if err := rows.Err(); err != nil {
