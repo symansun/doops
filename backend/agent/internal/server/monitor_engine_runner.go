@@ -24,6 +24,7 @@ type monitorRunPlan struct {
 	Targets      []monitorTargetRef
 	Tags         []string
 	Strategies   []string
+	Skills       []string
 	Thresholds   api.MonitorInspectThresholds
 	ExplicitSSH  []api.MonitorInspectAsset
 	RetestItems  map[string][]api.MonitorInspectAsset // keyed by cluster/instance
@@ -69,6 +70,7 @@ func (h *GatewayHub) RunDueMonitorSchedules(ctx context.Context, now time.Time) 
 				Targets:      s.Targets,
 				Tags:         s.Tags,
 				Strategies:   s.Strategies,
+				Skills:       s.Skills,
 				Thresholds:   s.Thresholds,
 			})
 			if err != nil {
@@ -345,8 +347,50 @@ func (h *GatewayHub) buildAgentInspectAssets(ctx context.Context, cluster, insta
 func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan) (monitorRunRecord, []monitorRunItemRecord, error) {
 	started := time.Now().UTC()
 	runID := "run_" + randomHex(8)
-	plan.Strategies = normalizeMonitorStrategies(plan.Strategies)
+	plan.Skills = normalizeSkillSlugs(plan.Skills)
 	plan.Thresholds = normalizeMonitorThresholds(plan.Thresholds)
+
+	// Resolve Skill-driven inspection plan: builtin_strategy skills map to native
+	// Agent strategies, while agent_prompt (system security or user custom) skills
+	// sync to /root/.agent/skills/<slug>/ and execute via read-only doops_agent_prompt.
+	var (
+		agentDrivenSkills []platformSkillRecord
+		drivenSkillSlugs  []string
+		skillDerivedStrat []string
+		skillByStrategy   = map[string]string{}
+	)
+	if len(plan.Skills) > 0 && plan.RetestItems == nil {
+		lookupAuth := plan.Auth
+		if lookupAuth.UserID == "" {
+			lookupAuth.UserID = "system"
+		}
+		stratSeen := map[string]bool{}
+		for _, slug := range plan.Skills {
+			sk, err := h.store.GetPlatformSkill(ctx, lookupAuth, slug)
+			if err != nil || !sk.Enabled {
+				continue
+			}
+			drivenSkillSlugs = append(drivenSkillSlugs, sk.Slug)
+			if sk.DriverMode == "builtin_strategy" && validMonitorStrategies[sk.StrategyID] {
+				if !stratSeen[sk.StrategyID] {
+					stratSeen[sk.StrategyID] = true
+					skillDerivedStrat = append(skillDerivedStrat, sk.StrategyID)
+				}
+				skillByStrategy[sk.StrategyID] = sk.Slug
+			} else {
+				agentDrivenSkills = append(agentDrivenSkills, sk)
+			}
+		}
+		if len(skillDerivedStrat) > 0 {
+			plan.Strategies = skillDerivedStrat
+		} else if len(agentDrivenSkills) > 0 && len(plan.Strategies) == 0 {
+			plan.Strategies = []string{}
+		} else {
+			plan.Strategies = normalizeMonitorStrategies(plan.Strategies)
+		}
+	} else {
+		plan.Strategies = normalizeMonitorStrategies(plan.Strategies)
+	}
 	if plan.TriggerKind == "" {
 		plan.TriggerKind = "manual"
 	}
@@ -377,7 +421,7 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 		TokenID:        plan.Auth.TokenID,
 		Action:         GatewayAction("monitor:run"),
 		Session:        "monitor-" + runID,
-		CommandSummary: fmt.Sprintf("run=%s trigger=%s targets=%d strategies=%s", runID, plan.TriggerKind, len(targets), strings.Join(plan.Strategies, ",")),
+		CommandSummary: fmt.Sprintf("run=%s trigger=%s targets=%d strategies=%s skills=%s", runID, plan.TriggerKind, len(targets), strings.Join(plan.Strategies, ","), strings.Join(drivenSkillSlugs, ",")),
 	})
 
 	var (
@@ -401,27 +445,33 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 			var assets []api.MonitorInspectAsset
 			if plan.RetestItems != nil {
 				assets = plan.RetestItems[tunnelKey(t.Cluster, t.Instance)]
-			} else {
+			} else if len(plan.Strategies) > 0 {
 				assets = h.buildAgentInspectAssets(ctx, t.Cluster, t.Instance, plan.Strategies, plan.ExplicitSSH)
 			}
-			if len(assets) == 0 {
+			if len(assets) == 0 && len(agentDrivenSkills) == 0 {
 				return
 			}
 
 			// Offline Agent check — never silently skipped!
 			if h.getAgent(t.Cluster, t.Instance) == nil {
 				nowMs := time.Now().UnixMilli()
+				aid, aname, akind, astrat := t.Instance, t.Cluster+"/"+t.Instance, "vm", "vm_host"
+				if len(assets) > 0 {
+					aid, aname, akind, astrat = assets[0].AssetID, assets[0].AssetName, assets[0].AssetKind, assets[0].Strategy
+				} else if len(agentDrivenSkills) > 0 {
+					aid, aname, akind, astrat = agentDrivenSkills[0].Slug, agentDrivenSkills[0].Name, "skill", "skill:"+agentDrivenSkills[0].Slug
+				}
 				mu.Lock()
 				offlineCount++
 				allItems = append(allItems, monitorRunItemRecord{
 					RunID:           runID,
 					Cluster:         t.Cluster,
 					Instance:        t.Instance,
-					AssetID:         assets[0].AssetID,
-					AssetName:       assets[0].AssetName,
-					AssetKind:       assets[0].AssetKind,
-					Strategy:        assets[0].Strategy,
-					CollectorMethod: strategyCollectorMethod(assets[0].Strategy),
+					AssetID:         aid,
+					AssetName:       aname,
+					AssetKind:       akind,
+					Strategy:        astrat,
+					CollectorMethod: strategyCollectorMethod(astrat),
 					Status:          "offline",
 					Reason:          "target_offline",
 					StartedAtMs:     tStart.UnixMilli(),
@@ -433,117 +483,136 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 						Detail: fmt.Sprintf("目标 %s/%s 当前离线，无法下发巡检任务", t.Cluster, t.Instance),
 					}},
 				})
-				allSnapshots = append(allSnapshots, monitorResourceSnapshot{
-					Cluster: t.Cluster, Instance: t.Instance,
-					AssetID: assets[0].AssetID, AssetName: assets[0].AssetName, AssetKind: assets[0].AssetKind,
-					Strategy: assets[0].Strategy, CollectorMethod: strategyCollectorMethod(assets[0].Strategy),
-					CollectedAtMs: nowMs, RunID: runID, Status: "offline", Tags: assets[0].Tags,
-				})
-				mu.Unlock()
-				return
-			}
-
-			results, callErr := h.dispatchAgentMonitorInspect(ctx, plan.Auth, t, runID, plan.Strategies, assets, plan.Thresholds)
-			nowMs := time.Now().UnixMilli()
-			if callErr != nil {
-				mu.Lock()
-				allItems = append(allItems, monitorRunItemRecord{
-					RunID:           runID,
-					Cluster:         t.Cluster,
-					Instance:        t.Instance,
-					AssetID:         assets[0].AssetID,
-					AssetName:       assets[0].AssetName,
-					AssetKind:       assets[0].AssetKind,
-					Strategy:        assets[0].Strategy,
-					CollectorMethod: strategyCollectorMethod(assets[0].Strategy),
-					Status:          "error",
-					Reason:          sanitizeSecretText(callErr.Error()),
-					StartedAtMs:     tStart.UnixMilli(),
-					FinishedAtMs:    nowMs,
-					DurationMs:      time.Since(tStart).Milliseconds(),
-					Checks: []api.MonitorInspectCheck{{
-						ID: "agent.dispatch", Name: "任务下发与执行", Category: "availability",
-						Status: "critical", Detail: sanitizeSecretText(callErr.Error()),
-					}},
-				})
-				mu.Unlock()
-				return
-			}
-
-			mu.Lock()
-			for _, r := range results {
-				item := monitorRunItemRecord{
-					RunID:           runID,
-					Cluster:         t.Cluster,
-					Instance:        t.Instance,
-					AssetID:         r.AssetID,
-					AssetName:       r.AssetName,
-					AssetKind:       r.AssetKind,
-					Strategy:        r.Strategy,
-					CollectorMethod: r.CollectorMethod,
-					Status:          r.Status,
-					Reason:          r.Reason,
-					StartedAtMs:     tStart.UnixMilli(),
-					FinishedAtMs:    r.CollectedAtMs,
-					DurationMs:      r.DurationMs,
-					Metrics:         r.Metrics,
-					Checks:          r.Checks,
-					Evidence:        r.Evidence,
-				}
-				allItems = append(allItems, item)
-
-				// Record resource snapshots for every non-skipped asset result so fleet resource monitor stays fresh.
-				if r.Status != "skipped" {
-					snapStatus := "ok"
-					switch r.Status {
-					case "warning", "critical", "error", "offline":
-						snapStatus = r.Status
-					}
+				if len(assets) > 0 {
 					allSnapshots = append(allSnapshots, monitorResourceSnapshot{
-						Cluster:           t.Cluster,
-						Instance:          t.Instance,
-						AssetID:           r.AssetID,
-						AssetName:         r.AssetName,
-						AssetKind:         r.AssetKind,
-						Strategy:          r.Strategy,
-						CollectorMethod:   r.CollectorMethod,
-						CollectedAtMs:     r.CollectedAtMs,
-						RunID:             runID,
-						Status:            snapStatus,
-						CPUCores:          r.Metrics.CPUCores,
-						CPUTotalCores:     r.Metrics.CPUTotalCores,
-						CPUPercent:        r.Metrics.CPUPercent,
-						MemoryUsedBytes:   r.Metrics.MemoryUsedBytes,
-						MemoryTotalBytes:  r.Metrics.MemoryTotalBytes,
-						MemoryPercent:     r.Metrics.MemoryPercent,
-						DiskUsedBytes:     r.Metrics.DiskUsedBytes,
-						DiskTotalBytes:    r.Metrics.DiskTotalBytes,
-						DiskPercent:       r.Metrics.DiskPercent,
-						NetBytesPerSec:    r.Metrics.NetBytesPerSec,
-						DiskIOPS:          r.Metrics.DiskIOPS,
-						DiskLatencyMs:     r.Metrics.DiskLatencyMs,
-						GPUPercent:        r.Metrics.GPUPercent,
-						ResponseTimeMs:    r.Metrics.ResponseTimeMs,
-						ErrorRate:         r.Metrics.ErrorRate,
-						ActiveConnections: r.Metrics.ActiveConnections,
-						RequestsPerSec:    r.Metrics.RequestsPerSec,
-						UptimeSeconds:     r.Metrics.UptimeSeconds,
-						Load1m:            r.Metrics.Load1m,
-						OSInfo:            r.Metrics.OSInfo,
-						KernelInfo:        r.Metrics.KernelInfo,
-						Tags:              r.Tags,
-						Details:           r.Details,
+						Cluster: t.Cluster, Instance: t.Instance,
+						AssetID: assets[0].AssetID, AssetName: assets[0].AssetName, AssetKind: assets[0].AssetKind,
+						Strategy: assets[0].Strategy, CollectorMethod: strategyCollectorMethod(assets[0].Strategy),
+						CollectedAtMs: nowMs, RunID: runID, Status: "offline", Tags: assets[0].Tags,
 					})
 				}
+				mu.Unlock()
+				return
+			}
 
-				for _, pt := range r.SeriesPoints {
-					allSeries = append(allSeries, monitorSeriesBridgeEntry{Cluster: t.Cluster, Instance: t.Instance, Point: pt})
+			if len(assets) > 0 {
+				results, callErr := h.dispatchAgentMonitorInspect(ctx, plan.Auth, t, runID, plan.Strategies, assets, plan.Thresholds)
+				nowMs := time.Now().UnixMilli()
+				if callErr != nil {
+					mu.Lock()
+					allItems = append(allItems, monitorRunItemRecord{
+						RunID:           runID,
+						Cluster:         t.Cluster,
+						Instance:        t.Instance,
+						AssetID:         assets[0].AssetID,
+						AssetName:       assets[0].AssetName,
+						AssetKind:       assets[0].AssetKind,
+						Strategy:        assets[0].Strategy,
+						CollectorMethod: strategyCollectorMethod(assets[0].Strategy),
+						Status:          "error",
+						Reason:          sanitizeSecretText(callErr.Error()),
+						StartedAtMs:     tStart.UnixMilli(),
+						FinishedAtMs:    nowMs,
+						DurationMs:      time.Since(tStart).Milliseconds(),
+						Checks: []api.MonitorInspectCheck{{
+							ID: "agent.dispatch", Name: "任务下发与执行", Category: "availability",
+							Status: "critical", Detail: sanitizeSecretText(callErr.Error()),
+						}},
+					})
+					mu.Unlock()
+				} else {
+					mu.Lock()
+					for _, r := range results {
+						if r.Evidence == nil {
+							r.Evidence = map[string]any{}
+						}
+						if slug := skillByStrategy[r.Strategy]; slug != "" {
+							r.Evidence["skill_slug"] = slug
+						}
+						item := monitorRunItemRecord{
+							RunID:           runID,
+							Cluster:         t.Cluster,
+							Instance:        t.Instance,
+							AssetID:         r.AssetID,
+							AssetName:       r.AssetName,
+							AssetKind:       r.AssetKind,
+							Strategy:        r.Strategy,
+							CollectorMethod: r.CollectorMethod,
+							Status:          r.Status,
+							Reason:          r.Reason,
+							StartedAtMs:     tStart.UnixMilli(),
+							FinishedAtMs:    r.CollectedAtMs,
+							DurationMs:      r.DurationMs,
+							Metrics:         r.Metrics,
+							Checks:          r.Checks,
+							Evidence:        r.Evidence,
+						}
+						allItems = append(allItems, item)
+
+						if r.Status != "skipped" {
+							snapStatus := "ok"
+							switch r.Status {
+							case "warning", "critical", "error", "offline":
+								snapStatus = r.Status
+							}
+							allSnapshots = append(allSnapshots, monitorResourceSnapshot{
+								Cluster:           t.Cluster,
+								Instance:          t.Instance,
+								AssetID:           r.AssetID,
+								AssetName:         r.AssetName,
+								AssetKind:         r.AssetKind,
+								Strategy:          r.Strategy,
+								CollectorMethod:   r.CollectorMethod,
+								CollectedAtMs:     r.CollectedAtMs,
+								RunID:             runID,
+								Status:            snapStatus,
+								CPUCores:          r.Metrics.CPUCores,
+								CPUTotalCores:     r.Metrics.CPUTotalCores,
+								CPUPercent:        r.Metrics.CPUPercent,
+								MemoryUsedBytes:   r.Metrics.MemoryUsedBytes,
+								MemoryTotalBytes:  r.Metrics.MemoryTotalBytes,
+								MemoryPercent:     r.Metrics.MemoryPercent,
+								DiskUsedBytes:     r.Metrics.DiskUsedBytes,
+								DiskTotalBytes:    r.Metrics.DiskTotalBytes,
+								DiskPercent:       r.Metrics.DiskPercent,
+								NetBytesPerSec:    r.Metrics.NetBytesPerSec,
+								DiskIOPS:          r.Metrics.DiskIOPS,
+								DiskLatencyMs:     r.Metrics.DiskLatencyMs,
+								GPUPercent:        r.Metrics.GPUPercent,
+								ResponseTimeMs:    r.Metrics.ResponseTimeMs,
+								ErrorRate:         r.Metrics.ErrorRate,
+								ActiveConnections: r.Metrics.ActiveConnections,
+								RequestsPerSec:    r.Metrics.RequestsPerSec,
+								UptimeSeconds:     r.Metrics.UptimeSeconds,
+								Load1m:            r.Metrics.Load1m,
+								OSInfo:            r.Metrics.OSInfo,
+								KernelInfo:        r.Metrics.KernelInfo,
+								Tags:              r.Tags,
+								Details:           r.Details,
+							})
+						}
+
+						for _, pt := range r.SeriesPoints {
+							allSeries = append(allSeries, monitorSeriesBridgeEntry{Cluster: t.Cluster, Instance: t.Instance, Point: pt})
+						}
+					}
+					mu.Unlock()
 				}
 			}
-			mu.Unlock()
+
+			// Execute agent-driven custom & system AI Skills sequentially per target.
+			for _, sk := range agentDrivenSkills {
+				item := h.runAgentDrivenSkillInspection(ctx, plan.Auth, t, runID, sk)
+				mu.Lock()
+				allItems = append(allItems, item)
+				mu.Unlock()
+			}
 		}(tgt)
 	}
 	wg.Wait()
+	if len(drivenSkillSlugs) > 0 {
+		h.store.RecordPlatformSkillRun(ctx, drivenSkillSlugs, time.Now().UnixMilli())
+	}
 
 	sort.Slice(allItems, func(i, j int) bool {
 		ki := allItems[i].Cluster + "/" + allItems[i].Instance + "/" + allItems[i].AssetKind + "/" + allItems[i].AssetID
@@ -701,4 +770,139 @@ func (h *GatewayHub) fallbackLegacyVMInspect(
 		Status: "warning",
 	}
 	return []api.MonitorInspectAssetResult{res}, nil
+}
+
+// runAgentDrivenSkillInspection syncs a system/custom Skill to the target Agent's
+// /root/.agent/skills/<slug>/ directory and drives it through read-only doops_agent_prompt.
+func (h *GatewayHub) runAgentDrivenSkillInspection(
+	ctx context.Context,
+	auth TokenAuth,
+	target monitorTargetRef,
+	runID string,
+	sk platformSkillRecord,
+) monitorRunItemRecord {
+	started := time.Now()
+	item := monitorRunItemRecord{
+		RunID:           runID,
+		Cluster:         target.Cluster,
+		Instance:        target.Instance,
+		AssetID:         sk.Slug,
+		AssetName:       sk.Name,
+		AssetKind:       "skill",
+		Strategy:        "skill:" + sk.Slug,
+		CollectorMethod: "agent_skill",
+		StartedAtMs:     started.UnixMilli(),
+		Evidence: map[string]any{
+			"skill_slug":  sk.Slug,
+			"skill_scope": sk.Scope,
+			"skill_sha":   sk.SHA256,
+		},
+	}
+
+	if err := h.syncOneSkillToAgent(ctx, auth, target, sk); err != nil {
+		item.Status = "error"
+		item.Reason = "skill_sync_failed"
+		item.FinishedAtMs = time.Now().UnixMilli()
+		item.DurationMs = time.Since(started).Milliseconds()
+		item.Checks = []api.MonitorInspectCheck{{
+			ID: "skill.sync", Name: sk.Name + " · 同步下发", Category: sk.Category,
+			Status: "critical", Value: "同步失败",
+			Detail: "无法将 Skill 同步至目标 Agent：" + sanitizeSecretText(err.Error()),
+		}}
+		return item
+	}
+	item.Evidence["synced"] = true
+
+	instruction := fmt.Sprintf(
+		"你正在执行 DoOps 系统驱动的只读巡检任务。请加载并使用 Skill `name=%s` 完成只读检查，严格遵守该 Skill 的检查步骤且不得修改任何系统状态。完成后仅输出一段 JSON 对象，格式为：{\"status\":\"pass|warning|critical\",\"summary\":\"简明摘要\",\"checks\":[{\"id\":\"...\",\"name\":\"检查项\",\"category\":\"%s\",\"status\":\"pass|warning|critical|skipped\",\"value\":\"观测值\",\"detail\":\"证据说明\"}]}。",
+		sk.Slug, sk.Category,
+	)
+
+	callCtx, cancel := context.WithTimeout(contextWithInternalAuditAuth(ctx, auth), 90*time.Second)
+	defer cancel()
+	rawOut, err := h.RunInternalToolCall(callCtx, target.Cluster, target.Instance, "doops_agent_prompt", map[string]any{
+		"session_id":  "skill-inspect-" + runID + "-" + sk.Slug,
+		"instruction": instruction,
+		"operation":   "ask",
+		"skill":       sk.Slug,
+	})
+	item.FinishedAtMs = time.Now().UnixMilli()
+	item.DurationMs = time.Since(started).Milliseconds()
+
+	if err != nil {
+		cleanErr := trimTail(sanitizeSecretText(err.Error()), 240)
+		item.Status = "skipped"
+		item.Reason = "skill_synced_ai_unavailable"
+		item.Checks = []api.MonitorInspectCheck{{
+			ID: "skill.execute", Name: sk.Name, Category: sk.Category,
+			Status: "skipped", Value: "Skill 已同步 · 待配置大模型",
+			Detail: fmt.Sprintf("Skill 已同步至目标 Agent（/root/.agent/skills/%s），但未能驱动 AI Skill 执行：%s（请确认目标已绑定 modelProvider 凭据且 doagent 在线）", sk.Slug, cleanErr),
+		}}
+		return item
+	}
+
+	checks, parsedStatus := parseSkillInspectAnswer(sk, rawOut)
+	item.Checks = checks
+	item.Status = parsedStatus
+	if item.Status == "" {
+		item.Status = aggregateCheckStatus(checks)
+	}
+	return item
+}
+
+func parseSkillInspectAnswer(sk platformSkillRecord, raw string) ([]api.MonitorInspectCheck, string) {
+	trimmed := strings.TrimSpace(raw)
+	// Extract JSON block if wrapped in markdown fences or prose.
+	candidate := trimmed
+	if start := strings.IndexByte(trimmed, '{'); start >= 0 {
+		if end := strings.LastIndexByte(trimmed, '}'); end > start {
+			candidate = trimmed[start : end+1]
+		}
+	}
+	var parsed struct {
+		Status  string                    `json:"status"`
+		Summary string                    `json:"summary"`
+		Checks  []api.MonitorInspectCheck `json:"checks"`
+	}
+	if json.Unmarshal([]byte(candidate), &parsed) == nil && len(parsed.Checks) > 0 {
+		out := make([]api.MonitorInspectCheck, 0, len(parsed.Checks))
+		for i, c := range parsed.Checks {
+			if c.ID == "" {
+				c.ID = fmt.Sprintf("skill.%s.%d", sk.Slug, i+1)
+			}
+			if c.Name == "" {
+				c.Name = sk.Name
+			}
+			if c.Category == "" {
+				c.Category = sk.Category
+			}
+			switch c.Status {
+			case "pass", "warning", "critical", "skipped":
+			default:
+				c.Status = "pass"
+			}
+			out = append(out, c)
+		}
+		st := parsed.Status
+		switch st {
+		case "pass", "warning", "critical", "skipped":
+		default:
+			st = aggregateCheckStatus(out)
+		}
+		return out, st
+	}
+
+	// Plain-text fallback from doagent answer.
+	preview := trimTail(sanitizeSecretText(trimmed), 420)
+	if preview == "" {
+		preview = "Skill 执行完成，未返回明细内容"
+	}
+	return []api.MonitorInspectCheck{{
+		ID:       "skill." + sk.Slug,
+		Name:     sk.Name,
+		Category: sk.Category,
+		Status:   "pass",
+		Value:    "已完成",
+		Detail:   preview,
+	}}, "pass"
 }

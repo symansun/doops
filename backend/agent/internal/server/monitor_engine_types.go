@@ -189,6 +189,22 @@ func normalizeMonitorStrategies(list []string) []string {
 	return out
 }
 
+func normalizeSkillSlugs(list []string) []string {
+	if len(list) == 0 {
+		return []string{}
+	}
+	seen := make(map[string]bool, len(list))
+	out := make([]string, 0, len(list))
+	for _, raw := range list {
+		slug := strings.ToLower(strings.TrimSpace(raw))
+		if skillSlugPattern.MatchString(slug) && !seen[slug] && len(out) < 32 {
+			seen[slug] = true
+			out = append(out, slug)
+		}
+	}
+	return out
+}
+
 type monitorTargetRef struct {
 	Cluster  string `json:"cluster"`
 	Instance string `json:"instance"`
@@ -209,6 +225,7 @@ type monitorScheduleRecord struct {
 	Targets         []monitorTargetRef           `json:"targets"`
 	Tags            []string                     `json:"tags"`
 	Strategies      []string                     `json:"strategies"`
+	Skills          []string                     `json:"skills,omitempty"`
 	Thresholds      api.MonitorInspectThresholds `json:"thresholds"`
 	IntervalSeconds int                          `json:"interval_seconds"`
 	NextRunAtMs     int64                        `json:"next_run_at_ms"`

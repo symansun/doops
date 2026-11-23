@@ -68,6 +68,7 @@ var gatewayToolSpecs = []gatewayToolSpec{
 	// Diagnostic collection uses a direct relay, not RunInternalToolCall.
 	{name: diagnosticReadTool, visibility: gatewayInternal},
 	{name: monitorInspectTool, visibility: gatewayInternal, publicDenial: "monitor_inspect_internal_only", action: constantAction(ActionInfo)},
+	{name: skillSyncTool, visibility: gatewayInternal, publicDenial: "skill_sync_internal_only", action: constantAction(ActionWrite)},
 }
 
 var gatewayToolIndex = func() map[string]gatewayToolSpec {

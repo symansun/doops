@@ -24,7 +24,7 @@ func (s *GatewayStore) tableExists(ctx context.Context, name string) bool {
 
 func (s *GatewayStore) ListMonitorSchedules(ctx context.Context) ([]monitorScheduleRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, enabled, scope_mode, targets_json, tags_json,
-		strategies_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
+		strategies_json, skills_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
 		created_by, created_at, updated_at
 		FROM monitor_schedules ORDER BY enabled DESC, created_at DESC, id DESC`)
 	if err != nil {
@@ -44,7 +44,7 @@ func (s *GatewayStore) ListMonitorSchedules(ctx context.Context) ([]monitorSched
 
 func (s *GatewayStore) GetMonitorSchedule(ctx context.Context, id string) (monitorScheduleRecord, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, name, description, enabled, scope_mode, targets_json, tags_json,
-		strategies_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
+		strategies_json, skills_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
 		created_by, created_at, updated_at
 		FROM monitor_schedules WHERE id=?`, id)
 	return scanMonitorSchedule(row)
@@ -53,10 +53,10 @@ func (s *GatewayStore) GetMonitorSchedule(ctx context.Context, id string) (monit
 func scanMonitorSchedule(row interface{ Scan(...any) error }) (monitorScheduleRecord, error) {
 	var rec monitorScheduleRecord
 	var enabledInt int
-	var targetsRaw, tagsRaw, strategiesRaw, thresholdsRaw string
+	var targetsRaw, tagsRaw, strategiesRaw, skillsRaw, thresholdsRaw string
 	err := row.Scan(
 		&rec.ID, &rec.Name, &rec.Description, &enabledInt, &rec.ScopeMode,
-		&targetsRaw, &tagsRaw, &strategiesRaw, &thresholdsRaw,
+		&targetsRaw, &tagsRaw, &strategiesRaw, &skillsRaw, &thresholdsRaw,
 		&rec.IntervalSeconds, &rec.NextRunAtMs, &rec.LastRunAtMs,
 		&rec.LastRunID, &rec.LastStatus, &rec.CreatedBy, &rec.CreatedAt, &rec.UpdatedAt,
 	)
@@ -67,11 +67,14 @@ func scanMonitorSchedule(row interface{ Scan(...any) error }) (monitorScheduleRe
 	rec.Targets = []monitorTargetRef{}
 	rec.Tags = []string{}
 	rec.Strategies = []string{}
+	rec.Skills = []string{}
 	_ = json.Unmarshal([]byte(targetsRaw), &rec.Targets)
 	_ = json.Unmarshal([]byte(tagsRaw), &rec.Tags)
 	_ = json.Unmarshal([]byte(strategiesRaw), &rec.Strategies)
+	_ = json.Unmarshal([]byte(skillsRaw), &rec.Skills)
 	_ = json.Unmarshal([]byte(thresholdsRaw), &rec.Thresholds)
 	rec.Strategies = normalizeMonitorStrategies(rec.Strategies)
+	rec.Skills = normalizeSkillSlugs(rec.Skills)
 	rec.Thresholds = normalizeMonitorThresholds(rec.Thresholds)
 	return rec, nil
 }
@@ -80,6 +83,7 @@ func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorSched
 	now := time.Now().UTC()
 	nowStr := formatTime(now)
 	rec.Strategies = normalizeMonitorStrategies(rec.Strategies)
+	rec.Skills = normalizeSkillSlugs(rec.Skills)
 	rec.Thresholds = normalizeMonitorThresholds(rec.Thresholds)
 	if rec.Targets == nil {
 		rec.Targets = []monitorTargetRef{}
@@ -90,6 +94,7 @@ func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorSched
 	targetsJSON, _ := json.Marshal(rec.Targets)
 	tagsJSON, _ := json.Marshal(rec.Tags)
 	strategiesJSON, _ := json.Marshal(rec.Strategies)
+	skillsJSON, _ := json.Marshal(rec.Skills)
 	thresholdsJSON, _ := json.Marshal(rec.Thresholds)
 	enabledInt := 0
 	if rec.Enabled {
@@ -107,11 +112,11 @@ func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorSched
 		}
 		_, err := s.db.ExecContext(ctx, `INSERT INTO monitor_schedules(
 			id, name, description, enabled, scope_mode, targets_json, tags_json,
-			strategies_json, thresholds_json, interval_seconds, next_run_at_ms,
+			strategies_json, skills_json, thresholds_json, interval_seconds, next_run_at_ms,
 			last_run_at_ms, last_run_id, last_status, created_by, created_at, updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			rec.ID, rec.Name, rec.Description, enabledInt, rec.ScopeMode,
-			string(targetsJSON), string(tagsJSON), string(strategiesJSON), string(thresholdsJSON),
+			string(targetsJSON), string(tagsJSON), string(strategiesJSON), string(skillsJSON), string(thresholdsJSON),
 			rec.IntervalSeconds, rec.NextRunAtMs, rec.LastRunAtMs, rec.LastRunID, rec.LastStatus,
 			rec.CreatedBy, rec.CreatedAt, rec.UpdatedAt,
 		)
@@ -128,10 +133,10 @@ func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorSched
 	}
 	res, err := s.db.ExecContext(ctx, `UPDATE monitor_schedules SET
 		name=?, description=?, enabled=?, scope_mode=?, targets_json=?, tags_json=?,
-		strategies_json=?, thresholds_json=?, interval_seconds=?, next_run_at_ms=?, updated_at=?
+		strategies_json=?, skills_json=?, thresholds_json=?, interval_seconds=?, next_run_at_ms=?, updated_at=?
 		WHERE id=?`,
 		rec.Name, rec.Description, enabledInt, rec.ScopeMode,
-		string(targetsJSON), string(tagsJSON), string(strategiesJSON), string(thresholdsJSON),
+		string(targetsJSON), string(tagsJSON), string(strategiesJSON), string(skillsJSON), string(thresholdsJSON),
 		rec.IntervalSeconds, nextRun, rec.UpdatedAt, rec.ID,
 	)
 	if err != nil {
@@ -189,7 +194,7 @@ func (s *GatewayStore) ClaimDueMonitorSchedules(ctx context.Context, now time.Ti
 	defer tx.Rollback()
 	nowMs := now.UnixMilli()
 	rows, err := tx.QueryContext(ctx, `SELECT id, name, description, enabled, scope_mode, targets_json, tags_json,
-		strategies_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
+		strategies_json, skills_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
 		created_by, created_at, updated_at
 		FROM monitor_schedules WHERE enabled=1 AND next_run_at_ms>0 AND next_run_at_ms<=?
 		ORDER BY next_run_at_ms ASC, id ASC LIMIT ?`, nowMs, limit)

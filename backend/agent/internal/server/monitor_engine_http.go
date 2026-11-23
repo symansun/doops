@@ -94,6 +94,7 @@ type monitorScheduleMutationRequest struct {
 	Targets         []monitorTargetRef           `json:"targets,omitempty"`
 	Tags            []string                     `json:"tags,omitempty"`
 	Strategies      []string                     `json:"strategies,omitempty"`
+	Skills          []string                     `json:"skills,omitempty"`
 	Thresholds      api.MonitorInspectThresholds `json:"thresholds,omitempty"`
 	IntervalSeconds int                          `json:"interval_seconds,omitempty"`
 }
@@ -253,6 +254,7 @@ func (h *GatewayHub) applyMonitorScheduleMutation(r *http.Request, auth TokenAut
 			Targets:         cleanTargets,
 			Tags:            cleanTags,
 			Strategies:      normalizeMonitorStrategies(req.Strategies),
+			Skills:          normalizeSkillSlugs(req.Skills),
 			Thresholds:      normalizeMonitorThresholds(req.Thresholds),
 			IntervalSeconds: interval,
 			CreatedBy:       auth.UserID,
@@ -290,6 +292,7 @@ type monitorRunTriggerRequest struct {
 	Targets     []monitorTargetRef           `json:"targets,omitempty"`
 	Tags        []string                     `json:"tags,omitempty"`
 	Strategies  []string                     `json:"strategies,omitempty"`
+	Skills      []string                     `json:"skills,omitempty"`
 	Thresholds  api.MonitorInspectThresholds `json:"thresholds,omitempty"`
 	SSHHosts    []api.MonitorInspectAsset    `json:"ssh_hosts,omitempty"`
 }
@@ -352,6 +355,7 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 			Targets:     req.Targets,
 			Tags:        req.Tags,
 			Strategies:  req.Strategies,
+			Skills:      normalizeSkillSlugs(req.Skills),
 			Thresholds:  req.Thresholds,
 		}
 
@@ -397,6 +401,7 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 			plan.Targets = sched.Targets
 			plan.Tags = sched.Tags
 			plan.Strategies = sched.Strategies
+			plan.Skills = sched.Skills
 			plan.Thresholds = sched.Thresholds
 		} else {
 			if plan.ScopeMode == "" {

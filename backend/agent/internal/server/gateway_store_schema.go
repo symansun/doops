@@ -352,6 +352,26 @@ func (s *GatewayStore) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_monitor_snapshots_latest ON monitor_resource_snapshots(cluster, instance, asset_kind, asset_id, collected_at_ms DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_monitor_snapshots_time ON monitor_resource_snapshots(collected_at_ms DESC)`,
+		`CREATE TABLE IF NOT EXISTS platform_skills (
+			slug TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			scope TEXT NOT NULL DEFAULT 'custom',
+			category TEXT NOT NULL DEFAULT 'inspection',
+			driver_mode TEXT NOT NULL DEFAULT 'agent_prompt',
+			strategy_id TEXT NOT NULL DEFAULT '',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			skill_md TEXT NOT NULL,
+			files_json TEXT NOT NULL DEFAULT '[]',
+			sha256 TEXT NOT NULL DEFAULT '',
+			owner_id TEXT NOT NULL DEFAULT '',
+			owner_name TEXT NOT NULL DEFAULT '',
+			created_at_ms INTEGER NOT NULL DEFAULT 0,
+			updated_at_ms INTEGER NOT NULL DEFAULT 0,
+			last_run_at_ms INTEGER NOT NULL DEFAULT 0,
+			run_count INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_platform_skills_scope ON platform_skills(scope, category, enabled)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -435,6 +455,7 @@ func (s *GatewayStore) migrate() error {
 		definition string
 	}{
 		{"credential_bundles", "scope", "TEXT NOT NULL DEFAULT 'personal'"},
+		{"monitor_schedules", "skills_json", "TEXT NOT NULL DEFAULT '[]'"},
 	} {
 		if err := s.ensureColumn(column.table, column.name, column.definition); err != nil {
 			return err
@@ -442,6 +463,9 @@ func (s *GatewayStore) migrate() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
+	if err := s.SeedBuiltinSystemSkills(ctx); err != nil {
+		return fmt.Errorf("seed builtin system skills: %w", err)
+	}
 	if _, err := s.optimizeAuditIndexes(ctx); err != nil {
 		return fmt.Errorf("audit index maintenance: %w", err)
 	}
