@@ -65,6 +65,7 @@ func serve(args []string) {
 	// The issue scheduler was removed; the flag stays accepted so existing service units keep starting.
 	_ = fs.Duration("scheduler-tick", 0, "Removed; accepted and ignored")
 	monitorTick := fs.Duration("monitor-tick", 15*time.Second, "Interval to check due periodic monitor/inspection schedules; 0 disables")
+	auditRetention := fs.Duration("audit-retention", 0, "Delete completed audit rows older than this (for example 2160h for 90 days); 0 keeps every row")
 	edgeListen := fs.String("edge-listen", "", "TCP listen address for Edge public traffic; empty disables it")
 	edgeProxyProtocol := fs.Bool("edge-proxy-protocol", true, "Require PROXY protocol on Edge listener (must be true behind nginx stream)")
 	// Temporary migration escape hatch. Open agent registration is closed by
@@ -76,6 +77,10 @@ func serve(args []string) {
 	allowUnenrolledCredentialDefault := envFlagEnabled("DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY")
 	allowUnenrolledCredentialDelivery := fs.Bool("allow-unenrolled-credential-delivery", allowUnenrolledCredentialDefault, "TEMPORARY and insecure: deliver model/registry credentials to an unenrolled Agent on an explicitly open Gateway; DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1 sets the same switch")
 	fs.Parse(args)
+
+	if *auditRetention < 0 {
+		log.Fatalf("invalid -audit-retention %s: use a positive duration or 0 to keep audit events forever", *auditRetention)
+	}
 
 	if *retiredGlobalLimit != 0 || *retiredUserLimit != 0 {
 		log.Printf("[gateway] -max-concurrent-operations and -max-concurrent-per-user are retired and ignored")
@@ -128,10 +133,13 @@ func serve(args []string) {
 		// Environment only, never a flag: a flag would expose the secret in ps.
 		ConsoleForwardSecret:              []byte(consoleForwardSecret),
 		AllowUnenrolledCredentialDelivery: *allowUnenrolledCredentialDelivery,
+		AuditRetention:                    *auditRetention,
 	})
 	hub.StartHeartbeatFlusher(30 * time.Second)
 	hub.StartOfflineInstanceReaper(time.Hour)
 	hub.StartMonitorRunner(*monitorTick)
+	hub.StartAuditRetention(*auditRetention, server.AuditRetentionInterval)
+	hub.StartExpiredTokenCleanup(server.AuditRetentionInterval)
 
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
@@ -143,6 +151,12 @@ func serve(args []string) {
 	log.Printf("   client endpoint: ws://127.0.0.1:%s/v1/rpc?cluster=<cluster>&instance=<instance>", *port)
 	log.Printf("   login token ttl=%s max-lifetime=%s", *loginTokenTTL, *loginTokenMaxLifetime)
 	log.Printf("   agent enrollment: %s", agentEnrollmentPolicy(*allowOpenAgentRegistration))
+	if *auditRetention > 0 {
+		log.Printf("   audit retention: %s (runs every %s, receipt actor %s)", *auditRetention, server.AuditRetentionInterval, server.AuditRetentionActor)
+	} else {
+		log.Printf("   audit retention: disabled (audit events are kept forever)")
+	}
+	log.Printf("   expired token cleanup: tokens expired more than %s ago, every %s", server.ExpiredTokenGrace, server.AuditRetentionInterval)
 	if *allowOpenAgentRegistration {
 		logOpenRegistrationWarning(hub)
 	}

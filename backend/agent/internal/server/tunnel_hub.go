@@ -38,6 +38,10 @@ type GatewayHubOptions struct {
 	// It is insecure and only for migration deployments such as a private
 	// Gateway that has not issued a single enrollment token.
 	AllowUnenrolledCredentialDelivery bool
+	// AuditRetention deletes completed audit rows older than this. Zero, the
+	// library default, keeps every row; the Gateway command sets it from
+	// -audit-retention.
+	AuditRetention time.Duration
 }
 
 type GatewayHub struct {
