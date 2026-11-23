@@ -19,6 +19,29 @@ func TestAskToolFailuresReachGatewayAudit(t *testing.T) {
 			{"web", "mcp_doops_web_read", "failed", ""},
 			{"retry", "mcp_doops_web_read", "completed", ""},
 		}, []string{"k8s", "web"}},
+		{"rejected-then-corrected", "completed", "end_turn", "success", "", []call{
+			{"bad", "mcp_doops_k8s_read", "failed", "mcp_error"},
+			{"good", "mcp_doops_k8s_read", "completed", ""},
+		}, nil},
+		{"rejected-without-retry", "completed", "end_turn", "error", askToolFailed, []call{
+			{"bad", "mcp_doops_k8s_read", "failed", "mcp_error"},
+		}, []string{"bad"}},
+		{"rejected-other-tool-succeeds", "completed", "end_turn", "error", askToolFailed, []call{
+			{"bad", "mcp_doops_k8s_read", "failed", "mcp_error"},
+			{"other", "mcp_doops_web_read", "completed", ""},
+		}, []string{"bad"}},
+		{"rejected-correction-precedes-failure", "completed", "end_turn", "error", askToolFailed, []call{
+			{"good", "mcp_doops_k8s_read", "completed", ""},
+			{"bad", "mcp_doops_k8s_read", "failed", "mcp_error"},
+		}, []string{"bad"}},
+		{"execution-failure-not-corrected", "completed", "end_turn", "error", askToolFailed, []call{
+			{"bad", "mcp_doops_k8s_read", "failed", "mcp_tool_error"},
+			{"good", "mcp_doops_k8s_read", "completed", ""},
+		}, []string{"bad"}},
+		{"nonzero-then-corrected", "completed", "end_turn", "success", "", []call{
+			{"bad", "Bash", "failed", "command_failed"},
+			{"good", "Bash", "completed", ""},
+		}, nil},
 		{"timeout", "completed", "end_turn", "timeout", askToolTimeout, []call{
 			{"bash", "Bash", "failed", "tool_timeout"}, {"retry", "Bash", "completed", ""},
 		}, []string{"bash"}},

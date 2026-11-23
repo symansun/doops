@@ -27,13 +27,48 @@ const (
 	askToolCancelled = "doagent_tool_cancelled"
 )
 
+var askReadOnlyTools = []string{"mcp_doops_k8s_read", "mcp_doops_web_read", "mcp_doops_kb_read", "mcp_dosql_read"}
+
+// A call that did not run or whose nonzero exit is diagnostic information is
+// corrected by a later successful call of the same tool, as correctedHelmCall
+// does for an unexecuted Helm validation failure. Covered failures: a read-only
+// MCP tool rejected at the protocol layer (mcp_error, e.g. a malformed
+// operation) and a Bash command_failed (nonzero exit). A policy-denied Bash
+// call stays a failure so the attempted blocked command remains visible.
+// Timeouts, cancellations, execution failures and other tools stay failures.
+func correctedAskFailure(traces []doagentToolTrace, index int) bool {
+	failed := traces[index]
+	if failed.terminalSequence == 0 {
+		return false
+	}
+	switch {
+	case stringSliceContains(askReadOnlyTools, failed.ToolName) && failed.ErrorCode == "mcp_error":
+	case failed.ToolName == "Bash" && failed.ErrorCode == "command_failed" && failed.policyDenial == "":
+	default:
+		return false
+	}
+	for _, next := range traces[index+1:] {
+		if next.sequence <= failed.terminalSequence || next.ToolName != failed.ToolName || next.Status != "completed" {
+			continue
+		}
+		var result struct {
+			IsError bool `json:"isError"`
+		}
+		if json.Unmarshal(next.resultJSON, &result) != nil || !result.IsError {
+			return true // no parseable isError means success, as in the failure scan
+		}
+	}
+	return false
+}
+
 // The collector has received the matching turn_finished before this is called.
 // Keep every failed call, including failures followed by a successful retry.
 func (c *doagentToolTraceCollector) askFailureResponse(id interface{}) *api.JSONRPCResponse {
 	var messages []string
 	var failures []map[string]interface{}
 	category := askToolFailed
-	for _, trace := range c.orderedTraces() {
+	traces := c.orderedTraces()
+	for i, trace := range traces {
 		if trace.Status != "failed" {
 			var result struct {
 				IsError bool `json:"isError"`
@@ -41,6 +76,9 @@ func (c *doagentToolTraceCollector) askFailureResponse(id interface{}) *api.JSON
 			if trace.Status != "completed" || json.Unmarshal(trace.resultJSON, &result) != nil || !result.IsError {
 				continue
 			}
+		}
+		if correctedAskFailure(traces, i) {
+			continue
 		}
 		code := trace.ErrorCode
 		if code == "" || len(code) > 64 || sanitizeCredentialCategory(code) != code {
