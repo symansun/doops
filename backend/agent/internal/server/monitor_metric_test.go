@@ -483,16 +483,16 @@ func explainMonitorPlan(t *testing.T, store *GatewayStore, query string, args ..
 func TestMonitorRunDiffQueryPlanAvoidsTempBTree(t *testing.T) {
 	store, _ := openMetricTestStore(t)
 	series := "skill:" + metricTestSkillSlug
-	runPlan := explainMonitorPlan(t, store, monitorRunDiffPrevRunSQL,
-		"run_current", int64(1000), "local", "host-a", series)
-	if strings.Contains(runPlan, "TEMP B-TREE") {
-		t.Fatalf("diff run query still sorts candidates:\n%s", runPlan)
+	startPlan := explainMonitorPlan(t, store, monitorRunDiffPrevStartSQL,
+		"local", "host-a", series, "run_current", int64(1000))
+	if strings.Contains(startPlan, "TEMP B-TREE") {
+		t.Fatalf("diff run-clock query still sorts candidates:\n%s", startPlan)
 	}
-	if !strings.Contains(runPlan, "idx_monitor_runs_started") {
-		t.Fatalf("diff run query does not read idx_monitor_runs_started:\n%s", runPlan)
+	if !strings.Contains(startPlan, "idx_monitor_run_items_series") {
+		t.Fatalf("diff run-clock query does not read idx_monitor_run_items_series:\n%s", startPlan)
 	}
-	itemPlan := explainMonitorPlan(t, store, monitorRunDiffPrevItemSQL(2),
-		"local", "host-a", series, "run_prev_a", "run_prev_b")
+	itemPlan := explainMonitorPlan(t, store, monitorRunDiffPrevItemSQL,
+		"local", "host-a", series, "run_current", int64(1000))
 	if strings.Contains(itemPlan, "TEMP B-TREE") {
 		t.Fatalf("diff item query still sorts candidates:\n%s", itemPlan)
 	}

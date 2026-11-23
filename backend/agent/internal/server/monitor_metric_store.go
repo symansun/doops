@@ -464,26 +464,21 @@ type monitorRunDiff struct {
 	ChangedChecks  []monitorRunCheckChange   `json:"changed_checks"`
 }
 
-// monitorRunDiffPrevRunSQL selects the newest terminal run that holds an item
-// for one (cluster, instance, strategy) series. The scan is streamed and stops
-// at the first started_at_ms group, so it never sorts the candidate rows.
-const monitorRunDiffPrevRunSQL = `SELECT r.id, r.started_at_ms, r.status
-	FROM monitor_runs r
-	WHERE r.id<>? AND r.status<>'' AND r.status<>'running' AND r.started_at_ms<?
-		AND EXISTS (SELECT 1 FROM monitor_run_items i
-			WHERE i.run_id=r.id AND i.cluster=? AND i.instance=? AND i.strategy=?)
-	ORDER BY r.started_at_ms DESC`
+// monitorRunDiffPrevStartSQL returns the newest run clock that has an item for
+// one (cluster, instance, strategy) series. MAX() over the series index range
+// needs no sort, so the join no longer materialises a temp B-tree.
+const monitorRunDiffPrevStartSQL = `SELECT MAX(r.started_at_ms)
+	FROM monitor_run_items i JOIN monitor_runs r ON r.id=i.run_id
+	WHERE i.cluster=? AND i.instance=? AND i.strategy=? AND r.id<>? AND r.status<>'' AND r.status<>'running' AND r.started_at_ms<?`
 
-// monitorRunDiffPrevItemSQL returns the query that picks the last persisted
-// item of the winning run(s). Ties on run started_at_ms are resolved by item
-// id, exactly like the old join ordered (run started_at_ms DESC, item id DESC).
-func monitorRunDiffPrevItemSQL(runCount int) string {
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", runCount), ",")
-	return `SELECT i.run_id, i.id, i.checks_json, i.artifact_dir, i.artifact_json
-		FROM monitor_run_items i
-		WHERE i.cluster=? AND i.instance=? AND i.strategy=? AND i.run_id IN (` + placeholders + `)
-		ORDER BY i.id DESC LIMIT 1`
-}
+// monitorRunDiffPrevItemSQL returns the last item of the runs that started at
+// the newest run clock. Ordering by item id with the series prefix is served by
+// idx_monitor_run_items_series (entries are rowid-ordered), so it needs no sort
+// either; ties on started_at_ms still resolve by item id like the old query.
+const monitorRunDiffPrevItemSQL = `SELECT i.run_id, r.status, i.id, i.checks_json, i.artifact_dir, i.artifact_json
+	FROM monitor_run_items i JOIN monitor_runs r ON r.id=i.run_id
+	WHERE i.cluster=? AND i.instance=? AND i.strategy=? AND r.id<>? AND r.status<>'' AND r.status<>'running' AND r.started_at_ms=?
+	ORDER BY i.id DESC LIMIT 1`
 
 type monitorRunDiffPrevious struct {
 	RunID        string
@@ -503,56 +498,27 @@ type monitorRunDiffPrevious struct {
 // (monitor_engine_runner.go newSkillRunItem / newCommandRunItem) — so ordering
 // by the item column would pick another run whenever two runs overlap. The old
 // join therefore had to sort every candidate row (SF-04 观察项 D1:
-// USE TEMP B-TREE FOR ORDER BY). Selecting the run through
-// idx_monitor_runs_started (started_at_ms DESC, id DESC) and the item through
-// idx_monitor_run_items_series keeps the same answer without the temp B-tree.
+// USE TEMP B-TREE FOR ORDER BY). Both statements below walk only the series'
+// index range: the first aggregates MAX(run started_at_ms) and the second picks
+// the last item inside that run-clock group, so the answer is unchanged and no
+// temp B-tree is built. Keeping the EXISTS-probe-per-run variant instead would
+// have degraded to runs×series index visits whenever recent runs of other
+// targets sit between two runs of this series.
 func (s *GatewayStore) findPreviousMonitorRunItem(ctx context.Context, run monitorRunRecord, item monitorRunItemRecord) (monitorRunDiffPrevious, bool) {
-	rows, err := s.readDB().QueryContext(ctx, monitorRunDiffPrevRunSQL,
-		run.ID, run.StartedAtMs, item.Cluster, item.Instance, item.Strategy)
-	if err != nil {
+	var topStart sql.NullInt64
+	if err := s.readDB().QueryRowContext(ctx, monitorRunDiffPrevStartSQL,
+		item.Cluster, item.Instance, item.Strategy, run.ID, run.StartedAtMs,
+	).Scan(&topStart); err != nil || !topStart.Valid {
 		return monitorRunDiffPrevious{}, false
-	}
-	var (
-		topStart int64 = -1
-		runIDs   []string
-		statuses = map[string]string{}
-	)
-	for rows.Next() {
-		var id, status string
-		var startedAtMs int64
-		if err := rows.Scan(&id, &startedAtMs, &status); err != nil {
-			rows.Close()
-			return monitorRunDiffPrevious{}, false
-		}
-		if topStart < 0 {
-			topStart = startedAtMs
-		}
-		if startedAtMs != topStart {
-			break
-		}
-		runIDs = append(runIDs, id)
-		statuses[id] = status
-	}
-	rows.Close()
-	if len(runIDs) == 0 {
-		return monitorRunDiffPrevious{}, false
-	}
-	args := make([]any, 0, 3+len(runIDs))
-	args = append(args, item.Cluster, item.Instance, item.Strategy)
-	for _, id := range runIDs {
-		args = append(args, id)
 	}
 	var (
 		prev   monitorRunDiffPrevious
 		itemID int64
 	)
-	if err := s.readDB().QueryRowContext(ctx, monitorRunDiffPrevItemSQL(len(runIDs)), args...).
-		Scan(&prev.RunID, &itemID, &prev.ChecksJSON, &prev.ArtifactDir, &prev.ArtifactJSON); err != nil {
-		return monitorRunDiffPrevious{}, false
-	}
-	prev.AtMs = topStart
-	prev.Status = statuses[prev.RunID]
-	if prev.Status == "" {
+	prev.AtMs = topStart.Int64
+	if err := s.readDB().QueryRowContext(ctx, monitorRunDiffPrevItemSQL,
+		item.Cluster, item.Instance, item.Strategy, run.ID, prev.AtMs,
+	).Scan(&prev.RunID, &prev.Status, &itemID, &prev.ChecksJSON, &prev.ArtifactDir, &prev.ArtifactJSON); err != nil {
 		return monitorRunDiffPrevious{}, false
 	}
 	return prev, true
