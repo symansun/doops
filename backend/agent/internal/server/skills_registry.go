@@ -60,195 +60,6 @@ type platformSkillRecord struct {
 	CanDelete   bool                `json:"can_delete"`
 }
 
-type defaultSystemSkillSpec struct {
-	Slug        string
-	Name        string
-	Description string
-	Category    string
-	DriverMode  string
-	StrategyID  string
-	SkillMD     string
-}
-
-var builtinSystemSkills = []defaultSystemSkillSpec{
-	{
-		Slug:        "inspect-vm-host",
-		Name:        "虚机与物理机系统巡检 Skill",
-		Description: "通过 Agent 本机只读探测 CPU、内存、内核、磁盘容量与 I/O、网卡流量、NVIDIA GPU 及 M1–M5 主机安全基线。",
-		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategyVMHost,
-		SkillMD: `---
-name: inspect-vm-host
-description: 虚拟机与物理机系统及 M1–M5 安全基线巡检 Skill
----
-
-# 虚机与物理机系统巡检 Skill
-
-## 目标范围
-覆盖已接入在线 Agent 的物理机、GPU 宿主机与虚拟机。
-
-## 核心检查项
-1. **M1 运行与重启**：检查主机运行时长与异常重启。
-2. **M2 CPU 与内存水位**：对比告警/严重阈值（默认 80% / 90%），记录内核态 CPU 与 Slab。
-3. **存储与磁盘 I/O**：检查全部真实目录挂载点容量与物理块设备读写 IOPS、平均延迟。
-4. **GPU 与网络**：检测 NVIDIA GPU 利用率/显存/温度及物理网卡实时吞吐。
-5. **M3 进程安全**：统计总进程、僵尸进程并匹配可疑黑名单进程名。
-6. **M4/M5 合规与登录基线**：核验 Linux sysctl 安全参数、账户文件指纹与认证失败日志。
-
-## 执行约束
-只读采集，不修改宿主机配置、不读取凭据载荷。
-`,
-	},
-	{
-		Slug:        "inspect-ssh-host",
-		Name:        "无 Agent 远程主机 SSH 巡检 Skill",
-		Description: "由在线 Agent 通过结构化只读 BatchMode SSH 远程采集无 Agent 主机的资源水位与系统安全基线。",
-		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategySSHHost,
-		SkillMD: `---
-name: inspect-ssh-host
-description: 无 Agent 远程 Linux 主机结构化只读 SSH 巡检 Skill
----
-
-# 无 Agent 远程主机 SSH 巡检 Skill
-
-## 目标范围
-覆盖已登记在机器台账中、通过跳板或同网段在线 Agent 纳管的远程 Linux 主机。
-
-## 核心检查项
-1. **SSH 连通性**：以 ` + "`BatchMode=yes`" + ` 只读连接测试主机可达性。
-2. **资源水位**：采集远程 CPU 差值、内存（MemTotal/MemAvailable/Slab）、磁盘挂载点（` + "`df -P -k`" + `）与网卡吞吐。
-3. **进程与内核基线**：统计僵尸进程并核验 4 项 Linux sysctl 安全参数。
-
-## 执行约束
-固定编译期只读脚本，禁止交互登录或写入远程主机文件。
-`,
-	},
-	{
-		Slug:        "inspect-k8s-cluster",
-		Name:        "Kubernetes 容器集群巡检 Skill",
-		Description: "通过 Agent 内置只读 kubectl 巡检 K8s 节点健康压力、异常/高重启 Pod、控制器副本、PVC 绑定、Warning 事件及资源水位。",
-		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategyK8sCluster,
-		SkillMD: `---
-name: inspect-k8s-cluster
-description: Kubernetes 集群健康、工作负载与资源水位巡检 Skill
----
-
-# Kubernetes 容器集群巡检 Skill
-
-## 核心检查项
-1. **节点健康与压力**：核查所有 Node Ready 状态及 MemoryPressure / DiskPressure / PIDPressure。
-2. **Pod 运行态与重启**：定位 CrashLoopBackOff、OOMKilled、Pending 与高重启（≥5 次）Pod。
-3. **控制器副本**：校验 Deployment 与 StatefulSet 就绪副本数是否等于期望副本数。
-4. **PVC 与事件**：检查未 Bound 的 PVC 与近 15 分钟集群 Warning 事件。
-5. **节点与 Pod 资源指标**：若部署 metrics-server，采集实时 CPU/内存并桥接时序库。
-`,
-	},
-	{
-		Slug:        "inspect-container-runtime",
-		Name:        "容器运行时巡检 Skill",
-		Description: "自动识别 Docker / nerdctl / Podman，采集运行中容器 CPU、内存与内存上限（memory_limit）占比。",
-		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategyContainerRuntime,
-		SkillMD: `---
-name: inspect-container-runtime
-description: Docker / nerdctl / Podman 运行态容器资源与限额巡检 Skill
----
-
-# 容器运行时巡检 Skill
-
-## 核心检查项
-1. **运行时可用性**：探测宿主机 Docker / nerdctl / Podman 守护进程状态与运行容器数量。
-2. **容器内存上限水位**：对比容器内存用量与 memory_limit，识别接近 OOM 风险的容器。
-3. **时序同步**：写入 ` + "`type=container`" + ` 的 cpu / memory / memory_limit 指标供控制台监控展示。
-`,
-	},
-	{
-		Slug:        "inspect-app-web",
-		Name:        "应用服务与 Web 安全巡检 Skill",
-		Description: "探测已登记站点 HTTP/HTTPS 可用性、响应延迟、错误率、TLS 证书剩余天数、安全响应头及本机 Nginx 并发请求速率。",
-		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategyAppService,
-		SkillMD: `---
-name: inspect-app-web
-description: Web 应用可用性、响应延迟、TLS 证书与安全响应头巡检 Skill
----
-
-# 应用服务与 Web 安全巡检 Skill
-
-## 核心检查项
-1. **服务可用性 (A1)**：检查已登记站点的 HTTP 状态码与可达性。
-2. **响应延迟与错误率**：测量 HTTP GET 响应耗时（ms）并写入监控时序。
-3. **Web 安全与证书 (A4)**：校验 HTTPS 证书剩余有效期（默认 <14 天告警）、` + "`Strict-Transport-Security`" + ` 与 ` + "`X-Content-Type-Options: nosniff`" + `。
-4. **Nginx 并发与请求速率**：当本机开放回环 ` + "`stub_status`" + ` 时采集活跃连接数与 req/s。
-`,
-	},
-	{
-		Slug:        "inspect-database",
-		Name:        "数据库运行与连通性巡检 Skill",
-		Description: "探测已登记数据库实例（PostgreSQL / MySQL / Redis 等）的 TCP 连通性与建连延迟，识别实例不可达或高延迟风险。",
-		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategyDatabaseService,
-		SkillMD: `---
-name: inspect-database
-description: 数据库实例连通性、建连延迟与只读状态巡检 Skill
----
-
-# 数据库运行与连通性巡检 Skill
-
-## 核心检查项
-1. **实例连通性 (A2)**：验证已登记数据库地址解析与 TCP 握手连通性。
-2. **建连延迟**：监控 TCP 握手耗时并与延迟阈值对比。
-3. **安全边界**：巡检探活阶段不暴露凭据载荷；需要深度 SQL 诊断时经由 DoSql 受管只读凭据执行。
-`,
-	},
-	{
-		Slug:        "inspect-proxy-evasion",
-		Name:        "主机违规代理与内网穿透巡检 Skill",
-		Description: "由系统驱动 Agent Skill 检查主机是否存在未备案代理/翻墙/穿透进程（clash、v2ray、xray、frpc、trojan 等）及异常监听端口。",
-		Category:    "security",
-		DriverMode:  "agent_prompt",
-		SkillMD: `---
-name: inspect-proxy-evasion
-description: 主机违规代理、翻墙软件与内网穿透进程只读安全巡检 Skill
----
-
-# 主机违规代理与内网穿透巡检 Skill
-
-## 执行步骤（严格只读）
-1. 使用只读命令检查当前主机进程列表中是否包含未备案的代理或穿透客户端：` + "`clash`" + `、` + "`mihomo`" + `、` + "`v2ray`" + `、` + "`xray`" + `、` + "`sing-box`" + `、` + "`frpc`" + `、` + "`frps`" + `、` + "`nps`" + `、` + "`trojan`" + `、` + "`ss-local`" + `、` + "`shadowsocks`" + `。
-2. 检查常见代理本地监听端口（如 7890、7891、1080、10808、20171 等）是否存在未备案监听。
-3. 禁止终止进程或修改网络配置，仅汇总真实观测证据并按 JSON 格式输出巡检结论。
-`,
-	},
-	{
-		Slug:        "inspect-package-vuln",
-		Name:        "主机软件包与补丁基线巡检 Skill",
-		Description: "由系统驱动 Agent Skill 只读盘点本机已安装关键软件包版本（OpenSSL、OpenSSH、Nginx、内核等）与待更新安全补丁概况。",
-		Category:    "security",
-		DriverMode:  "agent_prompt",
-		SkillMD: `---
-name: inspect-package-vuln
-description: 主机关键软件组件版本与安全补丁状态只读盘点 Skill
----
-
-# 主机软件包与补丁基线巡检 Skill
-
-## 执行步骤（严格只读）
-1. 检测操作系统包管理器（` + "`dpkg-query`" + ` / ` + "`rpm`" + ` / ` + "`apk`" + `），只读查询核心基础组件版本（` + "`openssl`" + `、` + "`openssh-server`" + `、` + "`nginx`" + `、` + "`curl`" + `、` + "`sudo`" + `、内核版本）。
-2. 如存在本地缓存的升级索引（如 ` + "`apt list --upgradable`" + `），仅只读统计待升级安全补丁数量，不执行安装或变更。
-3. 按要求输出结构化 JSON 巡检结果，未观测到的项标记为 ` + "`skipped`" + `，不得编造 CVE 编号。
-`,
-	},
-}
-
 func computeSkillSHA256(skillMD string, files []platformSkillFile) string {
 	h := sha256.New()
 	h.Write([]byte(skillMD))
@@ -332,22 +143,98 @@ func sanitizeSkillFiles(files []platformSkillFile) ([]platformSkillFile, int, er
 	return out, totalBytes, nil
 }
 
+// SeedBuiltinSystemSkills indexes every builtin Skill package and materializes
+// its real directory under <dbDir>/skills/<slug>/. An existing package on disk
+// is authoritative and is never overwritten here, so an admin edit survives a
+// restart; only a first-time (or missing) package is written from the embed.
 func (s *GatewayStore) SeedBuiltinSystemSkills(ctx context.Context) error {
 	nowMs := time.Now().UnixMilli()
 	for _, spec := range builtinSystemSkills {
-		sha := computeSkillSHA256(spec.SkillMD, nil)
-		_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO platform_skills (
-			slug, name, description, scope, category, driver_mode, strategy_id,
-			enabled, skill_md, files_json, sha256, owner_id, owner_name,
-			created_at_ms, updated_at_ms, last_run_at_ms, run_count
-		) VALUES (?, ?, ?, 'system', ?, ?, ?, 1, ?, '[]', ?, 'system', 'DoOps 系统内置', ?, ?, 0, 0)`,
-			spec.Slug, spec.Name, spec.Description, spec.Category, spec.DriverMode, spec.StrategyID,
-			spec.SkillMD, sha, nowMs, nowMs)
+		skillMD, files, err := loadBuiltinSkillPackage(spec)
 		if err != nil {
 			return err
 		}
+		storageDir, effectiveMD, effectiveFiles, err := s.materializeBuiltinSkillPackage(ctx, spec, skillMD, files)
+		if err != nil {
+			return err
+		}
+		sha := computeSkillSHA256(effectiveMD, effectiveFiles)
+		fileCount := len(effectiveFiles)
+		dbSkillMD := effectiveMD
+		dbFilesJSON := "[]"
+		if storageDir != "" {
+			// Content lives on the Gateway filesystem; SQLite keeps only the lightweight metadata index.
+			dbSkillMD = ""
+		} else {
+			raw, _ := json.Marshal(effectiveFiles)
+			dbFilesJSON = string(raw)
+		}
+		_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO platform_skills (
+			slug, name, description, scope, category, driver_mode, strategy_id,
+			enabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,
+			created_at_ms, updated_at_ms, last_run_at_ms, run_count
+		) VALUES (?, ?, ?, 'system', ?, ?, ?, 1, ?, ?, ?, ?, ?, 'system', 'DoOps 系统内置', ?, ?, 0, 0)`,
+			spec.Slug, spec.Name, spec.Description, spec.Category, spec.DriverMode, spec.StrategyID,
+			dbSkillMD, dbFilesJSON, fileCount, storageDir, sha, nowMs, nowMs)
+		if err != nil {
+			return err
+		}
+		if storageDir != "" {
+			// Rows seeded by an older build kept the full body in SQLite; fold them onto
+			// the disk-backed index without touching the on-disk body chosen above.
+			if _, err := s.db.ExecContext(ctx, `UPDATE platform_skills
+				SET skill_md='', files_json='[]', file_count=?, storage_dir=?, sha256=?
+				WHERE slug=?`, fileCount, storageDir, sha, spec.Slug); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// materializeBuiltinSkillPackage resolves the effective content for one builtin
+// package (admin-edited disk > legacy admin-edited DB body > embedded default)
+// and writes it to <dbDir>/skills/<slug>/ on first use. It returns the relative
+// storage dir ("" when filesystem storage is disabled) plus the content that is
+// actually in effect, so the SQLite index matches what reads will return.
+func (s *GatewayStore) materializeBuiltinSkillPackage(ctx context.Context, spec defaultSystemSkillSpec, skillMD string, files []platformSkillFile) (string, string, []platformSkillFile, error) {
+	if s.skillStorageRoot() == "" {
+		return "", skillMD, files, nil
+	}
+	if diskMD, diskFiles, ok := s.readSkillFilesFromDisk(spec.Slug); ok {
+		return "skills/" + spec.Slug, diskMD, diskFiles, nil
+	}
+	effectiveMD := skillMD
+	effectiveFiles := files
+	if dbMD, dbFiles, ok := s.storedBuiltinSkillContent(ctx, spec.Slug); ok {
+		if strings.TrimSpace(dbMD) != "" {
+			effectiveMD = dbMD
+		}
+		if len(dbFiles) > 0 {
+			effectiveFiles = dbFiles
+		}
+	}
+	if _, err := s.writeSkillFilesToDisk(spec.Slug, effectiveMD, effectiveFiles); err != nil {
+		return "", "", nil, err
+	}
+	return "skills/" + spec.Slug, effectiveMD, effectiveFiles, nil
+}
+
+// storedBuiltinSkillContent returns the body an older build persisted in SQLite.
+// New stores keep only the disk-backed index, in which case ok is false.
+func (s *GatewayStore) storedBuiltinSkillContent(ctx context.Context, slug string) (string, []platformSkillFile, bool) {
+	var skillMD, filesJSON string
+	if err := s.db.QueryRowContext(ctx, `SELECT skill_md, files_json FROM platform_skills WHERE slug=?`, slug).Scan(&skillMD, &filesJSON); err != nil {
+		return "", nil, false
+	}
+	var files []platformSkillFile
+	if filesJSON != "" && filesJSON != "[]" {
+		_ = json.Unmarshal([]byte(filesJSON), &files)
+	}
+	if strings.TrimSpace(skillMD) == "" && len(files) == 0 {
+		return "", nil, false
+	}
+	return skillMD, files, true
 }
 
 func (s *GatewayStore) skillStorageRoot() string {
@@ -926,6 +813,13 @@ func (h *GatewayHub) HandlePlatformSkills(w http.ResponseWriter, r *http.Request
 				writeSkillHTTPError(w, 404, "builtin_skill_not_found", "未找到对应的系统内置 Skill 模板")
 				return
 			}
+			// Restore the full builtin package (SKILL.md plus scripts) from the embed,
+			// not just the Markdown body.
+			builtinMD, builtinFiles, err := loadBuiltinSkillPackage(*found)
+			if err != nil {
+				writeSkillHTTPError(w, 500, "builtin_skill_load_failed", "加载系统内置 Skill 包失败")
+				return
+			}
 			existing, _ := h.store.GetPlatformSkill(r.Context(), TokenAuth{UserID: "system"}, slug)
 			saved, err := h.store.UpsertPlatformSkill(r.Context(), platformSkillRecord{
 				Slug:        found.Slug,
@@ -936,8 +830,8 @@ func (h *GatewayHub) HandlePlatformSkills(w http.ResponseWriter, r *http.Request
 				DriverMode:  found.DriverMode,
 				StrategyID:  found.StrategyID,
 				Enabled:     true,
-				SkillMD:     found.SkillMD,
-				Files:       nil,
+				SkillMD:     builtinMD,
+				Files:       builtinFiles,
 				OwnerID:     "system",
 				OwnerName:   "DoOps 系统内置",
 				CreatedAtMs: existing.CreatedAtMs,
