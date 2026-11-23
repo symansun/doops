@@ -112,3 +112,36 @@ DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1
 - `api_trigger_release` 构建在 cloud-dev 节点上，`internal/server` 全量套件反复于约 2 分钟处被 SIGTERM（exit 143，非测试失败；隔离探针同命令完整跑完 523s）。release 配置改为：非 server 包正常跑 + `internal/server` 仅跑 `TestPlatformSkills|TestMonitorEngine` 冒烟子集；全量套件由 GitHub CI 在同一 commit `6c64e52c` 上 `go test -timeout 20m ./...` 完整通过作为覆盖证据。
 - `DO_AGENT_IMAGE` 为操作方输入，release stage 内按 `runtime-versions.env` 的 `DO_AGENT_INDEX_DIGEST` 导出 `docker.cnb.cool/l8ai/ai/doagent@sha256:35769bda…`（CNB 仓库未配置该变量，历史构建均跳过 Agent 镜像）。
 - `.cnb.yml` 正式修复（stage 拆分 + GOMEMLIMIT/GOGC + DO_AGENT_IMAGE 导出）尚未提交到 CNB 分支；本次 release 使用 API 内联 config。
+
+## v0.3.30 发布部署记录（2026-11-23/24）
+
+- 源提交：`d7c2bcf1704d092b6b76fecbb590e9d5e7ed8d15`（tag `v0.3.30`，main 线上；首个打在 `hotfix/v0.3.30` 分支的同名 tag 被 GitHub "Validate release tag" 拒绝后已删除并重打）。
+- 变更内容：（1）target 资源同步接受合法分层观测键（含 `/` 的数据库/命名空间键），修复全舰队 resource sync 被 `valid()` 拒绝的问题；（2）`pinExecutionManifest` 由硬门槛降级为可选增强——迁移/inventory 前置缺失时不再以 `target_manifest_unavailable` 阻断普通 exec/ask/shell/k8s/helm/bg。
+- 线上事故根因：v0.3.29 的 exec 门控要求 11 张资源同步表 + inventory 前置，而发布的 SQLite 迁移缺 5 张表，导致全部 v0.3.29 target 的远程操作瘫痪；先对 `/var/lib/doops-gateway/gateway.db` 在线备份后应用 `backend/docs/migrations/` 的 3 个算子迁移补齐表，再由 v0.3.30 代码消除硬依赖。
+- CLI：GitHub Release `v0.3.30` 资产齐全，`checksums.txt` 校验 OK；`doops version` 报 `release=v0.3.30 commit=d7c2bcf1`。
+- Gateway：`doops-gateway-linux-amd64` 资产 sha256 `b97a29db…`；`/proc/<pid>/exe` hash 与资产一致，systemd active；`/health` 200、未认证 `/v1/targets` 401；10 条基线路由全部回连。首次部署误用默认 `--verify-url https://doops.l8ai.cn` 触发自动回滚，改用 `https://doops.aiedulab.cn` 后成功；`agent_registration=open`、`unenrolled_credential_delivery=open` 迁移窗口配置保持。
+- Web：`docker.cnb.cool/l8ai/ai/doops.sh/web@sha256:276a658630672f020b9fc049a21b196f7f4be265a10c214592594cfab1c21a09`（CNB 构建 `cnb-d01-1k84vdonk` 全绿），`/console` 200；回滚容器 `doops-web-rollback-20261123T201644Z-91551` 保留。
+- Agent 镜像：`docker.cnb.cool/l8ai/ai/doops.sh@sha256:3c7f12e82832b9f5f5708783e0b345cf32c3f9b0847c7628510b46c46337d88b`（OCI index，含 amd64 运行时 manifest 与 attestation）。
+
+### Agent 逐 target 验收（v0.3.30）
+
+| Target | 路径 | 结果 | 证据 |
+|---|---|---|---|
+| gw-test | `doops upgrade` | ✅ | operation `upgrade_58ba6cf4…`，helm rev 31，receipt `doops-upgrade-receipt-d72b95bcc476…-apply`，release_commit 读回一致 |
+| gw-zyj | `doops upgrade` | ✅ | operation `upgrade_1321ea1b…`，helm rev 4，release_commit 读回一致 |
+| gw-edu-coder | `doops upgrade` | ✅ | operation `upgrade_ed173131…`，helm rev 4，release_commit 读回一致 |
+| gw-hdu-235 | `doops upgrade` | ✅ | operation `upgrade_27fe3488…`，helm rev 4，release_commit 读回一致 |
+| gw-zy | 首升控制器 `first-upgrade.py` | ✅ | Job `zy-first-upgrade-v0330` Complete（6m32s），receipt phase=complete、`releaseCommit=d7c2bcf1`、`runtimeDigest=sha256:3c7f12e8`；helm rev 7→升级；备份 Secret `zy-first-upgrade-v0330-backup` 与 receipt 保留。**r3/r5 失败真因**：`accept` 阶段需经 Gateway exec 送达新 Agent，而 `target_manifest_unavailable` 门控阻断 exec → `gateway_acceptance_timeout` 回滚；v0.3.30 软化门控后 accept 送达即完成。此前 `old_runtime_descriptor_mismatch`/`old_runtime_manifest_mismatch` 为 OCI index digest 与 attestation 处理问题，已修复并回填仓库 `first-upgrade.py`（3357f66c） |
+| gw-silicon | `release-host-agent.sh` 外部宿主（sub2api-49 SSH，ControlMaster 复用别名密钥） | ✅ | audit 882092，`host_release_complete`，回滚容器 `doops-agent-rollback-rel-v0330` 保留，`targets` 读回 `d7c2bcf1` |
+| gw-scu | — | ❌ 未升级 | `doops upgrade` preflight `rbac_controller_identity_changed`；首升 render 拒绝：`independent_kubeconfig_required`（容器内 `/root/.kube/config` 非挂载卷，SA 身份） |
+| unicom-k8s | — | ❌ 未升级 | 老版本不通告 upgradeAudit v1（`upgrade_audit_protocol_required`）；首升 render 同样 `independent_kubeconfig_required`（`/root` hostPath 挂载存在但不满足精确 mountPath 校验，未擅自放宽） |
+| gw-keyi | — | ❌ 未升级 | systemd 裸二进制 Agent，无已审查替换通道与主机访问 |
+| unicom-1 | — | ❌ 未升级 | 裸二进制 Agent（无容器），`release-host-agent.py` 仅支持 Docker 容器运行时 |
+| zhaoteng | — | ⏭️ 跳过 | 本地开发 Agent（`doops-local/agent:latest` 非发布镜像，commit `<unknown>`），非本次发布范围 |
+| gw-jm / gw-114-k8s / oilan | — | ⚠️ 不可达 | 当前 Gateway 登录下 target unavailable，未做任何变更 |
+
+### 遗留事项
+
+- 全部在线 target `ENROLLED=NO`：enrollment token 迁移仍是未收口项（S-01），迁移窗口开关保留。
+- gw-zy 历史失败证据：`zy-first-upgrade-v0329-r2/r3/r4/r5-*` receipt ConfigMap 均保留在 `default` ns，未覆盖。
+- target 资源同步的端到端验证（清单下发、审计增强）需在 inventory 前置齐备后另行验收；当前按设计降级为不阻断执行。
