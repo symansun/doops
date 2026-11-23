@@ -287,17 +287,27 @@ func (s *GatewayStore) PersistMonitorRunResults(
 				artifactJSONStr = candidate
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO monitor_run_items(
+		// The row id names the on-disk item directory, so insert the light
+		// columns first and attach either the file index or the legacy text
+		// columns right after.
+		res, err := tx.ExecContext(ctx, `INSERT INTO monitor_run_items(
 			run_id, cluster, instance, asset_id, asset_name, asset_kind, strategy, collector_method,
 			status, reason, started_at_ms, finished_at_ms, duration_ms, metrics_json, checks_json, evidence_json,
-			artifact_format, artifact_markdown, artifact_json, raw_output
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			artifact_format, artifact_markdown, artifact_json, raw_output,
+			artifact_dir, artifact_bytes, artifact_sha256, artifact_truncated
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			run.ID, item.Cluster, item.Instance, item.AssetID, item.AssetName, item.AssetKind, item.Strategy, item.CollectorMethod,
 			item.Status, item.Reason, item.StartedAtMs, item.FinishedAtMs, item.DurationMs,
 			string(metricsJSON), string(checksJSON), string(evidenceJSON),
-			item.ArtifactFormat, sanitizeAndCapArtifact(item.ArtifactMarkdown), artifactJSONStr, sanitizeAndCapArtifact(item.RawOutput),
-		); err != nil {
+			item.ArtifactFormat, "", "", "", "", 0, "", 0,
+		)
+		if err != nil {
 			return 0, err
+		}
+		if itemID, idErr := res.LastInsertId(); idErr == nil && itemID > 0 {
+			if err := s.persistMonitorRunItemArtifact(ctx, tx, run.ID, itemID, item, artifactJSONStr); err != nil {
+				return 0, err
+			}
 		}
 	}
 
@@ -378,6 +388,41 @@ func (s *GatewayStore) PersistMonitorRunResults(
 	return run.MetricsWritten, nil
 }
 
+// persistMonitorRunItemArtifact writes the sanitized payload to
+// <dbDir>/artifacts (file-first) and stores only the index columns. When file
+// storage is unavailable — or a write fails — the sanitized payload stays in
+// the SQLite text columns so no inspection evidence is lost. Legacy rows keep
+// reading those columns (see GetMonitorRunDetail).
+func (s *GatewayStore) persistMonitorRunItemArtifact(ctx context.Context, tx *sql.Tx, runID string, itemID int64, item monitorRunItemRecord, artifactJSONStr string) error {
+	atMs := item.StartedAtMs
+	if atMs <= 0 {
+		atMs = time.Now().UnixMilli()
+	}
+	content, truncated := prepareMonitorArtifactForItem(item)
+	if !monitorArtifactContentEmpty(content) {
+		dir, size, digest, err := s.writeMonitorArtifactFiles(runID, itemID, atMs, content)
+		if err == nil && dir != "" {
+			truncatedValue := 0
+			if truncated {
+				truncatedValue = 1
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE monitor_run_items
+				SET artifact_dir=?, artifact_bytes=?, artifact_sha256=?, artifact_truncated=? WHERE id=?`,
+				dir, size, digest, truncatedValue, itemID)
+			return err
+		}
+		if err != nil && !errors.Is(err, errMonitorArtifactStorageDisabled) {
+			// Keep the run usable: fall back to the SQLite text columns below
+			// instead of failing the whole persistence.
+			_ = err
+		}
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE monitor_run_items
+		SET artifact_markdown=?, artifact_json=?, raw_output=? WHERE id=?`,
+		sanitizeAndCapArtifact(item.ArtifactMarkdown), artifactJSONStr, sanitizeAndCapArtifact(item.RawOutput), itemID)
+	return err
+}
+
 // ---------------- Queries (Target-Grant Scoped) ----------------
 
 func (s *GatewayStore) ListMonitorRuns(ctx context.Context, auth TokenAuth, scheduleID, statusFilter string, limit int) ([]monitorRunRecord, error) {
@@ -452,7 +497,8 @@ func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, 
 	isAdmin := s.UserIsPlatformAdmin(auth.UserID)
 	query := `SELECT i.id, i.run_id, i.cluster, i.instance, i.asset_id, i.asset_name, i.asset_kind, i.strategy, i.collector_method,
 		i.status, i.reason, i.started_at_ms, i.finished_at_ms, i.duration_ms, i.metrics_json, i.checks_json, i.evidence_json,
-		i.artifact_format, i.artifact_markdown, i.artifact_json, i.raw_output
+		i.artifact_format, i.artifact_markdown, i.artifact_json, i.raw_output,
+		i.artifact_dir, i.artifact_bytes, i.artifact_sha256, i.artifact_truncated
 		FROM monitor_run_items i WHERE i.run_id=?`
 	args := []any{runID}
 	if !isAdmin {
@@ -469,20 +515,35 @@ func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, 
 	for rows.Next() {
 		var item monitorRunItemRecord
 		var metricsRaw, checksRaw, evidenceRaw, artifactJSONRaw string
+		var artifactTruncated int
 		if err := rows.Scan(
 			&item.ID, &item.RunID, &item.Cluster, &item.Instance, &item.AssetID, &item.AssetName, &item.AssetKind,
 			&item.Strategy, &item.CollectorMethod, &item.Status, &item.Reason,
 			&item.StartedAtMs, &item.FinishedAtMs, &item.DurationMs, &metricsRaw, &checksRaw, &evidenceRaw,
 			&item.ArtifactFormat, &item.ArtifactMarkdown, &artifactJSONRaw, &item.RawOutput,
+			&item.ArtifactDir, &item.ArtifactBytes, &item.ArtifactSHA256, &artifactTruncated,
 		); err != nil {
 			return run, nil, err
 		}
+		item.ArtifactTruncated = artifactTruncated != 0
 		item.Checks = []api.MonitorInspectCheck{}
 		_ = json.Unmarshal([]byte(metricsRaw), &item.Metrics)
 		_ = json.Unmarshal([]byte(checksRaw), &item.Checks)
 		_ = json.Unmarshal([]byte(evidenceRaw), &item.Evidence)
-		if compact, ok := compactValidJSON(artifactJSONRaw); ok {
-			item.ArtifactJSON = compact
+		// File-first: a row with an artifact directory reads the full payload
+		// back from disk. Legacy rows without one keep their SQLite text
+		// columns, so upgrades stay lossless.
+		if item.ArtifactDir != "" {
+			if content, ok := s.readMonitorArtifactFiles(item.ArtifactDir); ok {
+				item.ArtifactMarkdown = content.Markdown
+				item.ArtifactJSON = content.JSON
+				item.RawOutput = content.Raw
+			}
+		}
+		if len(item.ArtifactJSON) == 0 {
+			if compact, ok := compactValidJSON(artifactJSONRaw); ok {
+				item.ArtifactJSON = compact
+			}
 		}
 		items = append(items, item)
 	}
@@ -980,7 +1041,12 @@ func (s *GatewayStore) PruneMonitorEngineHistory(now time.Time) {
 		return
 	}
 	cutoffMs := now.UTC().Add(-30 * 24 * time.Hour).UnixMilli()
+	artifactDirs := s.monitorArtifactDirsForPrune(cutoffMs)
 	_, _ = s.db.Exec(`DELETE FROM monitor_resource_snapshots WHERE collected_at_ms < ?`, cutoffMs)
 	_, _ = s.db.Exec(`DELETE FROM monitor_run_items WHERE run_id IN (SELECT id FROM monitor_runs WHERE started_at_ms < ?)`, cutoffMs)
 	_, _ = s.db.Exec(`DELETE FROM monitor_runs WHERE started_at_ms < ?`, cutoffMs)
+	// Remove the expired payload directories and reclaim now-empty date dirs.
+	for _, dir := range artifactDirs {
+		s.removeMonitorArtifactDir(dir)
+	}
 }

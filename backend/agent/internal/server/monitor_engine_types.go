@@ -290,6 +290,12 @@ type monitorRunItemRecord struct {
 	ArtifactMarkdown string                    `json:"artifact_markdown,omitempty"` // Markdown report / notes
 	ArtifactJSON     json.RawMessage           `json:"artifact_json,omitempty"`     // Arbitrary valid JSON payload
 	RawOutput        string                    `json:"raw_output,omitempty"`        // Sanitized raw stdout/answer
+	// File-first artifact index (SKILL_FIRST_INSPECTION_SPEC.md 3.2). The
+	// directory is relative to <dbDir>/artifacts and is never exposed over HTTP.
+	ArtifactDir       string `json:"-"`
+	ArtifactBytes     int64  `json:"-"`
+	ArtifactSHA256    string `json:"-"`
+	ArtifactTruncated bool   `json:"artifact_truncated,omitempty"`
 }
 
 type monitorResourceSnapshot struct {

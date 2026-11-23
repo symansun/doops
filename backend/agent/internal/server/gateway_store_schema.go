@@ -490,6 +490,10 @@ func (s *GatewayStore) migrate() error {
 		{"monitor_run_items", "artifact_markdown", "TEXT NOT NULL DEFAULT ''"},
 		{"monitor_run_items", "artifact_json", "TEXT NOT NULL DEFAULT ''"},
 		{"monitor_run_items", "raw_output", "TEXT NOT NULL DEFAULT ''"},
+		{"monitor_run_items", "artifact_dir", "TEXT NOT NULL DEFAULT ''"},
+		{"monitor_run_items", "artifact_bytes", "INTEGER NOT NULL DEFAULT 0"},
+		{"monitor_run_items", "artifact_sha256", "TEXT NOT NULL DEFAULT ''"},
+		{"monitor_run_items", "artifact_truncated", "INTEGER NOT NULL DEFAULT 0"},
 		{"platform_skills", "file_count", "INTEGER NOT NULL DEFAULT 0"},
 		{"platform_skills", "storage_dir", "TEXT NOT NULL DEFAULT ''"},
 	} {
