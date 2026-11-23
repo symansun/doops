@@ -254,3 +254,11 @@
 - **前端干净树也补齐了**：`pnpm run test:console` 706/706（37.68s）、`pnpm build` rc=0（90s）。顺带记一个环境坑：干净树没有 `node_modules`，用符号链接会被 Turbopack 拒（`Symlink [project]/node_modules is invalid`），要用 APFS clone（`cp -Rc`）。
 - **基线漂移要补一次**：它实测期间 main 从 `0e749395` 走到 `8001ce4f`（SF-18 的 monitor 证据、vm-host 的 disk_io、k8s metrics 桥接）。测试数会变，等 SF-18 与 SF-21 都落完再以当时的 HEAD 重跑同一套分片，结果才可作为发布前基线；已记进 backlog 待办。
 - 在跑 3：integrator-e2e-01（SF-18）、qa-recheck-01（QA-03）、dev-viewer-01（SF-21）。qa-skill-01 释放。本轮不空转派活（分片重跑必须等前置落定，否则又是跑一个会漂移的基线）。
+
+## 03:06 第 19 轮巡检：SF-18 收口（证据能自证「本该怎么调度」）；QA-03 催促收尾
+
+- **SF-18 完成**（8001ce4f，4 文件 +130/−9）：`evidence.exec_mode` 保持声明值不动，新增 `evidence.dispatch_mode` 与明细项顶层 `dispatch_mode`（`script|agent`），顶层是 evidence 的投影、读取时回填。关键设计我认可：两处调度点各自**解析一次**再传下去，所以证据不可能与真正选中的分支不一致；AI 路径此前根本不写声明 `exec_mode`，这次一并补上。我独立复核：`git merge-base --is-ancestor 8001ce4f origin/main` = yes，spec §2.3.1（`SKILL_FIRST_INSPECTION_SPEC.md:89-107`）在 main 上写清了取值域、空值语义（旧 run 不得读成 agent）、三种合法 mismatch 与三元读法（跑了什么看 `collector_method`、本应怎么调度看 `dispatch_mode`）。
+- 两个反向实验的分辨力够：把 `resolveSkillDispatchMode` 恒返回 agent → `item dispatch_mode="agent", want script`；把 JSON tag 改空 → 报 `does not expose the top-level dispatch_mode key`（而 evidence 里仍是小写键），证明断言是按字面键名而非子串匹配。DB 零影响（只加 `evidence_json` 内键、无迁移），MySQL 导出与 guard 不用动 —— 符合我派活时给的边界。
+- 我查了 API 文档是否需要同批补字段：`DOOPS_API_GUIDE.md:1240` 只描述 `/v1/monitor/runs*` 的语义边界，明细字段的权威表在 spec（Topic Ownership 归巡检 spec），所以没有第二份文档要改；前端不专门渲染 `dispatch_mode`，但它随 evidence 在「原始输出」里可见，不需要为此新开活。
+- QA-03（qa-recheck-01）02:38 派出，已 28 分钟无报告，我发消息要它在 03:15 前先交已完成部分（六条反向实验逐条给红/绿原始输出），不再等全做完；QA-05（发布前分片重跑）继续等 SF-21 落定再开，避免又跑一个马上漂移的基线。
+- 在跑 2 + 1：qa-recheck-01（QA-03，催收尾）、dev-viewer-01（SF-21）。qa-skill-01、integrator-e2e-01 释放。origin/main = c1b62473 起步。
