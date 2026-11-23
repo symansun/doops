@@ -6,6 +6,26 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [Unreleased]
+
+### Added
+
+- 新增真正的 **「MCP 管理」**（`?view=assets&area=mcp`、Gateway `/v1/mcp-servers` 与 Agent 内部工具 `doops_mcp_sync` / `doops_mcp_inspect`）：统一管理内置 MCP（`doops`、`dosql`）与用户接入的自定义 `stdio` / `http` / `sse` MCP 服务；支持在在线 Agent 上执行真实 MCP JSON-RPC 2.0 `initialize` + `tools/list` 探测（返回实测延迟、服务端版本与完整工具 Schema），并将自定义 MCP 原子同步至 `/root/.agent/doops-mcp-servers.json` 并合并写入 `/root/.agent/settings.json` 与 `do-agent` 允许工具列表（保留模型配置不变），供「AI 助手」与「智能巡检」直接调用。
+- **「Skill 管理」** 升级为共享能力中心：Gateway 侧将 Skill 正文与附属脚本迁移至本地文件目录存储（`<dbDir>/skills/<slug>/`）并在 SQLite 仅保留轻量元数据索引（兼容旧库记录回读）；新增「Agent 运行态 Skill」页签（通过 `doops_skills_inspect` 实时扫描目标 Agent `/root/.agent/skills/`，区分平台托管与镜像内置 Skill）以及卡片内 **「在线试跑验证」**（选节点与可选提示词原地触发真实执行并内联展示动态 Markdown + JSON 产物）。
+- 巡检引擎（Gateway `monitor_schedules` / `monitor_runs` / `monitor_run_items`）新增通用的 **Skill + 提示词（`prompt`） + 任意直接命令（`command`）** 执行与产物持久化能力：支持在目标 Agent 上通过 `doops_agent_prompt`、Skill 内置脚本或经审计的 `doops_shell` 执行任意巡检命令，并自动解析与持久化 `artifact_format`（`json` / `markdown+json` / `markdown` / `text`）、`artifact_markdown`、`artifact_json` 与脱敏 `raw_output`。
+- 控制台新增无硬编码字段的 **动态巡检产物可视化器**（`InspectionArtifactViewer`）：可对任意结构的 JSON 与 Markdown+JSON 巡检产物自动生成 KPI 指标卡、百分比水位条、状态徽章与动态推断列表格，支持在「可视化 / Markdown / JSON」间切换及一键复制下载。
+
+### Changed
+
+- 精简 **「智能巡检」** 与 **「态势感知」** 页面并彻底清理冗余配置与演示残留：
+  - 删除无后端支撑的 `inspection-mcp-panel`、`inspection-mcp-store` 与 `asset-inspection-panel` 文件；「智能巡检」仅保留「执行与记录」与「定时计划」两张纯巡检页签，移除临时 SSH 表单、硬编码告警阈值、按标签筛选、旧策略复选框及演示 HTML 报表入口，统一聚焦 **目标 + 关联 Skill + 巡检提示词 + 可选直接执行命令**。
+  - 登录页移除「进入演示模式」按钮，默认直连真实 Gateway；`HolographicCore3D` 移除硬编码演示默认节点，无在线节点时如实展示空态；「态势感知」与报告生成器全部改为基于 Gateway 真实采样、实时阈值告警与巡检产物输出。
+
+### Fixed
+
+- 修复非演示（真实后端）模式下巡检与态势感知错误套用演示规则模板（如硬编码 `83.8%` 内存压力与演示模型文案）的问题；真实模式下仅呈现来自 Gateway 与 Agent 的真实巡检结果与产物。
+- Agent 的 `mcp_doops_k8s_read`、`mcp_doops_web(_read)`、`mcp_doops_kb_read`、`doops_helm` 与 DoSql 工具在拒绝非法 `operation` 时，错误信息现在列出全部合法取值，模型一次重试即可自纠，不再因反复猜测操作名耗尽调用。
+
 ## [0.3.27] — 2026-11-23
 
 ### Fixed
@@ -21,6 +41,9 @@
 
 ### Changed
 
+- 精简 **「智能巡检」** 页面结构：移除重复二级标题与重复按钮，将原堆叠视图拆分为「执行与记录」「定时计划」「安全巡检 MCP」「合规台账」四张聚焦页签；默认页收敛为单行发起工具栏（Skill 勾选面板与临时 SSH 按需展开）+ 首屏巡检记录表，定时计划的高级阈值折叠收口。
+- 优化 **「态势感知」** 呈现逻辑：重构为「态势定性与风险聚焦 → 业务/应用/集群/机器四层联动影响追踪 → 立体资源水位与根因处置」三段式布局；默认采用高清标准分层（支持一键切换 3D 立体/俯瞰与「仅看异常链路」），点击或悬停节点实时高亮上下游影响链；3D 态势核心新增标签碰撞避让与点击联动，统一真实口径消除集群/探针数字矛盾，空层折叠为紧凑引导条，并去除重复的巡检历史轨迹表。
+- **「AI 辅助填写」**收口为仅在资产录入与编辑表单（机器、集群、业务系统、数据库、网站、镜像及个人资产登记）出现，不再挂载于登录、巡检、Skill 管理、平台管理与通用弹窗表单。
 - **「平台监控」**回归纯粹的 Agent 维度（保留「平台总览」「Agent 节点」「使用排行」「运行与异常」四项页签）；「机器台账」移除重复的巡检页签、「业务系统」移除重复的拓扑页签、「目标运维 → 后台任务」回归当前目标 `exec --bg` 托管任务视图，彻底消除跨菜单功能重复。
 
 ## [0.3.24] — 2026-11-23
