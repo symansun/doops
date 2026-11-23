@@ -12,6 +12,20 @@ BACKEND = Path(__file__).resolve().parents[1]
 RULES = json.dumps([{"name": "marker", "match": "DENIED_MARKER", "hint": "marker rejected"}])
 
 
+def is_marker_denial(stderr: str) -> bool:
+    """The stable denial, optionally followed by a bounded matched-command snippet."""
+    prefix = "blocked_command(marker): next: marker rejected"
+    if stderr == prefix + "\n":
+        return True
+    if not stderr.endswith("\n"):
+        return False
+    rest = stderr[:-1][len(prefix):]
+    if not (rest.startswith('; matched: "') and rest.endswith('"')):
+        return False
+    snippet = rest[len('; matched: "'):-1]
+    return bool(snippet) and len(snippet) <= 120
+
+
 @pytest.fixture(scope="module")
 def wrapper(tmp_path_factory):
     binary = tmp_path_factory.mktemp("native-bash") / "doops-shell"
@@ -32,7 +46,8 @@ def test_wrapper_checks_original_command_before_any_side_effect(wrapper, tmp_pat
     allowed = run(wrapper, "-c", command)
     assert (allowed.returncode, allowed.stdout, allowed.stderr) == (expected.returncode, expected.stdout, expected.stderr)
     denied = run(wrapper, "-c", "touch denied; printf '%s' DENIED_MARKER")
-    assert (denied.returncode, denied.stdout, denied.stderr) == (1, "", "blocked_command(marker): next: marker rejected\n")
+    assert (denied.returncode, denied.stdout) == (1, "")
+    assert is_marker_denial(denied.stderr)
     assert not (tmp_path / "denied").exists()
     for args in [(), ("-lc", "touch invalid"), ("-c", "touch invalid", "extra")]:
         assert run(wrapper, *args).returncode == 2
@@ -58,7 +73,8 @@ def test_plugin_argv_and_ask_report_the_same_prestart_denial(wrapper, tmp_path):
     env = {"PATH": str(tmp_path), "HOME": str(tmp_path), "DOOPS_COMMAND_DENY_RULES": RULES}
     for args in [("-c", "kubectl get DENIED_MARKER"), ("--argv", "kubectl", "get", "DENIED_MARKER")]:
         result = subprocess.run([wrapper, *args], cwd=tmp_path, env=env, text=True, capture_output=True)
-        assert (result.returncode, result.stderr) == (1, "blocked_command(marker): next: marker rejected\n")
+        assert result.returncode == 1
+        assert is_marker_denial(result.stderr)
         assert not (tmp_path / "started").exists()
     result = subprocess.run([wrapper, "--argv", "kubectl", "get", "two words"], cwd=tmp_path, env=env)
     assert result.returncode == 17
