@@ -23,6 +23,7 @@ import subprocess
 from datetime import datetime, timezone
 
 MAX_PAYLOAD_BYTES = 200 * 1024  # spec L28 单条产物硬上限 256 KiB，预留保护余量
+HARD_CAP_BYTES = 256 * 1024  # spec L28 单条产物硬上限（整条 stdout，含 Markdown 正文）
 TRIM_LIST_KEYS = ("packages", "checks")
 
 def _nbytes(obj):
@@ -64,6 +65,31 @@ def finish(payload):
     })
     payload["output_bytes"] = _nbytes(payload)
     return payload
+
+
+def emit(intro, payload):
+    """打印 Markdown 正文与 JSON 代码块；整条产物受 HARD_CAP_BYTES 约束（正文超长时截断，JSON 始终完整合法）。"""
+    json_text = json.dumps(payload, ensure_ascii=False, indent=2)
+    if len(json_text.encode("utf-8")) > HARD_CAP_BYTES:
+        json_text = json.dumps(payload, ensure_ascii=False)
+    marker = "...(正文超长已截断)"
+    budget = HARD_CAP_BYTES - len(json_text.encode("utf-8")) - 14
+    kept, used = [], 0
+    for line in intro:
+        cost = len(line.encode("utf-8")) + (1 if kept else 0)
+        if used + cost > budget:
+            break
+        kept.append(line)
+        used += cost
+    if len(kept) < len(intro):
+        if used + len(marker.encode("utf-8")) + 1 <= budget:
+            kept.append(marker)
+        elif len(marker.encode("utf-8")) <= budget:
+            kept = [marker]
+        else:
+            kept = []
+    body = "\n".join(kept)
+    print(body + ("\n\n" if body else "") + "```json\n" + json_text + "\n```")
 
 KEY_PKGS = ("openssl", "openssh-server", "openssh-client", "curl", "sudo", "nginx", "ca-certificates", "bash")
 
@@ -137,5 +163,5 @@ payload = {
     "packages": packages,
 }
 finish(payload)
-print(f"## 主机软件包与补丁基线巡检\n\n- {summary}\n\n```json\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```")
+emit(["## 主机软件包与补丁基线巡检", "", "- %s" % summary], payload)
 PY

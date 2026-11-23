@@ -37,6 +37,7 @@ MEM_WARN, MEM_CRIT = 80.0, 90.0
 DISK_WARN, DISK_CRIT = 85.0, 95.0
 ZOMBIE_WARN = 5
 MAX_PAYLOAD_BYTES = 200 * 1024  # spec L28 单条产物硬上限 256 KiB，预留保护余量
+HARD_CAP_BYTES = 256 * 1024  # spec L28 单条产物硬上限（整条 stdout，含 Markdown 正文）
 TRIM_LIST_KEYS = ("mounts", "sysctl", "charts")
 
 def _nbytes(obj):
@@ -78,6 +79,31 @@ def finish(payload):
     })
     payload["output_bytes"] = _nbytes(payload)
     return payload
+
+
+def emit(intro, payload):
+    """打印 Markdown 正文与 JSON 代码块；整条产物受 HARD_CAP_BYTES 约束（正文超长时截断，JSON 始终完整合法）。"""
+    json_text = json.dumps(payload, ensure_ascii=False, indent=2)
+    if len(json_text.encode("utf-8")) > HARD_CAP_BYTES:
+        json_text = json.dumps(payload, ensure_ascii=False)
+    marker = "...(正文超长已截断)"
+    budget = HARD_CAP_BYTES - len(json_text.encode("utf-8")) - 14
+    kept, used = [], 0
+    for line in intro:
+        cost = len(line.encode("utf-8")) + (1 if kept else 0)
+        if used + cost > budget:
+            break
+        kept.append(line)
+        used += cost
+    if len(kept) < len(intro):
+        if used + len(marker.encode("utf-8")) + 1 <= budget:
+            kept.append(marker)
+        elif len(marker.encode("utf-8")) <= budget:
+            kept = [marker]
+        else:
+            kept = []
+    body = "\n".join(kept)
+    print(body + ("\n\n" if body else "") + "```json\n" + json_text + "\n```")
 
 def read_text(path):
     try:
@@ -487,10 +513,6 @@ md_lines = [
     "- **综合结论**：`%s` — %s" % (overall, summary),
     "- **系统信息**：%s / %s（%d 核%s）" % (os_info, kernel_info, cores, " · 容器环境" if in_container else ""),
     "- **资源水位**：CPU `%s%%` · 内存 `%s%%`（%s/%s GiB）· 磁盘最高 `%s %s%%`（去重总容量 `%s GiB`）" % (cpu_pct if cpu_pct is not None else "-", mem_pct if mem_pct is not None else "-", round(mem_used / (1024 ** 3), 2), round(mem_total / (1024 ** 3), 2), worst_mount, disk_pct, round(disk_total / (1024 ** 3), 2)),
-    "",
-    "```json",
-    json.dumps(payload, ensure_ascii=False, indent=2),
-    "```",
 ]
-print("\n".join(md_lines))
+emit(md_lines, payload)
 PY
