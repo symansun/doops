@@ -115,3 +115,15 @@
     # 前端（干净树无 node_modules，需先准备）
     cp -Rc /Users/wwyz/Documents/l8ai/doops.sh/node_modules /tmp/qa04/node_modules   # 先确认 package.json / pnpm-lock.yaml 一致
     cd /tmp/qa04 && env -u GOROOT pnpm run test:console && env -u GOROOT pnpm build
+
+## 10. 基线漂移说明
+
+本轮实测期间 origin/main 继续前进：实测基线 0e749395 → 复核时 8001ce4f（+5 个提交，21 个文件）。新增的代码类提交未在本基线内复跑：
+
+- 8001ce4f fix(monitor): 运行明细证据并列记录声明的 exec_mode 与实际 dispatch_mode（SF-18）
+- e03d8439 feat(skills): bridge metrics-server usage into inspect-k8s-cluster
+- a7a4a84e feat(skills): collect physical block-device I/O in inspect-vm-host
+- 2dfbf26b test(skills): cover host.disk_io and k8s.metrics with real-run fixtures
+- 0507f449 docs(spec): mark host.disk_io and k8s.metrics as covered
+
+8001ce4f 改的是 monitor 证据记录（internal/server），e03d8439/a7a4a84e 改的是 skills_builtin 脚本，均会进入 internal/server 包的测试范围。**下一个基线应以 8001ce4f 或更新提交重跑同一套分片**，届时 1113 的测试数也会变化。
