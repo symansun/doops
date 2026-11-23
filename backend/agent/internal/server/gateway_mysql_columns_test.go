@@ -38,8 +38,10 @@ func TestGatewayMySQLColumnsMatchExport(t *testing.T) {
 // column lists are extracted from the SQL literals in the package source, so a
 // new INSERT is guarded without editing this test.
 //
-// Statements without a column list are skipped: INSERT INTO t VALUES (...)
-// depends on the physical column order, which this guard cannot see.
+// Statements without a column list are skipped here: INSERT INTO t VALUES (...)
+// depends on the physical column order, which this column-set guard cannot see.
+// TestGatewayMySQLInsertWithoutColumnListOrdersColumns owns those statements and
+// asserts the export order, the DDL order and the arity per site.
 func TestGatewayMySQLInsertDefaultsMatchSchema(t *testing.T) {
 	export := gatewayMySQLTestSQLiteExport(t)
 	ddl := string(gatewayMySQLSchemaSQL)
@@ -52,7 +54,7 @@ func TestGatewayMySQLInsertDefaultsMatchSchema(t *testing.T) {
 		table, columns, ok := gatewayMySQLInsertColumns(literal.query)
 		if !ok {
 			if strings.Contains(upper, "INSERT") && strings.Contains(upper, "INTO") {
-				t.Logf("skip %s:%d: INSERT without a parsable column list cannot be checked against the schema", literal.file, literal.line)
+				t.Logf("skip %s:%d: INSERT without a column list is guarded by TestGatewayMySQLInsertWithoutColumnListOrdersColumns (column order and arity), not by this column-set guard", literal.file, literal.line)
 			}
 			continue
 		}
