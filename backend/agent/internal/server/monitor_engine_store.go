@@ -276,10 +276,26 @@ func (s *GatewayStore) PersistMonitorRunResults(
 	}
 	defer tx.Rollback()
 
-	for _, item := range items {
+	// Extract trend metrics once; the same extraction both feeds
+	// inspection_metric_points and records the skipped-entry count on evidence.
+	extractions := make([]monitorMetricExtraction, len(items))
+	for i := range items {
+		extractions[i] = extractInspectionMetricForItem(run, items[i])
+	}
+	for i, item := range items {
 		metricsJSON, _ := json.Marshal(item.Metrics)
 		checksJSON, _ := json.Marshal(item.Checks)
-		evidenceJSON, _ := json.Marshal(sanitizeMonitorEvidence(item.Evidence))
+		evidence := sanitizeMonitorEvidence(item.Evidence)
+		if extraction := extractions[i]; len(extraction.Points) > 0 || extraction.Skipped > 0 {
+			if evidence == nil {
+				evidence = map[string]any{}
+			}
+			evidence["inspection_metrics"] = map[string]any{
+				"extracted": len(extraction.Points),
+				"skipped":   extraction.Skipped,
+			}
+		}
+		evidenceJSON, _ := json.Marshal(evidence)
 		artifactJSONStr := ""
 		if len(item.ArtifactJSON) > 0 && json.Valid(item.ArtifactJSON) {
 			candidate := redactSecretText(string(item.ArtifactJSON))
@@ -311,30 +327,14 @@ func (s *GatewayStore) PersistMonitorRunResults(
 		}
 	}
 
-	for _, snap := range snapshots {
-		tagsJSON, _ := json.Marshal(snap.Tags)
-		detailsJSON, _ := json.Marshal(sanitizeMonitorEvidence(snap.Details))
-		if _, err := tx.ExecContext(ctx, `INSERT INTO monitor_resource_snapshots(
-			cluster, instance, asset_id, asset_name, asset_kind, strategy, collector_method,
-			collected_at_ms, run_id, status,
-			cpu_cores, cpu_total_cores, cpu_percent,
-			memory_used_bytes, memory_total_bytes, memory_percent,
-			disk_used_bytes, disk_total_bytes, disk_percent,
-			net_bytes_per_sec, disk_iops, disk_latency_ms, gpu_percent,
-			response_time_ms, error_rate, active_connections, requests_per_sec,
-			uptime_seconds, load_1m, os_info, kernel_info, tags_json, details_json
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			snap.Cluster, snap.Instance, snap.AssetID, snap.AssetName, snap.AssetKind, snap.Strategy, snap.CollectorMethod,
-			snap.CollectedAtMs, run.ID, snap.Status,
-			snap.CPUCores, snap.CPUTotalCores, snap.CPUPercent,
-			snap.MemoryUsedBytes, snap.MemoryTotalBytes, snap.MemoryPercent,
-			snap.DiskUsedBytes, snap.DiskTotalBytes, snap.DiskPercent,
-			snap.NetBytesPerSec, snap.DiskIOPS, snap.DiskLatencyMs, snap.GPUPercent,
-			snap.ResponseTimeMs, snap.ErrorRate, snap.ActiveConnections, snap.RequestsPerSec,
-			snap.UptimeSeconds, snap.Load1m, snap.OSInfo, snap.KernelInfo, string(tagsJSON), string(detailsJSON),
-		); err != nil {
+	for _, snapshot := range snapshots {
+		if err := insertMonitorResourceSnapshot(ctx, tx, run.ID, snapshot); err != nil {
 			return 0, err
 		}
+	}
+
+	if err := persistInspectionMetricExtractions(ctx, tx, run, items, extractions, snapshots); err != nil {
+		return 0, err
 	}
 
 	// Optionally bridge granular series into asset_monitor_series / asset_monitor_samples when migrated.
@@ -386,6 +386,34 @@ func (s *GatewayStore) PersistMonitorRunResults(
 		return 0, err
 	}
 	return run.MetricsWritten, nil
+}
+
+// insertMonitorResourceSnapshot appends one resource snapshot row. Strategy-
+// provided snapshots and the inspection-metric bridge (spec §4.2) share it so
+// there stays exactly one canonical snapshot table.
+func insertMonitorResourceSnapshot(ctx context.Context, tx *sql.Tx, runID string, snapshot monitorResourceSnapshot) error {
+	tagsJSON, _ := json.Marshal(snapshot.Tags)
+	detailsJSON, _ := json.Marshal(sanitizeMonitorEvidence(snapshot.Details))
+	_, err := tx.ExecContext(ctx, `INSERT INTO monitor_resource_snapshots(
+		cluster, instance, asset_id, asset_name, asset_kind, strategy, collector_method,
+		collected_at_ms, run_id, status,
+		cpu_cores, cpu_total_cores, cpu_percent,
+		memory_used_bytes, memory_total_bytes, memory_percent,
+		disk_used_bytes, disk_total_bytes, disk_percent,
+		net_bytes_per_sec, disk_iops, disk_latency_ms, gpu_percent,
+		response_time_ms, error_rate, active_connections, requests_per_sec,
+		uptime_seconds, load_1m, os_info, kernel_info, tags_json, details_json
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		snapshot.Cluster, snapshot.Instance, snapshot.AssetID, snapshot.AssetName, snapshot.AssetKind, snapshot.Strategy, snapshot.CollectorMethod,
+		snapshot.CollectedAtMs, runID, snapshot.Status,
+		snapshot.CPUCores, snapshot.CPUTotalCores, snapshot.CPUPercent,
+		snapshot.MemoryUsedBytes, snapshot.MemoryTotalBytes, snapshot.MemoryPercent,
+		snapshot.DiskUsedBytes, snapshot.DiskTotalBytes, snapshot.DiskPercent,
+		snapshot.NetBytesPerSec, snapshot.DiskIOPS, snapshot.DiskLatencyMs, snapshot.GPUPercent,
+		snapshot.ResponseTimeMs, snapshot.ErrorRate, snapshot.ActiveConnections, snapshot.RequestsPerSec,
+		snapshot.UptimeSeconds, snapshot.Load1m, snapshot.OSInfo, snapshot.KernelInfo, string(tagsJSON), string(detailsJSON),
+	)
+	return err
 }
 
 // persistMonitorRunItemArtifact writes the sanitized payload to
@@ -553,6 +581,10 @@ func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, 
 	if !isAdmin && len(items) == 0 && run.TriggeredBy != auth.UserID {
 		return run, nil, sql.ErrNoRows
 	}
+	// Close the item cursor before the diff lookups so the single write
+	// connection is free (SQLite store runs with MaxOpenConns=1).
+	_ = rows.Close()
+	s.attachMonitorRunItemDiffs(ctx, run, items)
 	return run, items, nil
 }
 

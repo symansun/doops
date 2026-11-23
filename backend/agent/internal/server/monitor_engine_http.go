@@ -482,6 +482,62 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// HandleMonitorMetrics serves the read-only inspection metric time series
+// (SKILL_FIRST_INSPECTION_SPEC.md §4.2). Metrics are projected into
+// inspection_metric_points at persistence time; this endpoint only reads them.
+func (h *GatewayHub) HandleMonitorMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	auth, err := h.authenticateUser(r)
+	if err != nil {
+		h.writeUserAuthError(w, r, err)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	skill := strings.ToLower(strings.TrimSpace(q.Get("skill")))
+	if !skillSlugPattern.MatchString(skill) {
+		writeMonitorHTTPError(w, 400, "invalid_monitor_metrics_query", "skill 参数无效")
+		return
+	}
+	cluster, instance, ok := strings.Cut(strings.TrimSpace(q.Get("target")), "/")
+	cluster = strings.TrimSpace(cluster)
+	instance = strings.TrimSpace(instance)
+	if !ok || cluster == "" || instance == "" || !monitorID(cluster) || !monitorID(instance) {
+		writeMonitorHTTPError(w, 400, "invalid_monitor_metrics_query", "target 参数需为 cluster/instance")
+		return
+	}
+	rangeKey, window, ok := monitorMetricRangeDuration(q.Get("range"))
+	if !ok {
+		writeMonitorHTTPError(w, 400, "invalid_monitor_metrics_range", "时间范围仅支持 1h、6h、24h、7d、30d")
+		return
+	}
+	if !h.store.UserIsPlatformAdmin(auth.UserID) && !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
+		writeMonitorHTTPError(w, 403, "monitor_metrics_forbidden", "无权查看该目标的指标时序")
+		return
+	}
+	now := time.Now().UTC()
+	toMs := now.UnixMilli()
+	fromMs := now.Add(-window).UnixMilli()
+	series, err := h.store.ListInspectionMetricSeries(r.Context(), cluster, instance, skill, fromMs, toMs)
+	if err != nil {
+		writeMonitorHTTPError(w, 503, "monitor_metrics_unavailable", "无法读取巡检指标时序")
+		return
+	}
+	writeJSONHTTP(w, monitorMetricSeriesResponse{
+		Skill:    skill,
+		Cluster:  cluster,
+		Instance: instance,
+		Range:    rangeKey,
+		FromMs:   fromMs,
+		ToMs:     toMs,
+		Series:   series,
+	})
+}
+
 func writeMonitorHTTPError(w http.ResponseWriter, status int, code, message string) {
 	writeDoopsError(w, status, "", doopsErrorResponse{Error: code, Code: code, Message: message})
 }

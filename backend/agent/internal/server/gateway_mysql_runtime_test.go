@@ -52,9 +52,9 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 		gatewayMySQLIssueNullSafeParameter:   1,
 		gatewayMySQLIssueSQLiteIntrospection: 6,
 		gatewayMySQLIssueSQLiteExplainPlan:   13,
-		gatewayMySQLIssueCreateIndexIfAbsent: 25,
+		gatewayMySQLIssueCreateIndexIfAbsent: 29,
 		gatewayMySQLIssueDropIndexIfAbsent:   2,
-		gatewayMySQLIssueAutoIncrement:       7,
+		gatewayMySQLIssueAutoIncrement:       8,
 		gatewayMySQLIssuePartialIndex:        1,
 		gatewayMySQLIssueReservedUse:         11,
 	}

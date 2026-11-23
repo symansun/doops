@@ -296,6 +296,9 @@ type monitorRunItemRecord struct {
 	ArtifactBytes     int64  `json:"-"`
 	ArtifactSHA256    string `json:"-"`
 	ArtifactTruncated bool   `json:"artifact_truncated,omitempty"`
+	// Diff compares this item with the previous terminal run of the same
+	// (cluster, instance, strategy) series (spec §4.3); nil when there is none.
+	Diff *monitorRunDiff `json:"diff"`
 }
 
 type monitorResourceSnapshot struct {

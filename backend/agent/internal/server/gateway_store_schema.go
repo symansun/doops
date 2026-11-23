@@ -397,6 +397,24 @@ func (s *GatewayStore) migrate() error {
 			updated_at_ms INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_platform_mcp_scope ON platform_mcp_servers(scope, enabled)`,
+		`CREATE TABLE IF NOT EXISTS inspection_metric_points (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			collected_at_ms INTEGER NOT NULL DEFAULT 0,
+			run_id TEXT NOT NULL DEFAULT '',
+			schedule_id TEXT NOT NULL DEFAULT '',
+			cluster TEXT NOT NULL DEFAULT '',
+			instance TEXT NOT NULL DEFAULT '',
+			skill_slug TEXT NOT NULL DEFAULT '',
+			metric_key TEXT NOT NULL,
+			metric_label TEXT NOT NULL DEFAULT '',
+			value REAL NOT NULL DEFAULT 0,
+			unit TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_inspection_metric_points_series ON inspection_metric_points(skill_slug, metric_key, collected_at_ms)`,
+		`CREATE INDEX IF NOT EXISTS idx_inspection_metric_points_run ON inspection_metric_points(run_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_inspection_metric_points_target ON inspection_metric_points(cluster, instance, collected_at_ms)`,
+		`CREATE INDEX IF NOT EXISTS idx_monitor_run_items_series ON monitor_run_items(cluster, instance, strategy)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
