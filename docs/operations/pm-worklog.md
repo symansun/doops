@@ -140,3 +140,9 @@
 - 结论不变但性质变了：**SF-15 是升级既有清理而不是新建**。dev-sf-01 开工时自己核对出来并主动纠正我，属有效对抗性核查，记一笔。
 - 给它的追加约束：每小时兜底必须**必扫**（内部 `force bool` 区分，节流只作用于 run 完成后的高频触发，且要有测试锁住 force 不被传错）；prune 必须单飞防并发重入；`os.RemoveAll` 失败只 Warn 但仍删索引行（避免"永远删不掉的文件"每次重试刷日志），并按此写进 spec；`monitor_engine_store.go` 只换函数体不动签名，既有测试改断言前要先说明旧断言在保护什么。
 
+
+## 02:14 SF-05 交付 + 补丁授权：viewer 有能力但没数据喂
+
+- **SF-05 完成**（dev-artifact-01，`3e1e6d8a` 8 文件 +775/−241，已推 `b733e6fd` 之上）：viewer 新增「与上次对比」「历史趋势」两块（纯 SVG 无新依赖，四态齐备）；skill-registry 试跑面板补 `fetchMonitorRunDetail`（因为 POST 创建响应**不含** diff，diff 只在 `GET /v1/monitor/runs/<id>`、由 `monitor_engine_store.go:577 attachMonitorRunItemDiffs` 挂载）；删 driver_mode/strategy_id 死开关；前端停发 `strategies`/`ssh_hosts` 并把 400 翻成中文提示。证据：tsc 绿、13/13、`test:console` 699/699、`pnpm build` exit 0、反向实验（demo 加回 strategies → `lib/monitor-engine.test.mjs:121` 红）、ego-browser 四张截图（未入库）。
+- **三处纠正我**：①**`actions` 字段后端不存在**（全仓无 `json:"actions"`），后端只收 `skills[]`，action 由 frontmatter 经 `resolveSkillEntrypoint`/`resolveSkillExecMode` 派生——我此前派活要求"改发 `skill`+`actions`"是错的；②SF-10 两条性能项已由 `eb920009` 与 `monitor_metric_store.go:374-384` 覆盖；③CSV 保留 strategy 列（后端仍返回非空）。
+- **遗留缺口（已授权补丁）**：`components/inspection-center-panel.tsx:609-615` 未把 `diff`/`session`/趋势上下文传给 viewer → 真实详情页看不到 Diff/Trends，能力做了但没接线。要求：改该调用点 + `lib/monitor-engine.ts` 的 `MonitorRunItemRecord` 加 `diff?: MonitorRunDiff | null`，并**新增自动化测试**（此链路当前零覆盖、只靠截图），优先 demo 渲染断言「与上次对比」，否则把 props 映射抽成纯函数 `toViewerProps` 单测；反向实验去掉 `diff={it.diff}` 必须红。
