@@ -316,3 +316,4 @@
 - 派活要点：拥有 `mysql_runtime_dialect.go`、`gateway_mysql_runtime_test.go` 与承载 ON CONFLICT 的运行期 `.go`；禁碰 `components/`、`lib/`、`package.json`、`pnpm-lock.yaml`、`CHANGELOG.md`、`skills_builtin/**`。验收不是「改完了」而是三条：golden `gatewayMySQLRuntimeIssueOnConflict` 从 31 归 0，**或者**逐点给出「不可安全翻译」的理由并把冻结数降到可解释的新值（`DO NOTHING` 语义、动态拼接、跨语句事务这几种允许保留但必须逐条列名）；真机 mysql:8.4 跑通被改语句；反向实验证明守卫会红。
 
 - 03:45 第 29 轮：仅 integrator-gm 在跑 INT-13，正在改 24 个 .go（含 gateway_mysql_runtime_test.go），无后台 job，HEAD c850b63e 干净推送，无新任务可派。
+- 03:55 第 30 轮：integrator-gm 仍在跑 INT-13（已建 gatewayMySQLUpsertSites 抽象，21 文件在改）；发现两件事并已直接通知它——(a) 工作树多出 scratch 文件 backend/agent/internal/server/zz_peek_test.go，会往固定 /tmp/int13-render.txt 写文件，要求提交前删除或改造成真断言测试；(b) 外部 Devin 会话 03:46:55/03:48:44 并发推了 2d5e0492、d7c2bcf1，动过它清单里的 agent_resource_execution.go（该文件 ON CONFLICT 现为 0，即 31 处里可能已有 1 处被别人消掉）并同时在写 CHANGELOG，要求它先 fetch 再 rebase、报告里区分「起始数/自己改的/别人改的」，不得硬覆盖。origin/main=d7c2bcf1。
