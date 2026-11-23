@@ -573,7 +573,8 @@ K8S Agent 完全不可用时，通过另一个已授权且可访问同集群的 
    已存在的 Release 拒绝重建，已发布资产不可变。
 2. **CI 门禁**：发布前直接复用 `.github/workflows/ci.yml`（`workflow_call`），tag 不会绕过
    检查；prepare 解析出的完整 tag commit 通过 `source_commit` 传入每个 CI checkout，并与构建阶段使用同一 SHA，手工发布历史 tag 也不测试触发分支的最新代码。独立 push/PR 检查使用各自事件的 SHA。复用的门禁覆盖
-   main 的检查（Go/Web 测试、`backend/test` 契约测试）；secret scan 只在 branch push/PR 上运行——tag 和手工发布没有增量 commit 范围，
+   main 的检查（Go、Web 和 `backend/test` 契约测试分别运行，全部通过才发布）。Web job 的冻结安装保留 pnpm 依赖供应链策略；Go job 成功不代表 Web 安装或发布门禁通过。
+   secret scan 只在 branch push/PR 上运行——tag 和手工发布没有增量 commit 范围，
    全历史扫描会把历史上已存在的测试 fixture 当成泄漏，tag 指向的提交在合入 main 时已扫描。
 3. **构建**：`backend/scripts/build-cli.sh --all` 在固定 `go1.25.14` builder 身份下产出
    `doops-{darwin,linux}-{amd64,arm64}`、`doops-gateway-linux-amd64` 和 `checksums.txt`；

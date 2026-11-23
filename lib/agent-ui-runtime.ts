@@ -33,7 +33,7 @@ export function createDoopsAgentUiRuntime(options: {
   }
   return createAgentWorkbenchRuntime({
     sessionId: options.sessionId,
-    title: "AI 助手会话",
+    title: "DoAgent",
     agentLabel: "DoAgent",
     interactionMode: "acp",
     transport,
