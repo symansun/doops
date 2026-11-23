@@ -99,8 +99,8 @@ func (s *GatewayStore) CreateToken(req CreateTokenRequest) (CreatedToken, error)
 	}
 	issuedVia := strings.TrimSpace(req.IssuedVia)
 	_, err = s.db.Exec(`INSERT INTO tokens
-		(id, kind, user_id, name, prefix, hash, cluster, instance, expires_at, created_at, issued_via)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, kind, user_id, name, prefix, hash, cluster, instance, expires_at, revoked_at, created_at, issued_via)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)`,
 		id, string(req.Kind), req.UserID, name, prefix, string(hash),
 		strings.TrimSpace(req.Cluster), strings.TrimSpace(req.Instance), expires, formatTime(createdAt), issuedVia)
 	if err != nil {

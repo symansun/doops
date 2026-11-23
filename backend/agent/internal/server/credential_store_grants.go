@@ -168,8 +168,8 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 		return CredentialGrant{}, err
 	}
 	_, err = tx.Exec(`INSERT INTO credential_grants
-		(id, credential_id, grantee_id, scope_json, state, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		(id, credential_id, grantee_id, scope_json, state, revoked_at, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, '', ?, ?)
 		ON CONFLICT(credential_id, grantee_id, scope_json)
 		DO UPDATE SET
 			state = excluded.state,

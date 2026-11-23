@@ -75,8 +75,8 @@ func (s *GatewayStore) putCredentialVersion(req CredentialVersionPutRequest, aud
 		promotedAt = formatTime(*version.PromotedAt)
 	}
 	if _, err := tx.Exec(`INSERT INTO credential_versions
-		(id, credential_id, payload_ciphertext, payload_digest, state, created_by, created_at, promoted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, credential_id, payload_ciphertext, payload_digest, state, revoked_at, created_by, created_at, promoted_at)
+		VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)`,
 		version.ID, version.CredentialID, ciphertext, version.PayloadDigest, version.State,
 		version.CreatedBy, formatTime(version.CreatedAt), promotedAt); err != nil {
 		return CredentialVersion{}, err

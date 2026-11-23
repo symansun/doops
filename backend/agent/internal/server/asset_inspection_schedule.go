@@ -117,7 +117,7 @@ func inspectionFreeze(tx *sql.Tx, plan int64, due, now time.Time, mode string) (
 	if mode == "manual" {
 		deadline = now.Add(24 * time.Hour)
 	}
-	_, err = tx.Exec(`INSERT INTO inspection_items(run_id,asset_id,cluster,instance,cluster_id,check_id,opened,deadline,status,reason) SELECT ?,s.asset_id,s.cluster,s.instance,s.cluster_id,s.check_id,?,?,CASE WHEN ? OR `+inspectBlock+`<>'' THEN 'missing' ELSE 'pending' END,CASE WHEN ? THEN CASE WHEN NOT EXISTS(SELECT 1 FROM users u WHERE u.id=p.executor AND u.disabled=0) THEN 'executor_disabled' ELSE 'scheduler_missed_window' END ELSE `+inspectBlock+` END FROM inspection_scope s JOIN inspection_plans p ON p.id=s.plan_id WHERE p.id=?`, id, now.Unix(), deadline.Unix(), !deadline.After(now), !deadline.After(now), plan)
+	_, err = tx.Exec(`INSERT INTO inspection_items(run_id,asset_id,cluster,instance,cluster_id,check_id,opened,deadline,status,reason,repair) SELECT ?,s.asset_id,s.cluster,s.instance,s.cluster_id,s.check_id,?,?,CASE WHEN ? OR `+inspectBlock+`<>'' THEN 'missing' ELSE 'pending' END,CASE WHEN ? THEN CASE WHEN NOT EXISTS(SELECT 1 FROM users u WHERE u.id=p.executor AND u.disabled=0) THEN 'executor_disabled' ELSE 'scheduler_missed_window' END ELSE `+inspectBlock+` END,'' FROM inspection_scope s JOIN inspection_plans p ON p.id=s.plan_id WHERE p.id=?`, id, now.Unix(), deadline.Unix(), !deadline.After(now), !deadline.After(now), plan)
 	return id, err
 }
 func inspectionSchedule(tx *sql.Tx, auth TokenAuth, q inspectionRequest, now time.Time) (any, error) {

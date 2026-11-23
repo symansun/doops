@@ -413,8 +413,8 @@ func (s *GatewayStore) CreateEdgeEnrollment(cluster, instance string) (CreatedEd
 		return CreatedEdgeEnrollment{}, err
 	}
 	now := formatTime(time.Now().UTC())
-	if _, err := s.db.Exec(`INSERT INTO edge_enrollments (id, cluster, instance, prefix, hash, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`, id, cluster, instance, prefix, string(hash), now); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO edge_enrollments (id, cluster, instance, prefix, hash, revoked_at, created_at)
+		VALUES (?, ?, ?, ?, ?, '', ?)`, id, cluster, instance, prefix, string(hash), now); err != nil {
 		return CreatedEdgeEnrollment{}, err
 	}
 	return CreatedEdgeEnrollment{ID: id, Prefix: prefix, Plaintext: plain, Cluster: cluster, Instance: instance}, nil

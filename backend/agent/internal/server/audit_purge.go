@@ -72,11 +72,11 @@ DELETE FROM audit_events WHERE id IN (
 // agent:upgrade rows are never touched here: their evidence rules need every row
 // of one correlation to be visible, so they stay with deleteCompletedAuditSQL.
 const deleteAuditBatchSQL = `DELETE FROM audit_events WHERE id IN (
-	SELECT id FROM audit_events` + auditIndexHint + `
-	WHERE started_at < ?
+	SELECT id FROM audit_events INDEXED BY idx_audit_started_ms
+	WHERE started_at_ms < ?
 		AND action NOT IN ('agent:upgrade', 'audit:purge')
 		AND status NOT IN (` + activeAuditStatusSQL + `)
-	ORDER BY started_at, id
+	ORDER BY started_at_ms, id
 	LIMIT ?
 )`
 
@@ -196,8 +196,8 @@ func (p *auditPurgeSession) openReceipt() (int64, error) {
 	defer tx.Rollback()
 	nowUTC := time.Now().UTC()
 	res, err := tx.Exec(`INSERT INTO audit_events
-		(user_id, token_id, action, session, command_summary, status, started_at_ms, started_at)
-		VALUES (?, ?, 'audit:purge', 'audit-purge', ?, 'running', ?, ?)`,
+		(user_id, token_id, action, session, command_summary, status, error, tail, ended_at, scope_json, started_at_ms, started_at)
+		VALUES (?, ?, 'audit:purge', 'audit-purge', ?, 'running', '', '', '', '', ?, ?)`,
 		p.userID, p.tokenID, "audit:purge before="+p.receipt.Before, nowUTC.UnixMilli(), formatTime(nowUTC))
 	if err != nil {
 		return 0, err
@@ -222,7 +222,7 @@ func (p *auditPurgeSession) deleteBatch(before time.Time) (int64, bool, error) {
 		return 0, false, err
 	}
 	defer tx.Rollback()
-	deleted, complete, err := drainAuditTx(tx, cutoff)
+	deleted, complete, err := drainAuditTx(tx, cutoff, before.UTC().UnixMilli())
 	if err != nil {
 		return 0, false, err
 	}
@@ -230,7 +230,7 @@ func (p *auditPurgeSession) deleteBatch(before time.Time) (int64, bool, error) {
 		// Another writer may have added rows after this transaction took its
 		// read snapshot. Delete them here so the committed receipt covers
 		// every row this run removed.
-		extra, _, err := drainAuditTx(tx, cutoff)
+		extra, _, err := drainAuditTx(tx, cutoff, before.UTC().UnixMilli())
 		if err != nil {
 			return 0, false, err
 		}
@@ -254,12 +254,12 @@ func (p *auditPurgeSession) deleteBatch(before time.Time) (int64, bool, error) {
 // drainAuditTx applies the upgrade-evidence rule and then deletes one bounded
 // ordinary batch. It reports whether the ordinary batch was short, meaning no
 // ordinary row older than the cutoff is visible in this transaction.
-func drainAuditTx(tx *sql.Tx, cutoff string) (int64, bool, error) {
+func drainAuditTx(tx *sql.Tx, cutoff string, cutoffMs int64) (int64, bool, error) {
 	deleted, err := execRowsAffected(tx, deleteCompletedAuditSQL, cutoff)
 	if err != nil {
 		return 0, false, err
 	}
-	batch, err := execRowsAffected(tx, deleteAuditBatchSQL, cutoff, AuditPurgeBatchSize)
+	batch, err := execRowsAffected(tx, deleteAuditBatchSQL, cutoffMs, AuditPurgeBatchSize)
 	if err != nil {
 		return 0, false, err
 	}

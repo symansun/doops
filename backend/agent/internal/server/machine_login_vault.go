@@ -131,12 +131,12 @@ func (s *GatewayStore) storeMachineLogin(tx *sql.Tx, assetID, username, password
 		return err
 	}
 	now := formatTime(time.Now().UTC())
-	if _, err := tx.Exec(`INSERT INTO credentials(id,name,scope,owner_id,type,state,created_by,created_at,updated_at)
- VALUES(?,?,?,?, 'opaque','active',?,?,?)`, credID, credID, machineVaultScope, auth.UserID, auth.UserID, now, now); err != nil {
+	if _, err := tx.Exec(`INSERT INTO credentials(id,name,scope,owner_id,type,state,revoked_at,created_by,created_at,updated_at)
+ VALUES(?,?,?,?, 'opaque','active','',?,?,?)`, credID, credID, machineVaultScope, auth.UserID, auth.UserID, now, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO credential_versions(id,credential_id,payload_ciphertext,payload_digest,state,created_by,created_at,promoted_at)
- VALUES(?,?,?,?,'active',?,?,?)`, versionID, credID, ciphertext, digest, auth.UserID, now, now); err != nil {
+	if _, err := tx.Exec(`INSERT INTO credential_versions(id,credential_id,payload_ciphertext,payload_digest,state,revoked_at,created_by,created_at,promoted_at)
+ VALUES(?,?,?,?,'active','',?,?,?)`, versionID, credID, ciphertext, digest, auth.UserID, now, now); err != nil {
 		return err
 	}
 	// Foreign-key enforcement is connection-specific in SQLite. Require the asset

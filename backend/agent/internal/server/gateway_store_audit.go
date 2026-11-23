@@ -93,8 +93,8 @@ func (s *GatewayStore) StartAudit(event AuditEvent) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO audit_events
 		(user_id, token_id, cluster, instance, credential_id, credential_version_id,
 		 credential_grant_id, scope_json, resource_version, digest, correlation_id, action,
-		 session, command_summary, status, model, started_at_ms, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 session, command_summary, status, model, error, tail, ended_at, started_at_ms, started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', ?, ?)`,
 		event.UserID, event.TokenID, event.Cluster, event.Instance, event.CredentialID,
 		event.VersionID, event.GrantID, scopeJSON, event.ResourceVersion, event.Digest,
 		event.CorrelationID, string(event.Action),

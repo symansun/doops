@@ -76,8 +76,8 @@ func (s *GatewayStore) createCredential(req CredentialCreateRequest, auditID int
 	}
 	defer tx.Rollback()
 	_, err = tx.Exec(`INSERT INTO credentials
-		(id, name, scope, owner_id, type, state, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, name, scope, owner_id, type, state, revoked_at, created_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
 		resource.ID, resource.Name, resource.Scope, resource.OwnerID, resource.Type, resource.State,
 		resource.CreatedBy, formatTime(now), formatTime(now))
 	if err != nil {

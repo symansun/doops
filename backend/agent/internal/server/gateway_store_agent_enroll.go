@@ -65,8 +65,8 @@ func (s *GatewayStore) CreateAgentEnrollment(cluster, instance string) (CreatedA
 		return CreatedAgentEnrollment{}, err
 	}
 	now := formatTime(time.Now().UTC())
-	if _, err := s.db.Exec(`INSERT INTO agent_enrollments (id, cluster, instance, prefix, hash, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`, id, cluster, instance, prefix, string(hash), now); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO agent_enrollments (id, cluster, instance, prefix, hash, revoked_at, confirmed_at, created_at)
+		VALUES (?, ?, ?, ?, ?, '', '', ?)`, id, cluster, instance, prefix, string(hash), now); err != nil {
 		return CreatedAgentEnrollment{}, err
 	}
 	return CreatedAgentEnrollment{ID: id, Prefix: prefix, Plaintext: plain, Cluster: cluster, Instance: instance}, nil

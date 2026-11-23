@@ -80,8 +80,8 @@ func (s *GatewayStore) SeedBuiltinSystemMCPServers(ctx context.Context) error {
 		argsJSON, _ := json.Marshal(spec.Args)
 		_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO platform_mcp_servers (
 			slug, name, description, scope, transport, command, args_json, url, env_json, headers_json,
-			enabled, auto_start, tool_timeout_secs, tools_json, owner_id, owner_name, created_at_ms, updated_at_ms
-		) VALUES (?, ?, ?, 'system', ?, ?, ?, '', '{}', '{}', 1, 1, ?, '[]', 'system', 'system', ?, ?)`,
+			enabled, auto_start, tool_timeout_secs, tools_json, owner_id, owner_name, last_probe_error, created_at_ms, updated_at_ms
+		) VALUES (?, ?, ?, 'system', ?, ?, ?, '', '{}', '{}', 1, 1, ?, '[]', 'system', 'system', '', ?, ?)`,
 			spec.Slug, spec.Name, spec.Description, spec.Transport, spec.Command, string(argsJSON), spec.ToolTimeoutSecs, nowMs, nowMs,
 		)
 		if err != nil {
@@ -188,8 +188,8 @@ func (s *GatewayStore) UpsertPlatformMCPServer(ctx context.Context, rec platform
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO platform_mcp_servers (
 		slug, name, description, scope, transport, command, args_json, url, env_json, headers_json,
-		enabled, auto_start, tool_timeout_secs, tools_json, owner_id, owner_name, created_at_ms, updated_at_ms
-	) VALUES (?, ?, ?, 'custom', ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)
+		enabled, auto_start, tool_timeout_secs, tools_json, owner_id, owner_name, last_probe_error, created_at_ms, updated_at_ms
+	) VALUES (?, ?, ?, 'custom', ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, '', ?, ?)
 	ON CONFLICT(slug) DO UPDATE SET
 		name=excluded.name,
 		description=excluded.description,
