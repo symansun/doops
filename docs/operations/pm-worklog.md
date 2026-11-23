@@ -88,3 +88,11 @@
 - 工作区 14 项在改 = SF-05（前端 3+2 文件）与 SF-08（6 个 inspect.sh）半成品，符合预期。
 - 未派新活：SF-11 卡真实 target/凭据、INT-06 卡 SF-05、CHANGELOG 被前端会话占用；并发 5，有 1 个空位但无满足依赖的任务，按规则不空转派活。
 
+
+## 01:59 收口：SF-08 闭环 · INT-05 闭环并升出 INT-06
+
+- **SF-08 完成**（skill-dev-01，6 提交至 `2123551c`）：`verify.sh` 34/34（20 旧 + 14 robust）。修两个**真缺陷**：①非 UTF-8 命令输出被整段丢弃（6 个 `inspect.sh` 的 run 助手缺 `encoding="utf-8", errors="replace"`，反向实验 `mounts=0/unique=0` 数据全丢）；②256 KiB 只约束 JSON payload、Markdown 正文未裁剪（新增 `HARD_CAP_BYTES` 与 `emit_capped()`，反向实验 `longline` 404113 B 超限）。另：`PROXY_PORTS` 静态断言锁七端口、ssh-host SKILL.md 必含 `doops_ssh`/`managed_ssh_channel`、缺依赖一律 warning 不静默。它按 spec §4.1 拒绝我建议的 `status=degraded`（status 仅 pass|warning|critical）——spec 胜，接受。
+- **INT-05 完成**（integrator-ars）：B 方案（`git merge-file` 原子三方写回 `components/console-shell.tsx`，sha256 `a221004a…` 二次比对一致）一次成功未降级；`rescue/agent-resource-sync-v2` 9ae10d93 合并为 `15e75cf1`；MySQL 配套 `755e4bab`+`998e536c`。真机反向实验三组：`kubernetes_available NOT NULL` → `Error 1048`；`archived_at TEXT DEFAULT ('')` → `DEFAULT_GENERATED` 被 copier 判 generated；无默认 → `Error 1364`。关键取舍：`archived_at` 用 `VARCHAR(64)`（TEXT 的表达式默认会被离线 copier fail closed）；不全量重抓导出（会删 4 个生产遗留索引），只外科式补列 + `TestGatewayMySQLAgentStatusColumnsMatchExport` 列级守卫。
+- **INT-06 派 integrator-ars**：把列级守卫从 `agent_status` 推广到**全部导出表**，并加"NOT NULL 无默认且 INSERT 会省略该列"的守卫（从源码 AST 抽真实 INSERT 列，不手工维护清单）；跑出的真实漂移当轮修。反向实验三组必跑（删默认值/改名/删列）。理由：1048 与 1364 已在 `agent_status` 上各爆一次，其余 60 张表仍是 table 级盲区。
+- 在主工作区未覆盖项（继续挂 backlog）：INT-05 的前端浏览器实测、Gateway↔Agent 端到端、其余表列漂移（INT-06 接手）。
+
