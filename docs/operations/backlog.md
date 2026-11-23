@@ -19,6 +19,7 @@
 |---|---|---|---|
 | SF-11 | 真实 Gateway↔Agent 隧道端到端验收（SF-06 §5 红线5「未覆盖」） | 需要可用 target 与凭据 | 未派：需先确认有可连的 agent 与允许的 canary 凭据，不能编造证据 |
 | INT-06 | Console 侧展示 agent_resource 同步状态 | INT-05 | **已阻塞（02:38）**：`target-manifest-card.tsx` 已具备四态同步状态 + 五态资源徽章 + 八类资源（`manifestStatus()`/`resourceStates`/`resourceKinds`），由 `console-shell.tsx:64/:936` 渲染；剩余「TS 校验 + 浏览器实测」需真实 target，与 SF-11/D8 同条件 |
+| QA-05 | 发布前基线重跑：以当时 HEAD 重跑 QA-04 的 6 路分片（测试数会随 SF-18/SF-21 变化），作为对外基线 | SF-18、SF-21 落定 | QA-04 的基线 `0e749395` 已漂移（实测期间 main 到 `8001ce4f`）；重跑口径照旧：干净树 `git archive`、`-list` 集合比对、逐片墙钟与 PASS/FAIL/SKIP |
 | — | `CHANGELOG.md` [Unreleased] 统一补写（SF-04/SF-05/SF-09/INT-05 的用户可见变化） | SF-05/SF-09 完成 | 该文件被前端会话占用，由我或前端会话统一写，避免共享索引互扫 |
 
 ## 已完成
