@@ -1,7 +1,10 @@
 -- Gateway native MySQL 8.4 schema (reviewable, explicit conversion).
 --
--- Source of truth: the production SQLite export with 58 tables, 48 named
--- indexes, 12 triggers and 38 foreign keys. Every object is converted
+-- Source of truth: the production SQLite export with 61 tables, 50 named
+-- indexes, 12 triggers and 38 foreign keys. The first 58 tables come from the
+-- production dump; platform_skills, platform_mcp_servers and
+-- inspection_metric_points were re-captured from the runtime migration in
+-- gateway_store_schema.go (the dump predated them). Every object is converted
 -- explicitly; nothing is silently dropped. Conventions:
 --
 --   * InnoDB, utf8mb4 / utf8mb4_0900_bin everywhere, so text comparison is
@@ -12,7 +15,7 @@
 --     three: information_schema marks TEXT-with-expression-default and JSON
 --     columns in ways the copier's fail-closed checks refuse).
 --   * Primary key column order matches SQLite exactly. AUTO_INCREMENT is used
---     wherever SQLite used a rowid alias: the 9 AUTOINCREMENT tables plus
+--     wherever SQLite used a rowid alias: the 10 AUTOINCREMENT tables plus
 --     every table with a single bare INTEGER PRIMARY KEY, which SQLite
 --     aliases to rowid even without the keyword.
 --   * CHECK constraints are real in MySQL 8.0.16+ and are kept 1:1, except
@@ -175,6 +178,55 @@ CREATE TABLE platform_load_samples (
     queued_ops BIGINT NOT NULL DEFAULT 0,
     active_sessions BIGINT NOT NULL DEFAULT 0,
     resource_locks BIGINT NOT NULL DEFAULT 0
+) ENGINE=InnoDB;
+
+CREATE TABLE platform_mcp_servers (
+    slug VARCHAR(128) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    description TEXT NOT NULL,
+    scope VARCHAR(32) NOT NULL,
+    transport VARCHAR(32) NOT NULL,
+    command TEXT NOT NULL,
+    args_json TEXT NOT NULL,
+    url TEXT NOT NULL,
+    env_json TEXT NOT NULL,
+    headers_json TEXT NOT NULL,
+    enabled BIGINT NOT NULL DEFAULT 1,
+    auto_start BIGINT NOT NULL DEFAULT 1,
+    tool_timeout_secs BIGINT NOT NULL DEFAULT 120,
+    last_probe_status VARCHAR(32) NOT NULL,
+    last_probe_error TEXT NOT NULL,
+    last_probe_at_ms BIGINT NOT NULL,
+    last_latency_ms BIGINT NOT NULL,
+    tools_json TEXT NOT NULL,
+    owner_id VARCHAR(64) NOT NULL,
+    owner_name VARCHAR(128) NOT NULL,
+    created_at_ms BIGINT NOT NULL,
+    updated_at_ms BIGINT NOT NULL,
+    KEY idx_platform_mcp_scope (scope, enabled)
+) ENGINE=InnoDB;
+
+CREATE TABLE platform_skills (
+    slug VARCHAR(128) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    description TEXT NOT NULL,
+    scope VARCHAR(32) NOT NULL,
+    category VARCHAR(32) NOT NULL,
+    driver_mode VARCHAR(32) NOT NULL,
+    strategy_id VARCHAR(64) NOT NULL,
+    enabled BIGINT NOT NULL DEFAULT 1,
+    skill_md TEXT NOT NULL,
+    files_json TEXT NOT NULL,
+    sha256 VARCHAR(64) NOT NULL,
+    owner_id VARCHAR(64) NOT NULL,
+    owner_name VARCHAR(128) NOT NULL,
+    created_at_ms BIGINT NOT NULL,
+    updated_at_ms BIGINT NOT NULL,
+    last_run_at_ms BIGINT NOT NULL,
+    run_count BIGINT NOT NULL,
+    file_count BIGINT NOT NULL,
+    storage_dir TEXT NOT NULL,
+    KEY idx_platform_skills_scope (scope, category, enabled)
 ) ENGINE=InnoDB;
 
 CREATE TABLE proxy_routes (
@@ -595,6 +647,24 @@ CREATE TABLE inventory_import_attempts (
     batch_id VARCHAR(64) NOT NULL,
     receipt TEXT NOT NULL,
     KEY inventory_import_attempts_batch (batch_id, attempt_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE inspection_metric_points (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    collected_at_ms BIGINT NOT NULL,
+    run_id VARCHAR(64) NOT NULL,
+    schedule_id VARCHAR(64) NOT NULL,
+    cluster VARCHAR(64) NOT NULL,
+    instance VARCHAR(64) NOT NULL,
+    skill_slug VARCHAR(128) NOT NULL,
+    metric_key VARCHAR(191) NOT NULL,
+    metric_label VARCHAR(191) NOT NULL,
+    value DOUBLE NOT NULL DEFAULT 0,
+    unit VARCHAR(32) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    KEY idx_inspection_metric_points_series (skill_slug, metric_key, collected_at_ms),
+    KEY idx_inspection_metric_points_run (run_id),
+    KEY idx_inspection_metric_points_target (cluster, instance, collected_at_ms)
 ) ENGINE=InnoDB;
 
 CREATE TABLE inspection_plans (

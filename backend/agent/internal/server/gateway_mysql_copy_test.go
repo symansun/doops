@@ -177,6 +177,9 @@ func TestGatewayMySQLCopyFailsClosed(t *testing.T) {
 		want         string
 	}{
 		{"legacy_source_table", `CREATE TABLE archived_accounts(id INTEGER PRIMARY KEY)`, "", "mysql_copy_schema_mismatch"},
+		// A table the MySQL schema has never seen, carrying rows: the copier must
+		// fail closed on the unknown table instead of copying the rows it can map.
+		{"unknown_source_table_with_rows", `CREATE TABLE unknown_metric_points(id INTEGER PRIMARY KEY, value REAL); INSERT INTO unknown_metric_points VALUES (1, 2.5)`, "", "mysql_copy_schema_mismatch"},
 		{"extra_destination_table", "", `CREATE TABLE legacy(id BIGINT PRIMARY KEY)`, "mysql_copy_schema_mismatch"},
 		{"legacy_column", `ALTER TABLE a_child ADD COLUMN old_state TEXT`, "", "mysql_copy_schema_mismatch"},
 		{"blob_mapped_as_text", "", `ALTER TABLE a_child MODIFY payload LONGTEXT`, "mysql_copy_schema_mismatch"},

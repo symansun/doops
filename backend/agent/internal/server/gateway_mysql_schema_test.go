@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// gatewayMySQLTestTables is the expected set of 58 application tables from
+// gatewayMySQLTestTables is the expected set of 61 application tables from
 // the production export. Keeping the list literal makes an accidental drop of
 // a CREATE TABLE a hard test failure, not a silent omission. The schema must
 // contain exactly these tables — the copier refuses any extra table.
@@ -30,13 +30,15 @@ var gatewayMySQLTestTables = []string{
 	"credential_versions", "credentials", "detached_tasks", "edge_agent_status",
 	"edge_enrollments", "edge_route_revision", "edge_routes",
 	"gateway_secret_key_check", "git_repos", "grants",
-	"inspection_items", "inspection_plans", "inspection_receipts", "inspection_runs",
+	"inspection_items", "inspection_metric_points", "inspection_plans",
+	"inspection_receipts", "inspection_runs",
 	"inspection_scope", "inventory_business_deployments", "inventory_business_systems",
 	"inventory_import_attempts", "inventory_machine_login_accounts",
 	"inventory_machine_login_key", "inventory_machines", "inventory_node_links",
 	"machine_diagnostic_bindings", "machine_diagnostic_samples",
 	"monitor_resource_snapshots", "monitor_run_items", "monitor_runs",
-	"monitor_schedules", "platform_load_samples", "proxy_routes", "release_events",
+	"monitor_schedules", "platform_load_samples", "platform_mcp_servers",
+	"platform_skills", "proxy_routes", "release_events",
 	"release_tickets", "scheduler_issues", "scheduler_job_leases", "scheduler_jobs",
 	"tokens", "upgrade_operations", "users",
 }
@@ -86,7 +88,7 @@ func TestGatewayMySQLStatementsSplit(t *testing.T) {
 		}
 	}
 	if tables != len(gatewayMySQLTestTables) {
-		t.Fatalf("CREATE TABLE count = %d, want %d", tables, len(gatewayMySQLTestTables)-1)
+		t.Fatalf("CREATE TABLE count = %d, want %d", tables, len(gatewayMySQLTestTables))
 	}
 	if triggers != len(gatewayMySQLTestTriggers) {
 		t.Fatalf("CREATE TRIGGER count = %d, want %d", triggers, len(gatewayMySQLTestTriggers))
@@ -540,4 +542,102 @@ func TestGatewayMySQLInstallThenCopierAccepts(t *testing.T) {
 	if len(report.TableRows) != len(gatewayMySQLTestTables) {
 		t.Fatalf("copied %d tables, want %d", len(report.TableRows), len(gatewayMySQLTestTables))
 	}
+}
+
+// gatewayMySQLTestTransientTables are created and then renamed or dropped by
+// the same one-shot migration, so they never persist in a live store and must
+// not appear in the export.
+var gatewayMySQLTestTransientTables = []string{
+	"grants_v2", "credential_bundle_items_v2", "credential_verifications_v2",
+}
+
+// TestGatewayMySQLSchemaCoversRuntimeDDL closes the gap that let
+// platform_skills, platform_mcp_servers and inspection_metric_points drift:
+// TestGatewayMySQLTablesMatchExport only compares the frozen export with the
+// native DDL, so a table that exists only in the runtime migration is
+// invisible to both sides. This test derives the table set from the package's
+// schema sources and requires the export (and therefore the native DDL) to
+// contain every one of them, so a new runtime table fails here until the
+// export is re-captured and converted.
+func TestGatewayMySQLSchemaCoversRuntimeDDL(t *testing.T) {
+	runtime := gatewayMySQLTestRuntimeDDLTables(t)
+	if len(runtime) < 25 {
+		t.Fatalf("runtime schema scan found only %d tables; the scanner is broken", len(runtime))
+	}
+	transient := map[string]bool{}
+	for _, name := range gatewayMySQLTestTransientTables {
+		transient[name] = true
+	}
+	db := gatewayMySQLTestSQLiteExport(t)
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	export := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		export[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	ddl, _, err := gatewayMySQLExpectedObjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missingExport, missingDDL []string
+	for _, table := range runtime {
+		if transient[table] {
+			if export[table] {
+				t.Fatalf("transient migration table %q must not be part of the export", table)
+			}
+			continue
+		}
+		if !export[table] {
+			missingExport = append(missingExport, table)
+		}
+		if _, ok := ddl[table]; !ok {
+			missingDDL = append(missingDDL, table)
+		}
+	}
+	if len(missingExport) > 0 || len(missingDDL) > 0 {
+		t.Fatalf("runtime schema tables are missing from the frozen export or the native DDL: export=%v ddl=%v (re-capture %s and convert the tables)", missingExport, missingDDL, "testdata/gateway-sqlite-schema.sql")
+	}
+}
+
+// gatewayMySQLTestRuntimeDDLTables scans every non-test Go file in the server
+// package for CREATE TABLE statements, which is where the SQLite runtime
+// schema lives. It intentionally does not parse the SQL strings: it only needs
+// the set of table names to prove the export covers the runtime schema.
+func gatewayMySQLTestRuntimeDDLTables(t *testing.T) []string {
+	t.Helper()
+	re := regexp.MustCompile(`CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["']?([a-z0-9_]+)`)
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range re.FindAllStringSubmatch(string(data), -1) {
+			seen[match[1]] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }

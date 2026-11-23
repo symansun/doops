@@ -37,6 +37,8 @@ CREATE INDEX idx_monitor_runs_started ON monitor_runs(started_at_ms DESC, id DES
 CREATE INDEX idx_monitor_schedules_due ON monitor_schedules(enabled, next_run_at_ms);
 CREATE INDEX idx_monitor_snapshots_latest ON monitor_resource_snapshots(cluster, instance, asset_kind, asset_id, collected_at_ms DESC);
 CREATE INDEX idx_monitor_snapshots_time ON monitor_resource_snapshots(collected_at_ms DESC);
+CREATE INDEX idx_platform_mcp_scope ON platform_mcp_servers(scope, enabled);
+CREATE INDEX idx_platform_skills_scope ON platform_skills(scope, category, enabled);
 CREATE INDEX idx_proxy_routes_target ON proxy_routes(cluster, instance, enabled);
 CREATE INDEX idx_release_events_ticket ON release_events(release_number, id);
 CREATE INDEX idx_release_tickets_scope_status ON release_tickets(scope, status, number);
@@ -46,6 +48,9 @@ CREATE INDEX idx_tokens_kind ON tokens(kind);
 CREATE UNIQUE INDEX inspection_cycle ON inspection_runs(plan_id,due,(trigger_kind='manual'));
 CREATE INDEX inspection_schedule ON inspection_plans(active,next_due);
 CREATE INDEX inspection_work ON inspection_items(status,deadline,id);
+CREATE INDEX idx_inspection_metric_points_run ON inspection_metric_points(run_id);
+CREATE INDEX idx_inspection_metric_points_series ON inspection_metric_points(skill_slug, metric_key, collected_at_ms);
+CREATE INDEX idx_inspection_metric_points_target ON inspection_metric_points(cluster, instance, collected_at_ms);
 CREATE INDEX inventory_business_deployment_target
     ON inventory_business_deployments(cluster, instance, asset_id);
 CREATE INDEX inventory_import_attempts_batch ON inventory_import_attempts(batch_id, attempt_id);
@@ -373,6 +378,20 @@ CREATE TABLE inspection_items (
  status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', repair TEXT NOT NULL DEFAULT '', repair_by TEXT NOT NULL DEFAULT '', repair_at INTEGER NOT NULL DEFAULT 0,
  UNIQUE(run_id,asset_id,cluster,instance,check_id)
 ) STRICT;
+CREATE TABLE inspection_metric_points (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			collected_at_ms INTEGER NOT NULL DEFAULT 0,
+			run_id TEXT NOT NULL DEFAULT '',
+			schedule_id TEXT NOT NULL DEFAULT '',
+			cluster TEXT NOT NULL DEFAULT '',
+			instance TEXT NOT NULL DEFAULT '',
+			skill_slug TEXT NOT NULL DEFAULT '',
+			metric_key TEXT NOT NULL,
+			metric_label TEXT NOT NULL DEFAULT '',
+			value REAL NOT NULL DEFAULT 0,
+			unit TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT ''
+		);
 CREATE TABLE inspection_plans (
  id INTEGER PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL, executor TEXT NOT NULL REFERENCES users(id),
  timezone TEXT NOT NULL, weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 6), clock TEXT NOT NULL,
@@ -567,6 +586,51 @@ CREATE TABLE platform_load_samples (
 			queued_ops INTEGER NOT NULL DEFAULT 0,
 			active_sessions INTEGER NOT NULL DEFAULT 0,
 			resource_locks INTEGER NOT NULL DEFAULT 0
+		);
+CREATE TABLE platform_mcp_servers (
+			slug TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			scope TEXT NOT NULL DEFAULT 'custom',
+			transport TEXT NOT NULL DEFAULT 'stdio',
+			command TEXT NOT NULL DEFAULT '',
+			args_json TEXT NOT NULL DEFAULT '[]',
+			url TEXT NOT NULL DEFAULT '',
+			env_json TEXT NOT NULL DEFAULT '{}',
+			headers_json TEXT NOT NULL DEFAULT '{}',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			auto_start INTEGER NOT NULL DEFAULT 1,
+			tool_timeout_secs INTEGER NOT NULL DEFAULT 120,
+			last_probe_status TEXT NOT NULL DEFAULT '',
+			last_probe_error TEXT NOT NULL DEFAULT '',
+			last_probe_at_ms INTEGER NOT NULL DEFAULT 0,
+			last_latency_ms INTEGER NOT NULL DEFAULT 0,
+			tools_json TEXT NOT NULL DEFAULT '[]',
+			owner_id TEXT NOT NULL DEFAULT '',
+			owner_name TEXT NOT NULL DEFAULT '',
+			created_at_ms INTEGER NOT NULL DEFAULT 0,
+			updated_at_ms INTEGER NOT NULL DEFAULT 0
+		);
+CREATE TABLE platform_skills (
+			slug TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			scope TEXT NOT NULL DEFAULT 'custom',
+			category TEXT NOT NULL DEFAULT 'inspection',
+			driver_mode TEXT NOT NULL DEFAULT 'agent_prompt',
+			strategy_id TEXT NOT NULL DEFAULT '',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			skill_md TEXT NOT NULL,
+			files_json TEXT NOT NULL DEFAULT '[]',
+			sha256 TEXT NOT NULL DEFAULT '',
+			owner_id TEXT NOT NULL DEFAULT '',
+			owner_name TEXT NOT NULL DEFAULT '',
+			created_at_ms INTEGER NOT NULL DEFAULT 0,
+			updated_at_ms INTEGER NOT NULL DEFAULT 0,
+			last_run_at_ms INTEGER NOT NULL DEFAULT 0,
+			run_count INTEGER NOT NULL DEFAULT 0,
+			file_count INTEGER NOT NULL DEFAULT 0,
+			storage_dir TEXT NOT NULL DEFAULT ''
 		);
 CREATE TABLE proxy_routes (
 			id TEXT PRIMARY KEY,
