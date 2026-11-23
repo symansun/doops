@@ -10,7 +10,7 @@
 | SF-01 | 内置巡检 Skill 包 embed/registry 接线、`Entrypoint` 字段、落盘复用、恢复可编译 | dev-sf-01 | `backend/agent/internal/server/*.go`、`backend/docs/design/SKILL_FIRST_INSPECTION_SPEC.md` | 2026-11-24 00:39 | 运行中 |
 | SB-01 | 8 个内置巡检 Skill 包实战化：docker 真跑、协议断言、同盘去重夹具、补缺脚本包、`_verify/verify.sh` | skill-dev-01 | `backend/agent/internal/server/skills_builtin/**` | 2026-11-24 00:41 | 运行中 |
 | SF-04 | `inspection_metric_points` 通用时序表 + 标准键桥接快照 + `GET /v1/monitor/metrics` + 跨次 diff | dev-artifact-01 | `monitor_metric*.go`、`monitor_engine_{store,types,http}.go`、`gateway_store_schema.go` | 2026-11-24 01:05 | 运行中 |
-| INT-01 | Gateway MySQL 迁移合入 main + golden 断言刷新 + docker 真迁移 | integrator-gm | `gateway_mysql_*.go`、`mysql_runtime_dialect.go`、`backend/scripts/gateway-sqlite-*.py`、`GATEWAY_MYSQL_MIGRATION_PLAN.md` | 2026-11-24 00:49 | merge 已落 801a73e6，测试收尾中 |
+| INT-01 | Gateway MySQL 迁移合入 main + golden 断言刷新 + docker 真迁移 | integrator-gm | `gateway_mysql_*.go`、`mysql_runtime_dialect.go`、`backend/scripts/gateway-sqlite-*.py`、`GATEWAY_MYSQL_MIGRATION_PLAN.md` | 2026-11-24 00:49 | 已完成 801a73e6（证据提交 fbc27101） |
 | INT-02 | Agent 资源同步移植（**隔离 /tmp 目录**解冲突，产出 `rescue/agent-resource-sync-v2`） | integrator-ars | 隔离目录，不动主工作区 | 2026-11-24 00:49 | 运行中 |
 | SF-02 | 移除 `builtin_strategy`/`strategy_id` 双轨（含 QA 缺陷 D9） | dev-sf-01 | `monitor_engine_*.go`、`skills_registry.go`、`skills_builtin_packages.go` | 2026-11-24 00:50 | 运行中 |
 | SF-07 | 修 QA-01 缺陷 D1/D2/D3/D4/D5/D7/D8/D10（skills_builtin 内） | skill-dev-01 | `backend/agent/internal/server/skills_builtin/**`（fixtures 需移出嵌入目录） | 2026-11-24 00:57 | 随 SB-01 一并做 |
