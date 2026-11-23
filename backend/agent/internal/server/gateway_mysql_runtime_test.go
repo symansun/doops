@@ -38,11 +38,11 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 	}
 
 	want := map[gatewayMySQLRuntimeIssueCode]int{
-		gatewayMySQLIssueNumberedParameter:   3,
-		gatewayMySQLIssueOnConflict:          29,
+		gatewayMySQLIssueNumberedParameter:   4,
+		gatewayMySQLIssueOnConflict:          31,
 		gatewayMySQLIssueInsertOrIgnore:      4,
 		gatewayMySQLIssueUpdateOrIgnore:      1,
-		gatewayMySQLIssueJSONEach:            3,
+		gatewayMySQLIssueJSONEach:            5,
 		gatewayMySQLIssueJSONAggregate:       2,
 		gatewayMySQLIssueAggregateFilter:     1,
 		gatewayMySQLIssueJulianDay:           3,
@@ -50,13 +50,13 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 		gatewayMySQLIssueMaterializedCTE:     1,
 		gatewayMySQLIssueSQLiteConcat:        3,
 		gatewayMySQLIssueNullSafeParameter:   1,
-		gatewayMySQLIssueSQLiteIntrospection: 6,
+		gatewayMySQLIssueSQLiteIntrospection: 8,
 		gatewayMySQLIssueSQLiteExplainPlan:   13,
 		gatewayMySQLIssueCreateIndexIfAbsent: 29,
 		gatewayMySQLIssueDropIndexIfAbsent:   2,
 		gatewayMySQLIssueAutoIncrement:       8,
 		gatewayMySQLIssuePartialIndex:        1,
-		gatewayMySQLIssueReservedUse:         11,
+		gatewayMySQLIssueReservedUse:         12,
 	}
 	if len(counts) != len(want) {
 		t.Fatalf("MySQL runtime audit found issue categories %v, want %v", counts, want)

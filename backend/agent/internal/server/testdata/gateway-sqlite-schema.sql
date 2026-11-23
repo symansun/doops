@@ -87,7 +87,7 @@ CREATE TABLE agent_status (
 			status TEXT NOT NULL DEFAULT 'offline',
 			connected_at TEXT NOT NULL DEFAULT '',
 			last_seen TEXT NOT NULL DEFAULT '',
-			updated_at TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, archived_at TEXT NOT NULL DEFAULT '', archived_by TEXT NOT NULL DEFAULT '', release_commit TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, archived_at TEXT NOT NULL DEFAULT '', archived_by TEXT NOT NULL DEFAULT '', release_commit TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT '', kubernetes_available INTEGER,
 			PRIMARY KEY(cluster, instance)
 		);
 CREATE TABLE asset_coverage_baselines (
