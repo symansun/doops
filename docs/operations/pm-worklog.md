@@ -279,3 +279,12 @@
 - **唯一真风险 → INT-11**（03:12 派 integrator-gm）：`gateway_mysql_columns_test.go:55` 对 6 处 `INSERT ... VALUES(...)`（无列清单）只 `t.Logf` 不计数不设限，新增一条就能让对应表的 NOT NULL 守卫失效而 CI 全绿。我给它三条硬要求：列顺序断言（SQLite 导出 vs MySQL DDL 逐列相同——这才是无列清单 INSERT 的正确性前提，位置错位会静默写错列）、占位符计数校验（跳过字符串字面量里的 `?`）、冻结「表→处数」清单防新增（不按行号，行号会漂）；三组反向实验分别对应删占位符、对调 DDL 列序、新增非法与合法 INSERT，验完全部还原。
 - 顺带确认：QA-03 提交时 main 已在 `7ebb8a2b`，但它实测的 Go/脚本/夹具逐字节未变（`git diff --name-only c1b62473..7ebb8a2b` 只有 `docs/`、`lib/`、`package.json`），结论不受漂移影响。
 - 在跑 2：qa-skill-01（QA-05 基线重跑）、integrator-gm（INT-11）。`origin/main = dd80ce53`，我的台账随后跟上。
+
+## 03:15 第 23 轮巡检：INT-11 收口（无列清单 INSERT 的三重守卫），并补上它够不到的文档一行
+
+- **INT-11 完成**（`458e1d68`，2 文件 +225/−3，新文件 `gateway_mysql_insert_order_test.go` 220 行）：三重守卫——① 冻结导出的 `pragma_table_info` 物理列序 vs MySQL DDL 声明列序逐列相同；② `VALUES(...)` 值数 = 列数（解析跳过引号内逗号/括号，`cluster_profiles.go:144` 的字面 `''`/`1` 按真值算）；③ `gatewayMySQLUnlistedInsertSites` 按「表→处数」冻结（`inspection_receipts:2`/`inspection_scope:1`/`inventory_cluster_profiles:3`），新增表或新增处即红。**不按 file:line 冻结**这点是我派活时的关键约束，行号漂移会让守卫变成噪音。
+- 四组反向实验的分辨力都对路：删一个占位符 → `inserts 5 values ... which has 6 columns`；对调 DDL 的 `environment`/`contact` → `column 3 is "environment" ... and "contact"`；新加 7 个占位符 → 元数红；复制一份**合法**的第 4 处 `cluster_profiles` 语句 → `measured map[...:4], frozen map[...:3]`（这条最能说明冻结清单不是摆设）。还原后 0.923s 绿。真机 mysql:8.4（端口 13308）`-run GatewayMySQL` ok 9.867s，新守卫 0.14s；干净树 build rc=0、vet 0、`gofmt -l` 无输出。
+- 我独立复核：`458e1d68` 在 `origin/main`，`git show --stat` 只有那两个测试文件；单独跑新守卫 `ok 1.100s`。生产代码、DDL、导出零改动，符合边界。
+- **它够不到的一行我补了**（它只被允许改测试文件）：`backend/docs/GATEWAY_MYSQL_MIGRATION_PLAN.md` 原第 73 条把无列清单 INSERT 描述成「logged as skipped」，已改为指向 `TestGatewayMySQLInsertWithoutColumnListOrdersColumns` 与三个前提，并说明 `dosql_copy.go` 的动态 SQL 天生带列清单、不在范围。文档与实现不同批改齐才算闭环（closure-standard 第 1 条）。
+- **新立项 INT-12（低优先）**：6 条生产 INSERT 补显式列清单后可把守卫退化为「禁止无列清单」；现在不急于做，因为三重守卫已经把安全前提断言住了，先补会动生产代码并要重跑真机。
+- 在跑 1：qa-skill-01（QA-05，约 03:35 到点）。`origin/main` 本轮推进到我的文档提交。
