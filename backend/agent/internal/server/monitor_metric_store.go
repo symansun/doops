@@ -373,6 +373,15 @@ func bridgeInspectionMetricSnapshot(ctx context.Context, tx *sql.Tx, run monitor
 
 // ListInspectionMetricSeries returns the trend points for one skill on one
 // target, grouped by metric_key and ordered oldest to newest.
+//
+// The scan is served by idx_inspection_metric_points_target (cluster, instance,
+// collected_at_ms) and skill_slug stays a residual predicate: putting it into
+// the index prefix would need a fourth column on that index, which is a schema
+// change this task rules out (SF-04 观察项 D2). monitorMetricSeriesMaxRows
+// bounds the work and counts *matching* rows — SQLite applies LIMIT after the
+// WHERE filter — so a target with a long history cannot truncate another
+// target's series or silently drop rows of its own; the only price is extra
+// index probes when two targets share a skill on one host.
 func (s *GatewayStore) ListInspectionMetricSeries(ctx context.Context, cluster, instance, skill string, fromMs, toMs int64) ([]monitorMetricSeries, error) {
 	rows, err := s.readDB().QueryContext(ctx, `SELECT metric_key, metric_label, unit, collected_at_ms, value, status, run_id
 		FROM inspection_metric_points
@@ -455,6 +464,100 @@ type monitorRunDiff struct {
 	ChangedChecks  []monitorRunCheckChange   `json:"changed_checks"`
 }
 
+// monitorRunDiffPrevRunSQL selects the newest terminal run that holds an item
+// for one (cluster, instance, strategy) series. The scan is streamed and stops
+// at the first started_at_ms group, so it never sorts the candidate rows.
+const monitorRunDiffPrevRunSQL = `SELECT r.id, r.started_at_ms, r.status
+	FROM monitor_runs r
+	WHERE r.id<>? AND r.status<>'' AND r.status<>'running' AND r.started_at_ms<?
+		AND EXISTS (SELECT 1 FROM monitor_run_items i
+			WHERE i.run_id=r.id AND i.cluster=? AND i.instance=? AND i.strategy=?)
+	ORDER BY r.started_at_ms DESC`
+
+// monitorRunDiffPrevItemSQL returns the query that picks the last persisted
+// item of the winning run(s). Ties on run started_at_ms are resolved by item
+// id, exactly like the old join ordered (run started_at_ms DESC, item id DESC).
+func monitorRunDiffPrevItemSQL(runCount int) string {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", runCount), ",")
+	return `SELECT i.run_id, i.id, i.checks_json, i.artifact_dir, i.artifact_json
+		FROM monitor_run_items i
+		WHERE i.cluster=? AND i.instance=? AND i.strategy=? AND i.run_id IN (` + placeholders + `)
+		ORDER BY i.id DESC LIMIT 1`
+}
+
+type monitorRunDiffPrevious struct {
+	RunID        string
+	AtMs         int64
+	Status       string
+	ChecksJSON   string
+	ArtifactDir  string
+	ArtifactJSON string
+}
+
+// findPreviousMonitorRunItem returns the item the diff compares against.
+//
+// The comparison order is (run.started_at_ms DESC, item.id DESC): the newest
+// terminal run of the series wins and inside it the last persisted item. Item
+// started_at_ms is not interchangeable with run started_at_ms — an item starts
+// when its target is dispatched, after the run started
+// (monitor_engine_runner.go newSkillRunItem / newCommandRunItem) — so ordering
+// by the item column would pick another run whenever two runs overlap. The old
+// join therefore had to sort every candidate row (SF-04 观察项 D1:
+// USE TEMP B-TREE FOR ORDER BY). Selecting the run through
+// idx_monitor_runs_started (started_at_ms DESC, id DESC) and the item through
+// idx_monitor_run_items_series keeps the same answer without the temp B-tree.
+func (s *GatewayStore) findPreviousMonitorRunItem(ctx context.Context, run monitorRunRecord, item monitorRunItemRecord) (monitorRunDiffPrevious, bool) {
+	rows, err := s.readDB().QueryContext(ctx, monitorRunDiffPrevRunSQL,
+		run.ID, run.StartedAtMs, item.Cluster, item.Instance, item.Strategy)
+	if err != nil {
+		return monitorRunDiffPrevious{}, false
+	}
+	var (
+		topStart int64 = -1
+		runIDs   []string
+		statuses = map[string]string{}
+	)
+	for rows.Next() {
+		var id, status string
+		var startedAtMs int64
+		if err := rows.Scan(&id, &startedAtMs, &status); err != nil {
+			rows.Close()
+			return monitorRunDiffPrevious{}, false
+		}
+		if topStart < 0 {
+			topStart = startedAtMs
+		}
+		if startedAtMs != topStart {
+			break
+		}
+		runIDs = append(runIDs, id)
+		statuses[id] = status
+	}
+	rows.Close()
+	if len(runIDs) == 0 {
+		return monitorRunDiffPrevious{}, false
+	}
+	args := make([]any, 0, 3+len(runIDs))
+	args = append(args, item.Cluster, item.Instance, item.Strategy)
+	for _, id := range runIDs {
+		args = append(args, id)
+	}
+	var (
+		prev   monitorRunDiffPrevious
+		itemID int64
+	)
+	if err := s.readDB().QueryRowContext(ctx, monitorRunDiffPrevItemSQL(len(runIDs)), args...).
+		Scan(&prev.RunID, &itemID, &prev.ChecksJSON, &prev.ArtifactDir, &prev.ArtifactJSON); err != nil {
+		return monitorRunDiffPrevious{}, false
+	}
+	prev.AtMs = topStart
+	prev.Status = statuses[prev.RunID]
+	if prev.Status == "" {
+		return monitorRunDiffPrevious{}, false
+	}
+	return prev, true
+}
+
 // attachMonitorRunItemDiffs fills item.Diff by comparing each item against the
 // previous terminal run of the same (cluster, instance, strategy) series.
 func (s *GatewayStore) attachMonitorRunItemDiffs(ctx context.Context, run monitorRunRecord, items []monitorRunItemRecord) {
@@ -464,45 +567,36 @@ func (s *GatewayStore) attachMonitorRunItemDiffs(ctx context.Context, run monito
 }
 
 func (s *GatewayStore) buildMonitorRunItemDiff(ctx context.Context, run monitorRunRecord, item monitorRunItemRecord) *monitorRunDiff {
-	var prevRunID, prevStatus, prevChecksRaw, prevArtifactDir, prevArtifactJSONRaw string
-	var prevAtMs int64
-	var prevItemID int64
 	if run.StartedAtMs <= 0 {
 		return nil
 	}
-	err := s.readDB().QueryRowContext(ctx, `SELECT r.id, r.started_at_ms, r.status, i.id, i.checks_json, i.artifact_dir, i.artifact_json
-		FROM monitor_run_items i JOIN monitor_runs r ON r.id=i.run_id
-		WHERE i.cluster=? AND i.instance=? AND i.strategy=? AND r.id<>? AND r.status<>'' AND r.status<>'running' AND r.started_at_ms<?
-		ORDER BY r.started_at_ms DESC, i.id DESC LIMIT 1`,
-		item.Cluster, item.Instance, item.Strategy, run.ID, run.StartedAtMs,
-	).Scan(&prevRunID, &prevAtMs, &prevStatus, &prevItemID, &prevChecksRaw, &prevArtifactDir, &prevArtifactJSONRaw)
-	if err != nil {
+	prev, ok := s.findPreviousMonitorRunItem(ctx, run, item)
+	if !ok {
 		return nil
 	}
-	_ = prevItemID
 	diff := &monitorRunDiff{
-		PreviousRunID:  prevRunID,
-		PreviousAtMs:   prevAtMs,
-		PreviousStatus: prevStatus,
-		StatusChanged:  run.Status != "" && prevStatus != run.Status,
+		PreviousRunID:  prev.RunID,
+		PreviousAtMs:   prev.AtMs,
+		PreviousStatus: prev.Status,
+		StatusChanged:  run.Status != "" && prev.Status != run.Status,
 		MetricDeltas:   []monitorMetricDelta{},
 		AddedChecks:    []api.MonitorInspectCheck{},
 		ResolvedChecks: []api.MonitorInspectCheck{},
 		ChangedChecks:  []monitorRunCheckChange{},
 	}
 
-	prevJSON := []byte(prevArtifactJSONRaw)
-	if prevArtifactDir != "" {
-		if content, ok := s.readMonitorArtifactFiles(prevArtifactDir); ok && len(content.JSON) > 0 {
+	prevJSON := []byte(prev.ArtifactJSON)
+	if prev.ArtifactDir != "" {
+		if content, ok := s.readMonitorArtifactFiles(prev.ArtifactDir); ok && len(content.JSON) > 0 {
 			prevJSON = content.JSON
 		}
 	}
-	prevPoints, _ := extractMonitorArtifactMetrics(json.RawMessage(prevJSON), prevStatus)
+	prevPoints, _ := extractMonitorArtifactMetrics(json.RawMessage(prevJSON), prev.Status)
 	currPoints, _ := extractMonitorArtifactMetrics(item.ArtifactJSON, item.Status)
 	diff.MetricDeltas = buildMonitorMetricDeltas(prevPoints, currPoints)
 
 	prevChecks := []api.MonitorInspectCheck{}
-	_ = json.Unmarshal([]byte(prevChecksRaw), &prevChecks)
+	_ = json.Unmarshal([]byte(prev.ChecksJSON), &prevChecks)
 	diff.AddedChecks, diff.ResolvedChecks, diff.ChangedChecks = buildMonitorCheckDiff(prevChecks, item.Checks)
 	return diff
 }

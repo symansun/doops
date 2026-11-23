@@ -454,3 +454,159 @@ func TestInspectionMetricSchemaUpgrade(t *testing.T) {
 		t.Fatalf("metric write after upgrade = %v", values)
 	}
 }
+
+// SF-12: the cross-run diff used to sort every candidate row of a series
+// (SF-04 观察项 D1). The run is now selected through idx_monitor_runs_started;
+// this pins that plan so a future rewrite cannot reintroduce the temp B-tree.
+func explainMonitorPlan(t *testing.T, store *GatewayStore, query string, args ...any) string {
+	t.Helper()
+	rows, err := store.db.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+	lines := []string{}
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatalf("explain scan: %v", err)
+		}
+		lines = append(lines, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("explain rows: %v", err)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func TestMonitorRunDiffQueryPlanAvoidsTempBTree(t *testing.T) {
+	store, _ := openMetricTestStore(t)
+	series := "skill:" + metricTestSkillSlug
+	runPlan := explainMonitorPlan(t, store, monitorRunDiffPrevRunSQL,
+		"run_current", int64(1000), "local", "host-a", series)
+	if strings.Contains(runPlan, "TEMP B-TREE") {
+		t.Fatalf("diff run query still sorts candidates:\n%s", runPlan)
+	}
+	if !strings.Contains(runPlan, "idx_monitor_runs_started") {
+		t.Fatalf("diff run query does not read idx_monitor_runs_started:\n%s", runPlan)
+	}
+	itemPlan := explainMonitorPlan(t, store, monitorRunDiffPrevItemSQL(2),
+		"local", "host-a", series, "run_prev_a", "run_prev_b")
+	if strings.Contains(itemPlan, "TEMP B-TREE") {
+		t.Fatalf("diff item query still sorts candidates:\n%s", itemPlan)
+	}
+}
+
+func persistMetricTestSeriesRun(t *testing.T, store *GatewayStore, runID string, runStartMs, itemStartMs int64, artifactJSON, status string) (monitorRunRecord, monitorRunItemRecord) {
+	t.Helper()
+	ctx := context.Background()
+	run := monitorRunRecord{
+		ID:           runID,
+		TriggerKind:  "manual",
+		TriggeredBy:  "metric-admin",
+		Status:       "running",
+		StartedAtMs:  runStartMs,
+		FinishedAtMs: runStartMs + 1000,
+	}
+	if err := store.CreateMonitorRun(ctx, run); err != nil {
+		t.Fatalf("create run %s: %v", runID, err)
+	}
+	item := monitorRunItemRecord{
+		RunID:           runID,
+		Cluster:         "local",
+		Instance:        "host-a",
+		AssetID:         metricTestSkillSlug,
+		AssetName:       "web host-a",
+		AssetKind:       "skill",
+		Strategy:        "skill:" + metricTestSkillSlug,
+		CollectorMethod: "skill",
+		StartedAtMs:     itemStartMs,
+		FinishedAtMs:    itemStartMs + 900,
+		Status:          status,
+		ArtifactJSON:    json.RawMessage(artifactJSON),
+		Evidence:        map[string]any{"skill_slug": metricTestSkillSlug},
+	}
+	run.Status = "success"
+	run.FinishedAtMs = itemStartMs + 1000
+	if _, err := store.PersistMonitorRunResults(ctx, run, []monitorRunItemRecord{item}, nil, nil); err != nil {
+		t.Fatalf("persist run %s: %v", runID, err)
+	}
+	return run, item
+}
+
+// TestMonitorRunItemDiffKeepsRunOrderWhenItemsOverlap proves the diff orders by
+// the run clock, not the item clock: run B starts after run A but A dispatches
+// its item late, so item-level started_at_ms would pick A as the predecessor.
+func TestMonitorRunItemDiffKeepsRunOrderWhenItemsOverlap(t *testing.T) {
+	store, _ := openMetricTestStore(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-2 * time.Hour).UnixMilli()
+	persistMetricTestSeriesRun(t, store, "run_overlap_a", at, at+50_000,
+		`{"metrics":[{"key":"cpu_percent","value":10,"unit":"%"}]}`, "pass")
+	persistMetricTestSeriesRun(t, store, "run_overlap_b", at+60_000, at+61_000,
+		`{"metrics":[{"key":"cpu_percent","value":20,"unit":"%"}]}`, "pass")
+	runC, itemC := persistMetricTestSeriesRun(t, store, "run_overlap_c", at+120_000, at+120_500,
+		`{"metrics":[{"key":"cpu_percent","value":30,"unit":"%"}]}`, "pass")
+
+	diff := store.buildMonitorRunItemDiff(ctx, runC, itemC)
+	if diff == nil {
+		t.Fatal("diff = nil, want comparison against run_overlap_b")
+	}
+	if diff.PreviousRunID != "run_overlap_b" {
+		t.Fatalf("previous run = %s, want run_overlap_b (run order, not item order)", diff.PreviousRunID)
+	}
+	if diff.PreviousAtMs != at+60_000 {
+		t.Fatalf("previous at = %d, want %d", diff.PreviousAtMs, at+60_000)
+	}
+	if len(diff.MetricDeltas) != 1 || diff.MetricDeltas[0].Key != "cpu_percent" {
+		t.Fatalf("metric deltas = %+v, want one cpu_percent delta", diff.MetricDeltas)
+	}
+	if delta := diff.MetricDeltas[0]; delta.Previous != 20 || delta.Current != 30 || delta.Delta != 10 {
+		t.Fatalf("cpu delta = %+v, want previous=20 current=30 delta=10", delta)
+	}
+}
+
+// SF-12 D2: skill_slug stays a residual predicate behind
+// idx_inspection_metric_points_target, and the bounded scan must still return
+// exactly the requested target's points (no cross-target leakage or truncation).
+func TestInspectionMetricSeriesStaysScopedToTarget(t *testing.T) {
+	store, _ := openMetricTestStore(t)
+	ctx := context.Background()
+	base := time.Now().UTC().Add(-time.Hour).UnixMilli()
+	targets := [][2]string{{"local", "host-a"}, {"local", "host-b"}, {"prod", "host-c"}}
+	const pointsPerTarget = 40
+	insert := func(target [2]string, skill, key string, atMs int64, value float64) {
+		t.Helper()
+		if _, err := store.db.Exec("INSERT INTO inspection_metric_points(collected_at_ms, run_id, cluster, instance, skill_slug, metric_key, metric_label, value, unit, status) "+
+			"VALUES(?,?,?,?,?,?,?,?,?,?)",
+			atMs, "run_"+target[1], target[0], target[1], skill, key, "CPU 使用率", value, "%", "pass"); err != nil {
+			t.Fatalf("seed metric point: %v", err)
+		}
+	}
+	for ti, target := range targets {
+		for p := 0; p < pointsPerTarget; p++ {
+			insert(target, metricTestSkillSlug, "cpu_percent", base+int64(p)*1000, float64(ti*1000+p))
+		}
+		// Another skill on the same target must not leak into the series.
+		insert(target, "other-skill", "cpu_percent", base, 999)
+	}
+	for ti, target := range targets {
+		series, err := store.ListInspectionMetricSeries(ctx, target[0], target[1], metricTestSkillSlug, base-1, base+pointsPerTarget*1000)
+		if err != nil {
+			t.Fatalf("list series %s/%s: %v", target[0], target[1], err)
+		}
+		if len(series) != 1 || series[0].Key != "cpu_percent" {
+			t.Fatalf("target %s/%s series = %+v, want one cpu_percent series", target[0], target[1], series)
+		}
+		if got := len(series[0].Points); got != pointsPerTarget {
+			t.Fatalf("target %s/%s points = %d, want %d", target[0], target[1], got, pointsPerTarget)
+		}
+		for p, point := range series[0].Points {
+			want := float64(ti*1000 + p)
+			if point.Value != want {
+				t.Fatalf("target %s/%s point %d value = %v, want %v", target[0], target[1], p, point.Value, want)
+			}
+		}
+	}
+}
