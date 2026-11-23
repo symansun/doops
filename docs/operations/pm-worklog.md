@@ -41,3 +41,8 @@
 - 保全：`rescue/agent-resource-sync` d5250a6d、`rescue/gateway-mysql` d32abbfd、`rescue/cnb-ci-split` f616beee（后删）、`rescue/dedupe-web-tests` 2cca31bf。
 - 清理：10 条实存 worktree 全部 `git worktree remove --force`，其余 `git worktree prune`；`.worktrees/` 目录删除；18 个已合入分支 `git branch -D`。现存 worktree 仅主工作区，分支 5 条（main + 4 rescue）。
 - 防误提交：把 `outputs/`、`.agentcloud/`、`Agentfile`、`.agentfile-import.lock`（会话运行时产物，含 MCP token）写进 `.git/info/exclude`。
+
+## 2026-11-24 00:55 巡检
+- 在跑 6 个会话，已达并发上限，本轮不派新活：`skill-dev-01`(SB-01)、`dev-artifact-01`(SF-03)、`qa-skill-01`(QA-01)、`integrator-gm`(INT-01)、`integrator-ars`(INT-02 隔离移植)、`dev-sf-01`(SF-02 重派)。
+- 已落 main：`801a73e6` 合入 `rescue/gateway-mysql`（INT-01 的 merge 段完成，golden 断言与新测试在改）；`7beb4679` QA-01 基线报告。
+- 阻塞：github 仍不可达（推送循环 `bash-6174c5a7a3054908` 每 40 s 重试），本地领先 origin 138 个提交；`rescue/cnb-ci-split` 已删（内容被 31115116 主动撤销）。

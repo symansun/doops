@@ -46,6 +46,7 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 | Web console behavior | `backend/docs/DOOPS_WEBUI.md` |
 | Model settings | `backend/docs/MODEL_STANDARDS.md` |
 | Edge tunnel design | `backend/docs/design/DOOPS_EDGE_TUNNEL.md` |
+| Gateway MySQL migration (offline schema, copier, runtime SQL audit) | `backend/docs/GATEWAY_MYSQL_MIGRATION_PLAN.md` |
 | Release notes (console 更新内容) | `CHANGELOG.md` |
 
 ## Canonical Architecture
