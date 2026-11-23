@@ -1,7 +1,7 @@
 -- Gateway native MySQL 8.4 schema (reviewable, explicit conversion).
 --
--- Source of truth: the production SQLite export with 69 tables, 54 named
--- indexes, 12 triggers and 43 foreign keys. The first 58 tables come from the
+-- Source of truth: the production SQLite export with 69 tables, 51 named
+-- indexes, 12 triggers and 43 foreign keys. 58 tables come from the
 -- production dump; platform_skills, platform_mcp_servers and
 -- inspection_metric_points were re-captured from the runtime migration in
 -- gateway_store_schema.go, and the eight tables that only the operator
