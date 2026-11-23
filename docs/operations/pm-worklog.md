@@ -126,3 +126,10 @@
 - **新发现缺口并派 SF-15 给 dev-sf-01**：`grep -rn "retention|prune|cleanup" monitor_*.go` **零命中**，spec（17 KB）也没有任何保留/清理条款 → 每条 item 最多 768 KiB 产物 + 每次 run 数十行指标点**只增不减**，定时巡检会把 agent 宿主机磁盘吃满，并让 `/v1/monitor/metrics` 全表扫描变慢。要求：先写 spec 新节（产物 30 天 / 每 schedule 最近 50 次 run 保护；指标 90 天；**先删文件后删索引行**，避免索引指向空文件；不删 running 与最新一次），实现放新文件 `monitor_retention.go`，三组反向实验。禁改 schema（INT-08 占用）。
 - 其余按规则不空转：SB-02 等 SF-14 让出 `testdata/skills_builtin_verify/**`、INT-09 等 INT-08、CHANGELOG 仍被前端会话占用。
 
+
+## 02:09 INT-08 卡点决策：TEXT 列默认值走 A（运行层显式给值）
+
+- integrator-ars 实测卡点：18 列里只有 5 列（`VARCHAR`/`BIGINT`：`platform_skills.driver_mode='agent_prompt'`、`strategy_id=''`、`platform_mcp_servers.last_probe_status=''`、`last_probe_at_ms=0`、`last_latency_ms=0`）能在 DDL 层补默认；另 13 列全是 `TEXT`（`audit_events.error/tail/ended_at/scope_json`、`agent_enrollments.revoked_at/confirmed_at`、`inspection_items.repair`、5 张表的 `revoked_at`、`platform_mcp_servers.last_probe_error`）**DDL 层修不了**：MySQL 8.4 的 TEXT 只接受表达式默认 `DEFAULT ('')` → `information_schema.EXTRA=DEFAULT_GENERATED` → `gateway_mysql_copy.go:336` 的 `strings.Contains(extra,"generated")` 直接 `errGatewayCopySchema` 拒整表；字面量 `DEFAULT ''` 则 `Error 1101` 语法错。
+- **决定 A**（改 9 处运行时 INSERT 显式给值），驳回 B（TEXT→VARCHAR 会截断 `audit_events.tail/error`、`scope_json`，且改 copier 互操作面）与 C（守卫降级成打印欠账，真机仍 1364）。A 的依据是 `gateway_mysql_schema.sql` 头部既有约定本身：**"SQLite TEXT columns keep no DEFAULT … The runtime dialect layer must supply values explicitly"** —— 代码补到与文档一致，不是新发明。
+- 给它的硬约束：逐列核对导出默认值（只补与导出一致的值，不一律 `''`）、SQLite 侧语义必须不变并有测试证明、numbered-parameter/on_conflict 两套变体同步改、`TestGatewayMySQLRuntimeSQLAudit` census 按实测刷新并写明哪几条语句新增了列、守卫最终**无 allowlist fail-closed** 且错误信息指名"表.列"、反向实验三组（删列 → 红；删 DDL 默认 → 红；把 `DEFAULT ('')` 加回去 → copier 必须拒，证明没走回死路）、真机 mysql:8.4 上跑一次改动前会 1364 的真实 INSERT。
+

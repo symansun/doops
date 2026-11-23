@@ -20,3 +20,5 @@
 | D3 | 产物 256 KiB 是否还要在 HTTP 响应层二次截断 | 否（落盘已截断，响应直接读文件） | 目前无问题 |
 | D9 | ssh_host 巡检能力缺"AI 可见的受管 SSH 通道"（`StructuredSSH` 不在 AI 白名单，`tool_registry.go:45`） | 保持现状：AI 永不直连 SSH，ssh-host 包在未授予通道时输出 `status=degraded`+reason；要开放须单独威胁建模 | 开放等于给 AI 一条可执行任意命令的远程通道，属安全边界变更，不随 SF-09/SB-02 顺手做 |
 | D8 | SF-11 真实隧道端到端验收要不要做、用哪个 target | 不做，除非用户给出可连 target 与 canary 凭据；报告里如实标"未覆盖" | 平台唯一受管 SSH 通道 `doops_ssh` 不在 AI 可见白名单，端到端需人工授权 |
+
+- D10（02:09 已自行决定，留档）：13 个 `TEXT NOT NULL` 列在 MySQL 侧无法写默认值（表达式默认被判 `DEFAULT_GENERATED`、字面量默认语法错），选择**运行层显式给值**而非改 `VARCHAR`。依据是 `gateway_mysql_schema.sql` 头部既有约定；若将来有列必须允许"未提供"语义，改回 `NULL` 而不是给 `''`（`kubernetes_available` 的先例）。
