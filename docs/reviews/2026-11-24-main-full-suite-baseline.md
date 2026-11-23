@@ -127,3 +127,77 @@
 - 0507f449 docs(spec): mark host.disk_io and k8s.metrics as covered
 
 8001ce4f 改的是 monitor 证据记录（internal/server），e03d8439/a7a4a84e 改的是 skills_builtin 脚本，均会进入 internal/server 包的测试范围。**下一个基线应以 8001ce4f 或更新提交重跑同一套分片**，届时 1113 的测试数也会变化。
+
+## 11. 2026-11-24 03:13 复跑，基线 6c3fb171
+
+同口径复跑：HEAD 6c3fb171 用 git archive 展开到 /tmp/qa05（无 .git，1283 文件），node_modules 用 APFS clone（cp -Rc）复制，分片仍为排序后轮转取模 6 路，每片 -v -count=1 -timeout 20m，6 片并行。执行期间仓库 HEAD 已推进到 458e1d68，本节结论只对 6c3fb171 负责。
+
+### 11.1 分片结果
+
+| 分片 | 用例数 | PASS | FAIL | SKIP | 退出码 | 该片耗时 |
+|---|---|---|---|---|---|---|
+| 0 | 186 | 185 | 0 | 1 | 0 | 378s |
+| 1 | 186 | 182 | 2 | 2 | 1 | 193s |
+| 2 | 186 | 182 | 1 | 3 | 1 | 154s |
+| 3 | 186 | 184 | 0 | 2 | 0 | 158s |
+| 4 | 185 | 181 | 0 | 4 | 0 | 118s |
+| 5 | 185 | 180 | 1 | 4 | 1 | 247s |
+| 合计 | 1114 | 1094 | 4 | 16 | — | 378s（并行墙钟） |
+
+### 11.2 覆盖证明
+
+- 分片清单 1114 条，日志中 === RUN 出现 1114 个，missing 0 / extra 0。
+- 终态 1094 PASS + 4 FAIL + 16 SKIP = 1114，与清单逐条对上；断言均为 real 时间（-v），无缓存命中。
+
+### 11.3 与上一节（基线 0e749395）相比
+
+- 测试数 1113 → 1114（+1）；PASS 1092 → 1094（+2）；FAIL 5 → 4（-1）；SKIP 16 → 16（0）。
+- 失败集合：保留 CredentialVerifySuccessAuditFiltersRequestTextTarget、RunHelmCommandInterruptedUpgradeNeverStaysPending、TestDoSQLVersionJournalVerifiesHistoricalEscapedReplacementEntry；消失 CredentialVerifyUsesStoredGrantScope、RegistryAuthIsNotDeliveredAfterRevocation；新出现 CredentialImportHTTPThroughRealAgent（隔离 3/3 PASS，同为 5s 客户端超时争用）。
+- 结论：本次复跑没有新增回归。4 个 FAIL 中 3 个是并发争用型 flake，1 个是 Go 版本渲染差异（第 4 节已定性），均不是本次提交引入的产品缺陷。
+- 墙钟：最慢分片 378s（上一节 401s），6 片并行总墙钟 378s。
+
+### 11.4 4 个 FAIL 的定性
+
+| 用例 | 分片/耗时 | 失败信息（原样） | 隔离 -count=3 | 判定 |
+|---|---|---|---|---|
+| TestCredentialImportHTTPThroughRealAgent | shard5 10.86s（子用例 owner_with_target 3.64s） | credential_import_test.go:212: Post "http://127.0.0.1:.../v1/credentials/.../import-secret": context deadline exceeded (Client.Timeout exceeded while awaiting headers) | 3/3 PASS | 争用型 flake（5s 客户端超时），非回归 |
+| TestCredentialVerifySuccessAuditFiltersRequestTextTarget | shard0 6.11s | credential_audit_success_target_test.go:157: audit entry view has request_text_sha256=... want it empty | 3/3 PASS | 争用型 flake，同上 |
+| TestRunHelmCommandInterruptedUpgradeNeverStaysPending | shard1 2.12s | helm_interrupt_test.go:226: error = helm_interrupted: the call ran out of time; ... want it to contain "Helm recorded revision 6 failed" | 3/3 PASS | 争用型 flake，同上 |
+| TestDoSQLVersionJournalVerifiesHistoricalEscapedReplacementEntry | shard2 0.00s | dosql_version_journal_test.go:223: test entry is not in the historical escaped form: ... "statements":["SELECT '��'"] | 3/3 FAIL | Go 版本渲染差异（json.Marshal 写 ef bf bd 而非 \ufffd），CI 固定 1.25.14，非产品缺陷 |
+
+### 11.5 Top 12 最慢测试
+
+| 排名 | 用例 | 耗时 |
+|---|---|---|
+| 1 | TestSelfUpgradeRBACTransitionStopsBeforeMutation | 107.17s |
+| 2 | TestExecutionRelayPromptAdmissionInterruption | 49.54s |
+| 3 | TestSelfUpgradeRBACGuardRefusesAnUnverifiedControllerIdentity | 43.94s |
+| 4 | TestSelfUpgradeRemovesStaleVolumeMounts | 42.05s |
+| 5 | TestWorkspaceInterruptionCancelGraceExpiresWithoutTerminal | 30.55s |
+| 6 | TestSelfUpgradeVerifiesCandidateNodeAndDigest | 28.56s |
+| 7 | TestSelfUpgradeRBACGuardProtectsMountedServiceAccountAuthentication | 27.55s |
+| 8 | TestSelfUpgradeApplyScriptRejectsIncompleteDeploymentEvidence | 25.63s |
+| 9 | TestSelfUpgradeRejectsInvalidPodEvidence | 22.62s |
+| 10 | TestRelayConfirmedAdmissionReplySurvivesInterruption | 21.31s |
+| 11 | TestCredentialConfigureCLIThroughGatewayAndRealAgent | 18.28s |
+| 12 | TestSelfUpgradeCommitAndGatewayEvidenceAreRequired | 14.82s |
+
+与上一节同一批家族（SelfUpgrade 7 条、Interruption/Relay 4 条、Credential 1 条），排序变化来自分片分配与争用，无新增慢点。
+
+### 11.6 前端
+
+- pnpm test:console：707 项全部 PASS，37.27s，退出码 0（比上一节 +1 项，即新增的 lib/skills-registry.test.mjs 守卫）。
+- pnpm build：退出码 0，97s（Compiled successfully in 83s，20/20 静态页 637ms）。
+
+### 11.7 SKIP 与未覆盖
+
+SKIP 16 项与第 7 节完全一致（真实 DoSQL 库 DSN 8 项、本地 MySQL 5 项、GPU/setsid 2 项、其他 1 项）。未覆盖范围同第 8 节：CI 固定 go1.25.14 未在本机复现、真实数据库与真实 k8s 集群、浏览器级 Web 验证。
+
+### 11.8 复现清单
+
+
+    rm -rf /tmp/qa05 && mkdir -p /tmp/qa05 && git -C /Users/wwyz/Documents/l8ai/doops.sh archive 6c3fb171 | tar -x -C /tmp/qa05
+    cp -Rc /Users/wwyz/Documents/l8ai/doops.sh/node_modules /tmp/qa05/node_modules
+    cd /tmp/qa05/backend/agent && env -u GOROOT go test ./internal/server -list '.*' > /tmp/qa05/list.txt
+    # 排序后轮转取模 6 路，每片：env -u GOROOT go test ./internal/server -run "^($(paste -sd'|' /tmp/qa05/shard_$i.txt))$" -v -count=1 -timeout 20m
+    cd /tmp/qa05 && pnpm test:console && pnpm build
