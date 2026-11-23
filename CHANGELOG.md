@@ -6,7 +6,22 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
-## [Unreleased]
+## [0.3.27] — 2026-11-23
+
+### Fixed
+
+- 机器台账的「探针覆盖率」在读取失败时显示原因并支持重试。台账读取成功且有可见机器时才显示覆盖率。
+
+### Added
+
+- 控制台新增独立一级入口 **「Skill 管理」**（`?view=assets&area=skills`）及 Gateway `/v1/skills`、Agent 内部控制面同步工具 `doops_skill_sync`：支持同时管理 **系统 Skill**（预置 8 项主机/SSH/K8s/容器/Web/数据库及违规代理与补丁安全巡检 Skill，管理员可在线编辑、启停及一键恢复默认）与 **自定义 Skill**（支持用户上传 `.md` 或包含 `scripts/`、`references/` 的 `.zip` Skill 包，或在线创建编辑，原子同步至在线 Agent 的 `/root/.agent/skills/<slug>/`）；**巡检引擎全面升级为系统驱动 Skill**，定时巡检计划与即时巡检可直接选择系统或自定义 Skill 驱动执行并回传结构化巡检报告。
+- 控制台新增独立一级入口 **「态势感知」**（`?view=assets&area=situation`），以 **业务系统 → 应用/数据库 → Kubernetes 集群 → 机器资源** 为整体架构，提供「全局态势大屏」（含可拖拽 3D 态势核心、3D 四层悬浮架构、3D 等轴测资源柱阵及多维度安全报表）、「业务→集群→机器拓扑」（3D 立体分层拓扑）与「机器与集群资源」视图；非演示模式下仅呈现真实 Gateway 接口数据。
+- 控制台新增独立一级入口 **「智能巡检」**（`?view=assets&area=inspection`），统一收口「Skill 驱动巡检与记录」「安全巡检 MCP 服务」（支持独立开/关、单项与联合巡检、自定义接入，并区分 DoOps 原生直采与外部安全 MCP）和「周度合规与修复台账」。
+- 新增项目验收与功能覆盖操作手册 [DOOPS_ACCEPTANCE_USER_MANUAL.md](backend/docs/DOOPS_ACCEPTANCE_USER_MANUAL.md)。
+
+### Changed
+
+- **「平台监控」**回归纯粹的 Agent 维度（保留「平台总览」「Agent 节点」「使用排行」「运行与异常」四项页签）；「机器台账」移除重复的巡检页签、「业务系统」移除重复的拓扑页签、「目标运维 → 后台任务」回归当前目标 `exec --bg` 托管任务视图，彻底消除跨菜单功能重复。
 
 ## [0.3.24] — 2026-11-23
 
