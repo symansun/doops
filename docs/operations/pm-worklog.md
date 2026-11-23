@@ -225,3 +225,10 @@
 - 队列里除已派在跑的 5 条外没有可开工任务：SF-11/D8（真实 target 端到端）、INT-06（同一前置）都等用户给凭据。本轮不空转派活。
 
 - **INT-10 收口**（4475fdd6，test-only）：发现式遍历 6 个有 `scripts/inspect.sh` 的包做结构契约，干净树 14.980s 绿、4 组负控全红；vm-host 9 指标/6 checks（共享树 14/7 是受他人未提交脚本影响，它按干净树验收，这个区分是对的）。它顺带报了一条我判定必须当缺陷处理的事：run item 的 `evidence.exec_mode` 写的是 SKILL.md 声明值 `auto`，实际走的是 `sh …/scripts/inspect.sh` —— 运维读 evidence 会误判取证路径，**证据不真实**。按闭环⑥不当「低优先观察」挂着，已立项 **SF-18** 交同一会话继续（声明值+实际值并存、老 run 兼容、两组反向实验、如果要加列必须同步 MySQL 冻结导出与守卫）。在跑回到 5。
+
+## 02:53 SF-17 收口 + 本机 GOROOT 环境缺陷修复 + QA-04 立项
+
+- **SF-17 完成**（0e749395，5 文件 +178/−15，rebase 后与本地 6397c073 逐字节相同）：新增纯函数 `describeArtifactState(state, truncated)` 与 `ARTIFACT_MISSING_NOTICE`（missing → 隐藏视图切换/下载/复制与原样输出、正文换成「已被保留策略清理（默认 30 天）…这不代表本次采集失败」、diff/趋势/指标照常；present+truncated 仍是 present 子态；字段缺省等同 present）。验收：`tsc --noEmit` 0、`node --test lib/monitor-engine.test.mjs lib/monitor-metrics.test.mjs` 17/17、`pnpm build` 0；反向实验两组（判定恒 present；删接线锁）分别红在 `monitor-metrics.test.mjs` 与 `monitor-engine.test.mjs` 并从断言文字给出原因；ego-browser `PORT=3011 pnpm dev` + `/console?demo=1` 两态实测截图（`/tmp/sf17-missing.png` 224146 B / `/tmp/sf17-present.png` 195591 B），`lib/demo.ts` 的临时种数据已原样回滚。
+- **本机环境缺陷（已修，不在仓库里）**：`~/.zshrc:23` 把 `GOROOT` 钉在 `/Users/wwyz/.local/share/go`（go1.26.2），而 PATH 上的 go 是 Homebrew 1.27.4 → 子进程裸跑 `go test` 必报 `compile: version "go1.26.2" does not match go tool version "go1.27.4"`。这条不只是我们踩：`pnpm run test:console` 的 9 个 `lib/server/agent-attachments.test.mjs` 红就是它造成的（`env -u GOROOT` 后 706/706 全绿）。已把那行改成 `/Users/wwyz/.homebrew/opt/go/libexec`（与 PATH 上 go 同一工具链，`zsh -i -c` 验证 `go env GOROOT` 一致）。**但 DSH 工具 shell 从父进程继承旧 GOROOT，rc 修不了它**——所有派活书继续写 `env -u GOROOT`。
+- **QA-04 派 qa-skill-01**：在 clean tree 分片跑完 `internal/server` 全量（`go test -list` 集合比对证明无遗漏无重复）+ Top10 慢测试归因 + clean tree 的 `test:console`/`pnpm build`，补 QA-02 最大的证据缺口。40 分钟硬上限。
+- 我在共享工作区撞到 `internal/server` 编译错误（`want ("context".Context, TokenAuth, monitorTargetRef, string, platformSkillRecord, string)`），是 SF-18 在改签名的半成品；同一 sha 的 clean tree `go build ./...` rc=0、`TestAuditTimeRangePreservesSecondBoundary` 1.365s ok —— **共享树的红不算数，clean tree 才算**，这一点继续按老规矩执行。
