@@ -13,8 +13,6 @@ export interface PlatformSkillRecord {
   description: string
   scope: "system" | "custom"
   category: "inspection" | "security" | "ops"
-  driver_mode: "builtin_strategy" | "agent_prompt"
-  strategy_id?: string
   enabled: boolean
   skill_md?: string
   files?: PlatformSkillFile[]
@@ -52,11 +50,6 @@ export const SKILL_CATEGORY_LABELS: Record<PlatformSkillRecord["category"], stri
   inspection: "巡检驱动",
   security: "安全巡检",
   ops: "运维与诊断",
-}
-
-export const SKILL_DRIVER_LABELS: Record<PlatformSkillRecord["driver_mode"], string> = {
-  builtin_strategy: "内置策略直采",
-  agent_prompt: "Agent Skill 驱动",
 }
 
 export function slugifySkillName(raw: string): string {
@@ -216,8 +209,6 @@ export function upsertPlatformSkill(
     description?: string
     scope?: "system" | "custom"
     category?: "inspection" | "security" | "ops"
-    driver_mode?: "builtin_strategy" | "agent_prompt"
-    strategy_id?: string
     enabled?: boolean
     skill_md: string
     files?: PlatformSkillFile[]
