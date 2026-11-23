@@ -300,3 +300,11 @@
 - 03:19 第 25 轮（03:15 提醒）：无实质变化——integrator-gm 在跑 INT-12、无后台 job、HEAD 1f5d251a 已同步；队列除 INT-12 外只剩需凭据或需用户拍板的事项，不派活。观察到 CI 侧积压 11 个 run（8 in_progress / 3 queued，`ci.yml` 没有 concurrency 组，每次 push 都排一个全量 run），本轮不动它——改门禁语义要能观察到 run 列表才能验，先记待议。
 
 - 03:26 第 26 轮（03:25 提醒）：integrator-gm 仍在跑 INT-12，其代码已进 main（564f3d5e「让 6 条运行期 INSERT 写明列清单，守卫退化为硬禁止」），等它的真机回读与反向实验报告再关单；CI 上 c122c181、dd80ce53 已 success，d4638735/458e1d68/1f5d251a/1d828288 仍在跑（排队积压未消）。无后台 job，不派新活。
+
+## 03:28 第 27 轮巡检：INT-12 收口（6 条 INSERT 写明列清单，守卫退化为硬禁止）；补最后一条用户可见变化
+
+- **INT-12 完成**（`564f3d5e`，6 文件 +104/−74）：6 条运行期 INSERT 全部写明列清单——`inspection_receipts(item_id,generation,actor,received,status,reason,evidence,digest)` 两处、`inspection_scope(plan_id,asset_id,cluster,instance,cluster_id,check_id)`、`inventory_cluster_profiles(asset_id,name,environment,contact,created_by,revision)` 三处，`cluster_profiles.go:144` 的 `''`/`1` 字面量原样保留。守卫重写为 `TestGatewayMySQLInsertsNameColumns`：无列清单即 `t.Fatalf`，并按「表→站点数」冻结 2/1/3，同时保留列清单==导出物理序、导出序==DDL 序、值数==列名数三条断言；`gateway_mysql_columns_test.go` 的 skip 也改成硬失败，只留 `dosql_copy.go` 动态 SQL 带理由的 skip。
+- **证据我复验过**：干净树 `git archive 564f3d5e` → /tmp/vint12，`env -u GOROOT go build ./...` rc=0、`-run TestGatewayMySQLInsertsNameColumns|TestGatewayMySQLColumnsMatchExport` ok 1.128s。它自己的真机证据也具体：mysql:8.4(13309) `-run GatewayMySQL` ok 8.326s、行为等价 `-run 'Inspection|Cluster|Evidence|Credential'` ok 188.639s，并逐表回读（receipts 两代、scope 六列、profiles 冲突更新后 `revision=2`）。两组反向实验分辨力够：删列清单报 `asset_inspection_schedule.go:94`；对调 `item_id`/`generation` 报「column 1 应为 item_id」——后者正是这类改写最容易犯的错。
+- **它的「发现」值得记**：6 处原列序与导出物理序完全一致，所以这是等价改写不是修错；另外 `ON CONFLICT(...)` 在 MySQL 上必须译成 `ON DUPLICATE KEY UPDATE`，属审计清单既有的 29 处待改项，本轮没扩范围——这条以后别忘。
+- **CHANGELOG 最后一条用户可见变化补上了**：巡检产物被保留策略清掉后，详情页原本空白/报错，SF-16/SF-17 之后接口显式返回 `artifact_state=missing`、页面显示「产物缺失」与保留策略说明。之前那批条目漏了它（只写了清理机制本身），现在补在 `## [Unreleased]` 的 Added 里。D11 仍待你拍板：0.3.29 已发布，这批说明还挂在 Unreleased。
+- 队列至此**没有可派任务**：剩余是 SF-11/D8（需真实 target 与 canary）、INT-06（同）、D11/D9/D2（需你拍板）、INT-12 已闭。下一轮若仍无可开工项，按提醒规则停掉这个 10 分钟巡检并说明重开方式。
