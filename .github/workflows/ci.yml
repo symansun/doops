@@ -135,6 +135,18 @@ jobs:
               && rm -rf /var/lib/apt/lists/*
           DOCKERFILE
 
+      - name: Pull the no-python fallback image
+        # verify.sh treats a missing image as a hard failure rather than pulling
+        # it implicitly, so the fallback image used by the degraded-path checks
+        # has to be present before the verifier runs.
+        run: |
+          for attempt in 1 2 3; do
+            docker pull alpine:3 && exit 0
+            echo "docker pull alpine:3 failed (attempt $attempt)" >&2
+            sleep 5
+          done
+          exit 1
+
       - name: Verify bundled inspection packages
         env:
           SB01_IMG_PYTHON: sb01-inspect-test:ci
