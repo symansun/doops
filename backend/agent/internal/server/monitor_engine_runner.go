@@ -341,10 +341,14 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 				// entrypoint runs its deterministic script, otherwise the AI drives it.
 				for _, sk := range selectedSkills {
 					var item monitorRunItemRecord
-					if resolveSkillDispatchMode(sk, hasCustomAction) == skillExecModeScript {
-						item = h.runSkillScriptInspection(ctx, plan.Auth, t, runID, sk)
+					// Resolve the dispatch mode once and record that same decision on the
+					// item, so the evidence can never disagree with the branch taken
+					// (SKILL_FIRST_INSPECTION_SPEC.md 2.3.1).
+					dispatchMode := resolveSkillDispatchMode(sk, hasCustomAction)
+					if dispatchMode == skillExecModeScript {
+						item = h.runSkillScriptInspection(ctx, plan.Auth, t, runID, sk, dispatchMode)
 					} else {
-						item = h.runAgentDrivenSkillInspection(ctx, plan.Auth, t, runID, sk, plan.Prompt)
+						item = h.runAgentDrivenSkillInspection(ctx, plan.Auth, t, runID, sk, plan.Prompt, dispatchMode)
 					}
 					mu.Lock()
 					allItems = append(allItems, item)
@@ -361,10 +365,11 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 			// the retired native strategy; unmappable assets are reported, not dropped.
 			for _, sk := range retestSkills {
 				var item monitorRunItemRecord
-				if resolveSkillDispatchMode(sk, hasCustomAction) == skillExecModeScript {
-					item = h.runSkillScriptInspection(ctx, plan.Auth, t, runID, sk)
+				dispatchMode := resolveSkillDispatchMode(sk, hasCustomAction)
+				if dispatchMode == skillExecModeScript {
+					item = h.runSkillScriptInspection(ctx, plan.Auth, t, runID, sk, dispatchMode)
 				} else {
-					item = h.runAgentDrivenSkillInspection(ctx, plan.Auth, t, runID, sk, plan.Prompt)
+					item = h.runAgentDrivenSkillInspection(ctx, plan.Auth, t, runID, sk, plan.Prompt, dispatchMode)
 				}
 				mu.Lock()
 				allItems = append(allItems, item)
@@ -618,6 +623,7 @@ func (h *GatewayHub) runSkillScriptInspection(
 	target monitorTargetRef,
 	runID string,
 	sk platformSkillRecord,
+	dispatchMode string,
 ) monitorRunItemRecord {
 	started := time.Now()
 	item := newSkillRunItem(runID, target, sk, "skill_script", started)
@@ -625,8 +631,12 @@ func (h *GatewayHub) runSkillScriptInspection(
 	if entrypoint == "" {
 		entrypoint = findSkillExecutableScript(sk)
 	}
+	// exec_mode is what SKILL.md DECLARED; dispatch_mode is what this run actually
+	// chose. They are recorded side by side on purpose (spec 2.3.1).
+	item.DispatchMode = dispatchMode
 	item.Evidence["entrypoint"] = entrypoint
 	item.Evidence["exec_mode"] = resolveSkillExecMode(sk.SkillMD, entrypoint)
+	item.Evidence["dispatch_mode"] = dispatchMode
 
 	if err := h.syncOneSkillToAgent(ctx, auth, target, sk); err != nil {
 		return markSkillSyncFailure(item, target, sk, started, err)
@@ -668,9 +678,22 @@ func (h *GatewayHub) runAgentDrivenSkillInspection(
 	runID string,
 	sk platformSkillRecord,
 	userPrompt string,
+	dispatchMode string,
 ) monitorRunItemRecord {
 	started := time.Now()
 	item := newSkillRunItem(runID, target, sk, "agent_skill", started)
+	// The scheduling decision stays "agent" even when the AI call below degrades
+	// to a bundled script: collector_method/evidence.script/evidence.fallback_from_ai
+	// record what actually executed (spec 2.3.1).
+	item.DispatchMode = dispatchMode
+	item.Evidence["dispatch_mode"] = dispatchMode
+	// Record the declared mode on this path too, with the same normalization the
+	// script path uses, so every Skill item carries both halves (spec 2.3.1).
+	declaredEntrypoint := sk.Entrypoint
+	if declaredEntrypoint == "" {
+		declaredEntrypoint = findSkillExecutableScript(sk)
+	}
+	item.Evidence["exec_mode"] = resolveSkillExecMode(sk.SkillMD, declaredEntrypoint)
 	if userPrompt != "" {
 		item.Evidence["prompt"] = trimTail(sanitizeSecretText(userPrompt), 1024)
 	}

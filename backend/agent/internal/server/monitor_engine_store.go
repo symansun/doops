@@ -494,6 +494,14 @@ func (s *GatewayStore) ListMonitorRuns(ctx context.Context, auth TokenAuth, sche
 	return out, rows.Err()
 }
 
+// monitorItemDispatchMode reads the persisted Skill dispatch decision back out of the
+// item evidence (SKILL_FIRST_INSPECTION_SPEC.md 2.3.1). Runs written before this
+// field existed return "" and the JSON field is omitted.
+func monitorItemDispatchMode(evidence map[string]any) string {
+	mode, _ := evidence["dispatch_mode"].(string)
+	return mode
+}
+
 func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, runID string) (monitorRunRecord, []monitorRunItemRecord, error) {
 	var run monitorRunRecord
 	var skillsRaw string
@@ -549,6 +557,7 @@ func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, 
 		_ = json.Unmarshal([]byte(metricsRaw), &item.Metrics)
 		_ = json.Unmarshal([]byte(checksRaw), &item.Checks)
 		_ = json.Unmarshal([]byte(evidenceRaw), &item.Evidence)
+		item.DispatchMode = monitorItemDispatchMode(item.Evidence)
 		// File-first: a row with an artifact directory reads the full payload
 		// back from disk. Legacy rows without one keep their SQLite text
 		// columns, so upgrades stay lossless.

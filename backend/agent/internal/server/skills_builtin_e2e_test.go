@@ -171,7 +171,7 @@ exec docker run --rm -e DOOPS_AGENT_SKILLS_ROOT="$DOOPS_AGENT_SKILLS_ROOT" -v "$
 // builtinSkillE2ERun drives one inspection run for the requested Skill package
 // through the public API and returns the fixture, the operator token, the run, its
 // single item and the shell execution log.
-func builtinSkillE2ERun(t *testing.T, slug, mode string) (*executionLifecycleFixture, CreatedToken, monitorRunRecord, monitorRunItemRecord, string) {
+func builtinSkillE2ERun(t *testing.T, slug, mode string, extraRequest ...map[string]any) (*executionLifecycleFixture, CreatedToken, monitorRunRecord, monitorRunItemRecord, string) {
 	t.Helper()
 	// /tmp, not t.TempDir(): the skills root is bind-mounted into the container and
 	// Docker Desktop shares /tmp deterministically.
@@ -194,10 +194,16 @@ func builtinSkillE2ERun(t *testing.T, slug, mode string) (*executionLifecycleFix
 	operator := f.user(t, "int10-e2e-op", ScopeGrant{Cluster: "dev", Instance: "local"})
 	inventoryTestAgent(t, f, "local")
 
-	body, err := json.Marshal(map[string]any{
+	requestBody := map[string]any{
 		"targets": []map[string]string{{"cluster": "dev", "instance": "local"}},
 		"skills":  []string{slug},
-	})
+	}
+	for _, extra := range extraRequest {
+		for key, value := range extra {
+			requestBody[key] = value
+		}
+	}
+	body, err := json.Marshal(requestBody)
 	if err != nil {
 		t.Fatalf("encode run request: %v", err)
 	}
@@ -462,6 +468,53 @@ func builtinSkillE2EVerifyScriptPackage(t *testing.T, slug, mode string) {
 	}
 	if declaredMode != skillExecModeAuto && declaredMode != skillExecModeScript {
 		t.Fatalf("%s evidence exec_mode = %q, want auto or script (evidence=%+v)", slug, declaredMode, item.Evidence)
+	}
+
+	// SF-18: the same item must ALSO record the mode the dispatcher actually chose.
+	// A script package with a resolvable entrypoint and no prompt is dispatched to the
+	// audited shell; declared "auto" next to dispatched "script" is the legal, explained
+	// mismatch of spec 2.3.1, not a defect. dispatch_mode must equal the branch taken
+	// above, which is why it is resolved once at the dispatch site and passed down.
+	if item.DispatchMode != skillExecModeScript {
+		t.Fatalf("%s item dispatch_mode = %q, want script (collector=%q evidence=%+v)", slug, item.DispatchMode, item.CollectorMethod, item.Evidence)
+	}
+	if evidenceMode, _ := item.Evidence["dispatch_mode"].(string); evidenceMode != skillExecModeScript {
+		t.Fatalf("%s evidence dispatch_mode = %q, want script (evidence=%+v)", slug, evidenceMode, item.Evidence)
+	}
+	if evidenceMode, _ := item.Evidence["dispatch_mode"].(string); evidenceMode != item.DispatchMode {
+		t.Fatalf("%s top-level dispatch_mode %q differs from evidence dispatch_mode %q", slug, item.DispatchMode, evidenceMode)
+	}
+	// Drop-in read path: legacy-shaped GET detail re-hydrates dispatch_mode from the
+	// stored evidence JSON, so the two transports must agree.
+	detailRaw := f.http(t, operator, "GET", "/v1/monitor/runs/"+run.ID, "", 200)
+	var detail struct {
+		Items []monitorRunItemRecord `json:"items"`
+	}
+	if err := json.Unmarshal(detailRaw, &detail); err != nil {
+		t.Fatalf("%s decode run detail: %v; %s", slug, err, detailRaw)
+	}
+	if len(detail.Items) != 1 {
+		t.Fatalf("%s run detail carried %d items, want 1: %s", slug, len(detail.Items), detailRaw)
+	}
+	if detail.Items[0].DispatchMode != item.DispatchMode {
+		t.Fatalf("%s run detail dispatch_mode = %q, run response says %q (the stored evidence was not re-hydrated)", slug, detail.Items[0].DispatchMode, item.DispatchMode)
+	}
+
+	// The top-level key name is part of the HTTP contract (spec 2.3.1), so assert the
+	// literal key too: decoding into the struct alone would silently accept a renamed
+	// field through Go case-insensitive matching, and evidence already carries its own
+	// dispatch_mode key, so a raw substring check would prove nothing.
+	var detailKeys struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(detailRaw, &detailKeys); err != nil {
+		t.Fatalf("%s decode run detail keys: %v; %s", slug, err, detailRaw)
+	}
+	if len(detailKeys.Items) != 1 {
+		t.Fatalf("%s run detail key view carried %d items, want 1: %s", slug, len(detailKeys.Items), detailRaw)
+	}
+	if _, ok := detailKeys.Items[0]["dispatch_mode"]; !ok {
+		t.Fatalf("%s run detail item JSON does not expose the top-level dispatch_mode key: %s", slug, detailRaw)
 	}
 
 	skillMD, files, err := loadBuiltinSkillPackage(spec)
@@ -821,4 +874,35 @@ func TestBuiltinSkillE2ENegativeControls(t *testing.T) {
 			t.Fatalf("status = %q, want a non-pass verdict when the packaged entrypoint file is gone (checks=%+v reason=%q)", item.Status, item.Checks, item.Reason)
 		}
 	})
+}
+
+// TestBuiltinSkillE2EAgentDispatchMode is the SF-18 reverse direction over the real
+// HTTP path: the same declared-auto package is dispatched to the AI path as soon as the
+// request carries a custom prompt (resolveSkillDispatchMode, skills_registry.go:217).
+// The recorded decision is honest about both halves: dispatch_mode stays agent (what the
+// dispatcher chose) while collector_method/evidence.script/evidence.fallback_from_ai
+// record that execution actually degraded to the bundled script because the fixture AI
+// endpoint is unreachable. No docker is needed: the shell shim runs in "fail" mode, so
+// this test proves the dispatch record, not the AI call.
+func TestBuiltinSkillE2EAgentDispatchMode(t *testing.T) {
+	_, _, _, item, _ := builtinSkillE2ERun(t, builtinSkillE2ESlug, "fail",
+		map[string]any{"prompt": "请结合自定义提示词复核磁盘水位"})
+	if item.DispatchMode != skillExecModeAgent {
+		t.Fatalf("item dispatch_mode = %q, want agent once a custom prompt is present (collector=%q evidence=%+v)", item.DispatchMode, item.CollectorMethod, item.Evidence)
+	}
+	if evidenceMode, _ := item.Evidence["dispatch_mode"].(string); evidenceMode != skillExecModeAgent {
+		t.Fatalf("evidence dispatch_mode = %q, want agent (evidence=%+v)", evidenceMode, item.Evidence)
+	}
+	if declaredMode, _ := item.Evidence["exec_mode"].(string); declaredMode != skillExecModeAuto {
+		t.Fatalf("declared exec_mode = %q, want auto: this test locks the legal auto->agent mismatch (evidence=%+v)", declaredMode, item.Evidence)
+	}
+	if item.CollectorMethod != "skill_script" {
+		t.Fatalf("collector_method = %q, want the script fallback for an unreachable AI endpoint (evidence=%+v)", item.CollectorMethod, item.Evidence)
+	}
+	if item.Evidence["fallback_from_ai"] == nil {
+		t.Fatalf("the AI->script downgrade is not recorded in evidence: %+v", item.Evidence)
+	}
+	if _, ok := item.Evidence["script"]; !ok {
+		t.Fatalf("the AI->script downgrade records no executed script path: %+v", item.Evidence)
+	}
 }

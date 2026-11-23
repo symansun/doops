@@ -170,6 +170,10 @@ type monitorRunRecord struct {
 	ArtifactState string `json:"artifact_state,omitempty"`
 }
 
+// monitorRunItemRecord is one asset row of a monitor run. A Skill row carries the
+// execution mode declared by SKILL.md in evidence["exec_mode"] and the mode actually
+// chosen for the run in DispatchMode; the relationship, value domain and mismatch
+// rules are documented in SKILL_FIRST_INSPECTION_SPEC.md 2.3.1.
 type monitorRunItemRecord struct {
 	ID               int64                     `json:"id"`
 	RunID            string                    `json:"run_id"`
@@ -180,6 +184,7 @@ type monitorRunItemRecord struct {
 	AssetKind        string                    `json:"asset_kind"`
 	Strategy         string                    `json:"strategy"`
 	CollectorMethod  string                    `json:"collector_method"`
+	DispatchMode     string                    `json:"dispatch_mode,omitempty"`
 	Status           string                    `json:"status"`
 	Reason           string                    `json:"reason,omitempty"`
 	StartedAtMs      int64                     `json:"started_at_ms"`
