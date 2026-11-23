@@ -15,7 +15,8 @@ Run the relevant package tests before opening a pull request:
 For Web or dependency changes, use a clean checkout without `node_modules` and the same Node and pnpm versions as [CI](.github/workflows/ci.yml). Run the frozen install before pushing dependency changes, then typecheck and build:
 
 ```bash
-corepack enable && corepack prepare pnpm@11.7.0 --activate
+# `packageManager` in package.json pins pnpm 10.18.0.
+corepack enable
 CI=1 pnpm install --frozen-lockfile
 pnpm exec tsc --noEmit
 pnpm build

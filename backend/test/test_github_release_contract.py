@@ -6,6 +6,7 @@ These checks assert structure: gated by CI, immutable, verified after publishing
 built with the same builder identity the release scripts require. Wording is not locked.
 """
 
+import json
 import subprocess
 import tarfile
 from pathlib import Path
@@ -109,8 +110,19 @@ def test_ci_checks_go_and_web_independently_without_weakening_release_gate():
     for step in steps_of(web):
         assert "continue-on-error" not in step and "if" not in step
     dockerfile = (ROOT / "Dockerfile.web").read_text(encoding="utf-8")
-    enable = next(command for command in commands if "corepack prepare pnpm@" in command)
-    assert f"RUN {enable}\n" in dockerfile
+    # pnpm is pinned once, in package.json's packageManager field. CI and the Web
+    # image must activate that pin through corepack; a second hardcoded version
+    # would let the two drift and hide a release-gate failure.
+    package_manager = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["packageManager"]
+    assert package_manager.startswith("pnpm@")
+    assert "corepack enable" in commands
+    for command in commands:
+        if "corepack prepare pnpm@" in command:
+            assert package_manager in command, command
+    assert "RUN corepack enable\n" in dockerfile
+    for line in dockerfile.splitlines():
+        if "corepack prepare pnpm@" in line:
+            assert package_manager in line, line
     assert "RUN pnpm install --frozen-lockfile\n" in dockerfile
 
 
