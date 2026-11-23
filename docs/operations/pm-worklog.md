@@ -209,3 +209,9 @@
 - **SB-02 派 skill-dev-01**（它已 inactive，SF-14 收尾、CI 绿，文件占用释放）：`host.disk_io` 进 `inspect-vm-host`、`k8s.metrics` 进 `inspect-k8s-cluster`，容器内看不到宿主设备/无可用的 metrics-server 时必须如实降级不编造；每项进 `verify.sh` 断言（正例 + 降级例）；反向实验（改错 diskstats 字段偏移 / 把 kubectl 失败当成功）必须红。这是 CHANGELOG 里我写「正在补齐」的那两行，属于对外承诺，必须落地。
 - **新风险（待 CI 结论确认）：CI 的 go test 墙钟可能超时**。`.github/workflows/ci.yml:42/46/50` 三个模块都是 `go test -timeout 20m ./...`，而 QA-02 实测 `internal/server` 单包全量 **1389s（23.1 分钟）> 1200s**；f52a7888 的 CI run 45239914750 里 `Go tests` job 从 18:34:58Z 起已跑 13 分钟仍未结束，其余 4 个 job 全绿。若确实以 `panic: test timed out after 20m0s` 收场，则 main 上每次推送都红，发布门槛失效——这不是「测试慢」而是「门禁不可用」，需要立即定方案（提高 timeout 至 30m 立即解封 + 立项把该包分片/并行化压回 10 分钟内，二者都要写进台账并留验收条件）。
 
+
+### 02:52 更正我自己上一段的「CI 墙钟风险」判断
+
+- 取到真实证据：run 45239179874（70a7727e）的 `Go tests` job **failure 604s**，`gh run view 45239179874 --log-failed` 只有一条红：`--- FAIL: TestAuditTimeRangePreservesSecondBoundary (0.04s)` + `FAIL github.com/user/doops/agent/internal/server 561.774s`。即 CI 红的原因是 **F5 这个产品缺陷本身**（1446b965 之前），不是 20 分钟超时；CI 机器上该包 561.774s，远低于 `ci.yml:42` 的 `-timeout 20m`，**我上一条记的「可能超时」是误判**（本地 1389s 是更慢的机器，且我混用了 QA-02 的本地观测）。
+- 由此：run 45236754183/45236684786/… 一路到 45239179874 的 failure 都是同一个 F5。1446b965（02:31）之后推送的 a8587ffc/f52a7888/b9229eb8 三个 run 的 `Go tests` 仍在跑（job 从 18:34:58Z 起），预期随修复转绿——**待绿后再关 F5，不提前宣布**。留下的真实问题只有一个：QA-02 在本机跑不完 `internal/server` 全量（1389s > 它的 20m 窗口），那是本机性能问题，不是 CI 风险。
+
