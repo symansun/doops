@@ -74,7 +74,7 @@ DELETE FROM audit_events WHERE id IN (
 const deleteAuditBatchSQL = `DELETE FROM audit_events WHERE id IN (
 	SELECT id FROM audit_events` + auditIndexHint + `
 	WHERE started_at < ?
-		AND action != 'agent:upgrade'
+		AND action NOT IN ('agent:upgrade', 'audit:purge')
 		AND status NOT IN (` + activeAuditStatusSQL + `)
 	ORDER BY started_at, id
 	LIMIT ?
