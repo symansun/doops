@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 
 MAX_PAYLOAD_BYTES = 200 * 1024  # spec L28 单条产物硬上限 256 KiB，预留保护余量
 HARD_CAP_BYTES = 256 * 1024  # spec L28 单条产物硬上限（整条 stdout，含 Markdown 正文）
-TRIM_LIST_KEYS = ("abnormal_pods", "unready_workloads", "checks")
+TRIM_LIST_KEYS = ("abnormal_pods", "unready_workloads", "checks", "node_usage")
 
 def _target_identity():
     """消费平台注入的目标身份（monitor_engine_runner.go:938-953）；缺失时保持 null，不编造。"""
@@ -118,6 +118,72 @@ def kget(args):
     except Exception as e:
         return None, str(e)
 
+def krun(args, timeout=25):
+    """kubectl 文本子命令（top 只支持表格输出）；失败返回 (None, 原因)。"""
+    try:
+        r = subprocess.run(["kubectl", "--request-timeout=10s"] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        if r.returncode != 0:
+            return None, r.stderr.strip() or "exit %d" % r.returncode
+        return r.stdout, ""
+    except Exception as e:
+        return None, str(e)
+
+def parse_cpu_millicores(tok):
+    tok = tok.strip()
+    if tok.endswith("n"):
+        return int(round(float(tok[:-1]) / 1e6))
+    if tok.endswith("u"):
+        return int(round(float(tok[:-1]) / 1e3))
+    if tok.endswith("m"):
+        return int(round(float(tok[:-1])))
+    return int(round(float(tok) * 1000))
+
+def parse_mem_bytes(tok):
+    tok = tok.strip()
+    units = (("Ki", 1024), ("Mi", 1024 ** 2), ("Gi", 1024 ** 3), ("Ti", 1024 ** 4), ("K", 1000), ("M", 1000 ** 2), ("G", 1000 ** 3), ("T", 1000 ** 4))
+    for suf, mult in units:
+        if tok.endswith(suf):
+            return int(round(float(tok[:-len(suf)]) * mult))
+    return int(float(tok))
+
+def collect_usage():
+    """metrics-server 实时用量（kubectl top）。返回 (nodes, pods_agg, reason)；reason 说明缺哪一步。"""
+    out, err = krun(["top", "nodes", "--no-headers"])
+    if out is None:
+        return [], None, "kubectl top nodes 失败：%s（metrics-server 未安装或当前身份无权限）" % err[:160]
+    nodes_use = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        try:
+            nodes_use.append({
+                "node": parts[0],
+                "cpu_millicores": parse_cpu_millicores(parts[1]),
+                "cpu_percent": float(parts[2].rstrip("%")) if len(parts) > 2 else None,
+                "memory_bytes": parse_mem_bytes(parts[3]),
+                "memory_percent": float(parts[4].rstrip("%")) if len(parts) > 4 else None,
+            })
+        except ValueError:
+            continue
+    if not nodes_use:
+        return [], None, "kubectl top nodes 输出无法解析（metrics-server 返回格式异常）"
+    pout, perr = krun(["top", "pods", "-A", "--no-headers"])
+    if pout is None:
+        return nodes_use, None, "kubectl top pods 失败：%s（节点用量已采集，Pod 用量缺失）" % perr[:160]
+    agg = {"with_usage": 0, "cpu_millicores": 0, "memory_bytes": 0}
+    for line in pout.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        try:
+            agg["cpu_millicores"] += parse_cpu_millicores(parts[2])
+            agg["memory_bytes"] += parse_mem_bytes(parts[3])
+            agg["with_usage"] += 1
+        except ValueError:
+            continue
+    return nodes_use, agg, ""
+
 nodes_doc, err = kget(["get", "nodes", "-o", "json"])
 if nodes_doc is None:
     payload = {
@@ -178,12 +244,29 @@ wl_st = "warning" if unready_wl else "pass"
 pvc_st = "warning" if unbound_pvcs else "pass"
 overall = "critical" if "critical" in (node_st, pod_st) else ("warning" if "warning" in (node_st, pod_st, wl_st, pvc_st) else "pass")
 
+# metrics-server 实时用量（k8s.metrics）：不可用时只记 check 原因，不改集群健康结论（overall 只由四类资源状态决定）
+usage_nodes, usage_pods, usage_err = collect_usage()
+usage_metrics = []
+if usage_nodes:
+    usage_metrics.append({"key": "k8s_node_cpu_millicores", "label": "节点 CPU 合计", "value": sum(n["cpu_millicores"] for n in usage_nodes), "unit": "m", "status": "pass"})
+    usage_metrics.append({"key": "k8s_node_memory_bytes", "label": "节点内存合计", "value": sum(n["memory_bytes"] for n in usage_nodes), "unit": "B", "status": "pass"})
+if usage_pods:
+    usage_metrics.append({"key": "k8s_pod_cpu_millicores", "label": "Pod CPU 合计", "value": usage_pods["cpu_millicores"], "unit": "m", "status": "pass"})
+    usage_metrics.append({"key": "k8s_pod_memory_bytes", "label": "Pod 内存合计", "value": usage_pods["memory_bytes"], "unit": "B", "status": "pass"})
+    usage_metrics.append({"key": "k8s_pods_with_usage", "label": "有用量的 Pod 数", "value": usage_pods["with_usage"], "unit": "", "status": "pass"})
+if usage_err:
+    usage_chk = {"id": "k8s.metrics", "name": "metrics-server 实时用量", "category": "resource", "status": "warning", "value": "unavailable", "detail": usage_err[:240]}
+else:
+    usage_top = "；".join("%s CPU %dm/%s%%、内存 %s/%s%%" % (n["node"], n["cpu_millicores"], n["cpu_percent"] if n["cpu_percent"] is not None else "-", n["memory_bytes"], n["memory_percent"] if n["memory_percent"] is not None else "-") for n in usage_nodes[:3])
+    usage_chk = {"id": "k8s.metrics", "name": "metrics-server 实时用量", "category": "resource", "status": "pass", "value": "%d 节点 / %d Pod" % (len(usage_nodes), (usage_pods or {}).get("with_usage", 0)), "detail": usage_top}
+
 checks = [
     {"id": "k8s.nodes", "name": "节点 Ready 状态", "category": "availability", "status": node_st, "value": f"{len(nodes)-len(not_ready_nodes)}/{len(nodes)} Ready", "detail": "全部节点就绪" if not not_ready_nodes else "异常节点：" + ", ".join(not_ready_nodes[:10])},
     {"id": "k8s.pods", "name": "异常与高重启 Pod", "category": "workload", "status": pod_st, "value": f"{len(bad_pods)}/{len(pods)} 异常", "detail": "未发现异常 Pod" if not bad_pods else f"发现 {len(bad_pods)} 个异常或高重启 Pod"},
     {"id": "k8s.workloads", "name": "控制器副本就绪", "category": "workload", "status": wl_st, "value": f"{len(unready_wl)} 个未就绪", "detail": "全部 Deployment/StatefulSet 副本一致" if not unready_wl else f"{len(unready_wl)} 个控制器副本不足"},
     {"id": "k8s.pvc", "name": "PVC 绑定状态", "category": "storage", "status": pvc_st, "value": f"{len(unbound_pvcs)} 未绑定", "detail": "全部 PVC 已 Bound" if not unbound_pvcs else ", ".join(unbound_pvcs[:8])},
     {"id": "k8s.events", "name": "Warning 事件数", "category": "events", "status": "warning" if warn_events > 20 else "pass", "value": str(warn_events), "detail": f"集群当前 Warning 事件 {warn_events} 条"},
+    usage_chk,
 ]
 summary = f"K8s 集群：{len(nodes)} 节点（{len(not_ready_nodes)} 异常），{len(pods)} Pod（{len(bad_pods)} 异常），{len(unready_wl)} 控制器未就绪，{warn_events} 条 Warning 事件"
 
@@ -202,7 +285,10 @@ payload = {
     "checks": checks,
     "abnormal_pods": bad_pods[:30],
     "unready_workloads": unready_wl[:20],
+    "node_usage": usage_nodes[:50],
 }
+payload["metrics"].extend(usage_metrics)
 finish(payload)
-emit(["## Kubernetes 集群巡检", "", "- %s" % summary], payload)
+usage_line = "- 实时用量：%s" % ("未采集（%s）" % usage_err[:160] if usage_err else "%d 节点 / %d Pod 有用量数据，节点 CPU 合计 %dm、内存合计 %s" % (len(usage_nodes), (usage_pods or {}).get("with_usage", 0), sum(n["cpu_millicores"] for n in usage_nodes), sum(n["memory_bytes"] for n in usage_nodes)))
+emit(["## Kubernetes 集群巡检", "", "- %s" % summary, usage_line], payload)
 PY
