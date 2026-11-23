@@ -60,3 +60,14 @@
 - 01:23 依赖解锁 → 派 **INT-05** 给 integrator-ars（合并 v2 + agent_status 两列 + 重抓导出 + census 以实测刷新 + 真机回读 + 前端 TS 类型校验）。这是 `rescue/*` 回归 main 的最后一块。
 - 01:23 **SF-05 前端仍不能派**：另一条会话正在活动（CHANGELOG.md 01:15、app/globals.css 01:19、components/files-panel.tsx、lib/console-views.ts、lib/files-maintenance.ts 均未提交改动），与 SF-05 的 components/、lib/ 领地直接重叠，属 R75 冲突。需用户定：接管前端还是等它收尾。
 - 01:25 巡检：在跑 3（skill-dev-01/SF-08、qa-skill-01/SF-06、integrator-ars/INT-05），空闲 3（dev-sf-01、dev-artifact-01、integrator-gm）；main tip 9a55b31e（含他人 f9d6673d 合并 deny-rule 上下文），ahead=0/behind=0；SF-05 因 D5 未决不派，本轮无新派活。
+
+## 01:35 巡检（定时，第 6 轮）
+
+- 在跑 4：dev-sf-01/SF-09（正在删 `monitor_engine_agent.go`、改 runner/http/types/store）、skill-dev-01/SF-08（6 个 inspect.sh 在改）、dev-artifact-01/SF-05（`lib/monitor-metrics.ts`+`components/` 在写）、integrator-ars/INT-05。
+- 空闲 2：qa-skill-01（SF-10 已交付 d311cf33）、integrator-gm（INT-04 已交付 ca443a16）。
+- 后台 job 4 条全部 completed（都是历史推送重试与隔离验证，已无用，不再保留）。
+- 主干：HEAD `eee5902b`，`ahead=0 behind=0`（用显式 refspec 刷新后再判，避免假"落后"）。工作区 19 改 + 4 新增 = 三条进行中会话的半成品，符合预期。
+- 派活：**SF-12** → integrator-gm（SF-10 的两条性能项，只允许改 `monitor_metric_store.go`+`monitor_metric_test.go`，禁碰 schema / monitor_engine_* / 前端 / skills_builtin）。台账已更新。
+- 判断：并发 5 < 上限 6；无新任务可派（SF-11 卡真实 target，INT-06 卡 SF-05），不再加派。
+- 提醒：`package.json` 出现改动，归属另一条前端会话（非 SF-05 范围，SF-05 已被明确禁改），无需干预。
+
