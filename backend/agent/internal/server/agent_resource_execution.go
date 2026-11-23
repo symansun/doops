@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 
 	"github.com/user/doops/agent/api"
@@ -24,8 +25,11 @@ func (h *GatewayHub) pinExecutionManifest(ctx context.Context, a *GatewayAgent, 
 		return err
 	}
 	// Recompute from this target's current grants before handing metadata to the Agent.
+	// The manifest enriches audit references and prompt facts; it is not an
+	// authorization gate, so a sync outage must not veto the execution itself.
 	if err := h.syncAgentResources(ctx, a, false); err != nil {
-		return errTargetManifestUnavailable
+		log.Printf("[gateway] execution manifest pin skipped for %s: %v", a.Key, err)
+		return nil
 	}
 	a.stateMu.RLock()
 	execution := executionTargetManifest{Manifest: a.resourceSync.manifest, LastObservedAt: a.resourceSync.lastObservedAt}
