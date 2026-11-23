@@ -10,7 +10,6 @@
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
 | SF-05 | 前端接 SF-04：viewer Diff/Trends + 删死开关 + 改发 `skill`/`actions` 停发 `strategies`/`ssh_hosts`（SF-09 后手动巡检必 400） | dev-artifact-01 | `components/inspection-artifact-viewer.tsx`、`components/skill-registry-panel.tsx`、`components/inspection-center-panel.tsx`、`lib/demo.ts`、`lib/monitor-engine.ts`(+test)、新增 `lib/monitor-metrics.ts`(+test) | 01:26，01:48 扩范围 | 运行中 |
-| SF-13 | legacy strategy 退役后的残留清扫（文档/注释/死列标注/`retiredStrategySkillSlugs` slug 钉子） | dev-sf-01 | `DOOPS_WEBUI.md`、`GATEWAY_MYSQL_MIGRATION_PLAN.md`、spec、`AGENTS.md`、`gateway_store_schema.go` 仅注释 | 01:52 | 运行中 |
 | QA-02 | 全仓回归：`go test ./...` 全包 + pytest + verify.sh + 残留扫描（SF-09 删 2186 行的保险） | qa-skill-01 | 只新增 `docs/reviews/2026-11-24-main-regression.md` | 01:52 | 运行中 |
 | INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）+ `agent_status` 两列 + census 刷新 + 真机回读 | integrator-ars | `gateway_mysql_schema.sql`、`testdata/gateway-sqlite-schema.sql`、`gateway_mysql_runtime_test.go`、`gateway_store_schema.go` | 01:23 | 运行中 |
 
@@ -26,6 +25,7 @@
 
 | 编号 | 任务 | 提交 | 结论摘要 |
 |---|---|---|---|
+| SF-13 | legacy strategy 残留清扫：删死码 `buildBuiltinStrategyArtifact` 与 `doops_monitor_inspect` RPC 类型、`strategies_json` DDL 退役注释、遗留列清单入迁移文档、spec §2.4.1 六采集器→Skill 映射（`host.disk_io`/`k8s.metrics` 标待补）、WebUI/API guide 措辞、`retiredStrategySkillSlugs` 加 slug 钉子 | 3e66d588 | build/vet 绿，`-run 'Monitor\|Skill\|Strategy'` 78.0s 绿（干净树 80.0s）；反向实验：映射改成不存在的 slug 时钉子测试 FAIL |
 | SF-01 | Skill 包 `//go:embed all:skills_builtin` + `Entrypoint`/exec_mode 派生 + 落盘复用 | 7457bd56、d41bc318 | build 绿，`-run 'Skill\|Monitor'` 12/12 |
 | SF-02 | 移除 `DriverMode`/`StrategyID` 双轨，分派只从 SKILL.md 派生 | ee192275、a47ed50d | 8 slug 全产出，20/20 绿（60.3s），主工作区 build rc=0 |
 | SF-03 | 产物 File-First 落盘 + 索引列 + 截断脱敏 | daada95c | 5 测试绿；D4 定为"每文件 ≤256 KiB" |
