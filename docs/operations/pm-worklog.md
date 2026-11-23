@@ -118,3 +118,11 @@
 - integrator-ars 探针（干净树 bcc8e72a，61 张导出表 vs `gateway_mysql_schema.sql`）：列名漂移 **0 张**（此前的 9 张差异是它探针解析伪影：`--` 注释行、CHECK 续行 OR、类型后逗号）；**18 列/10 张表**"NOT NULL 无默认 + 被真实 INSERT 省略"，这 18 列在 SQLite 导出里**都有默认值** → MySQL 侧丢默认 = 真机 1364（审计 audit_events 4 列、platform_mcp_servers 4、platform_skills 2、agent_enrollments 2、inspection_items 1，tokens/credentials/credential_grants/credential_versions/edge_enrollments 各 1 的 revoked_at）。决定：当轮修，且**逐列照 SQLite 导出抄默认值**（`revoked_at` 填 `''` 与填 `NULL` 语义不同，不统一填 `''`）；守卫跳过项必须 `t.Logf` 打印 + 具名常量 `gatewayMySQLUnmigratedTables`，"可见欠账"而非注释里埋。
 - **更严重的缺口**：10 张表被运行时 INSERT 引用，但 MySQL DDL 与**冻结导出都没有**：`agent_resource_state`/`agent_observations`/`agent_resource_audit`（INT-02 分支的 `docs/migrations/agent_resource_sync.sql`）、`credential_bundle_items_v2`/`credential_verifications_v2`/`grants_v2`、`inventory_agent_assets`/`inventory_machine_tags`/`inventory_resource_catalog`、`personal_asset_records` —— 它们由 `backend/docs/migrations/*.sql` 在 SQLite 侧建表。**根因**：INT-04 的 `TestGatewayMySQLSchemaCoversRuntimeDDL` 只扫包内非测试 .go 的 `CREATE TABLE`，迁移脚本建的表在扫描范围外，所以守卫一直绿。→ 新任务 **INT-09**：先把守卫扩到扫 `backend/docs/migrations/*.sql` 让它**先红**，再补 10 张 DDL + 导出 + 真机写入回读。
 - 未派 INT-09：等 INT-08 收官（同改 `gateway_mysql_*_test.go` 与 schema/导出，R75）。
+
+## 02:08 巡检（定时，第 9 轮）
+
+- 在跑 5：skill-dev-01/SF-14、dev-artifact-01/SF-05、qa-skill-01/QA-02、integrator-gm/INT-07、integrator-ars/INT-08；dev-sf-01 空闲（SF-13 已闭环）；无后台 job。
+- 主干 `bd945415` = origin/main，工作区 12 项半成品（SF-05 前端 5、SF-14 `verify.sh`、INT-07/INT-08 在写）。
+- **新发现缺口并派 SF-15 给 dev-sf-01**：`grep -rn "retention|prune|cleanup" monitor_*.go` **零命中**，spec（17 KB）也没有任何保留/清理条款 → 每条 item 最多 768 KiB 产物 + 每次 run 数十行指标点**只增不减**，定时巡检会把 agent 宿主机磁盘吃满，并让 `/v1/monitor/metrics` 全表扫描变慢。要求：先写 spec 新节（产物 30 天 / 每 schedule 最近 50 次 run 保护；指标 90 天；**先删文件后删索引行**，避免索引指向空文件；不删 running 与最新一次），实现放新文件 `monitor_retention.go`，三组反向实验。禁改 schema（INT-08 占用）。
+- 其余按规则不空转：SB-02 等 SF-14 让出 `testdata/skills_builtin_verify/**`、INT-09 等 INT-08、CHANGELOG 仍被前端会话占用。
+

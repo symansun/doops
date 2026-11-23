@@ -13,6 +13,7 @@
 | QA-02 | 全仓回归：`go test ./...` 全包 + pytest + verify.sh + 残留扫描（SF-09 删 2186 行的保险） | qa-skill-01 | 只新增 `docs/reviews/2026-11-24-main-regression.md` | 01:52 | 运行中 |
 | SF-14 | 把 `verify.sh` 接进 CI（现在 34 项真跑证据只在开发者机器上）：新增 `skills-packages` job、CI 镜像、`SB01_NO_PRIVILEGED` 显式降级、本地干净树等价验证 | skill-dev-01 | `.github/workflows/ci.yml`、`testdata/skills_builtin_verify/**`、`BUILD_DEPLOY_SOP.md` CI 小节 | 02:01 | 运行中 |
 | INT-07 | 真 Skill 包执行链路 e2e：从 `SKILL.md` 取 entrypoint 并把 `scripts/inspect.sh` 的真实产物喂回流水线，断言 `artifact_dir`/sha256/bytes、`metrics[]` 落 `inspection_metric_points`、两次 run 的 `previous_run_id`+`metric_deltas` | integrator-gm | 新增 `skills_builtin_e2e_test.go`(+helper) | 02:04 | 运行中 |
+| SF-15 | 巡检产物与指标点的保留策略（现在只增不减）：spec 新节 + \`monitor_retention.go\`，产物 30 天/每 schedule 最近 50 次 run 保护、指标 90 天、先删文件后删索引行、不删 running 与最新一次 | dev-sf-01 | 新增 \`monitor_retention.go\`(+test)、spec 新节；必要时小改 \`monitor_artifact_store.go\`/\`monitor_metric_store.go\` | 02:08 | 运行中 |
 | INT-08 | MySQL 列级守卫推广到全部导出表 + "NOT NULL 无默认且被真实 INSERT 省略"守卫（从源码 AST 抽列，不手维护清单） | integrator-ars | `backend/agent/internal/server/gateway_mysql_*_test.go`、`gateway_mysql_schema.sql`、`testdata/gateway-sqlite-schema.sql` | 01:59 | 运行中 |
 
 ## 待办（排队/待决策）
