@@ -32,9 +32,13 @@ export type RpcEvent =
   | { type: "error"; error: string; code?: number; data?: unknown }
   | { type: "capabilities"; capabilities: unknown }
   | { type: "background_task"; audit_id: number; operation_id: string }
+  // 停止请求的处理进度：requested 已下发 → Gateway 应答 canceled:true 时 remote_canceled；
+  // canceled:false 或连接已断时 rejected/unavailable，必须让用户看见「停止没生效」。
+  | { type: "cancel"; state: "requested" | "remote_canceled" | "rejected" | "unavailable" | "not_dispatched"; error?: string }
   | { type: "done" }
 
-export type ToolCancel = () => Promise<void>
+export type ToolCancelResult = { state: "requested" | "already_finished" }
+export type ToolCancel = () => Promise<ToolCancelResult>
 
 export class RpcError extends Error {
   code?: number
@@ -212,12 +216,13 @@ export async function callTool(
     const demoController = new AbortController()
     opts.onCancelReady?.(async () => {
       demoController.abort()
+      return { state: "requested" as const }
     })
     await demoCallTool({ ...opts, signal: opts.signal || demoController.signal }, onEvent)
     return
   }
   const requestId = globalThis.crypto.randomUUID()
-  let cancelPromise: Promise<void> | undefined
+  let cancelPromise: Promise<ToolCancelResult> | undefined
   const cancel: ToolCancel = async () => {
     if (!cancelPromise) {
       cancelPromise = (async () => {
@@ -225,6 +230,8 @@ export async function callTool(
         // A stop click must not overtake the initial operation request.
         const started = await response
         if (!started.ok) throw new Error("原请求未被接受，无法请求停止")
+        // 服务端已没有这条调用（命令刚完成，或请求落在别的 Next 实例上）时回
+        // 409 rpc_not_active。这不是失败：没有正在运行的命令需要停止。
         const cancelResponse = await consoleFetch("/api/rpc", {
           method: "POST",
           headers: authHeaders(s),
@@ -235,12 +242,14 @@ export async function callTool(
             cancelRequestId: requestId,
           }),
         })
-        let detail: { error?: string; request_id?: string; cancel_requested?: boolean } = {}
+        let detail: { error?: string; code?: string; request_id?: string; cancel_requested?: boolean } = {}
         try { detail = await cancelResponse.json() } catch { /* noop */ }
+        if (cancelResponse.status === 409 && detail.code === "rpc_not_active") return { state: "already_finished" as const }
         if (!cancelResponse.ok) throw new Error(detail.error || `停止请求失败 (${cancelResponse.status})`)
         if (detail.request_id !== requestId || detail.cancel_requested !== true) {
           throw new Error("停止请求返回了无效确认")
         }
+        return { state: "requested" as const }
       })().catch((error) => {
         cancelPromise = undefined
         throw error
@@ -286,7 +295,7 @@ export async function callTool(
   function receive(line: string) {
     let event: RpcEvent
     try { event = JSON.parse(line) as RpcEvent } catch { throw new Error("运维服务返回了无效事件") }
-    if (!event || !["open", "output", "result", "error", "capabilities", "background_task", "done"].includes(event.type)) throw new Error("运维服务返回了未知事件")
+    if (!event || !["open", "output", "result", "error", "cancel", "capabilities", "background_task", "done"].includes(event.type)) throw new Error("运维服务返回了未知事件")
     if (event.type === "result") {
       terminal = true
       if ((event.result as { isError?: boolean })?.isError) {

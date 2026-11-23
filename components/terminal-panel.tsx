@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
-import { BackgroundTaskError, listBackgroundTasks } from "@/lib/background-tasks"
+import { listBackgroundTasks } from "@/lib/background-tasks"
 import {
   appendShellOutput,
   describeShellFailure,
   prefillToApply,
   shellResultOutcome,
+  type ShellOutputState,
   type TerminalPrefill,
 } from "@/lib/shell-blocks"
 import { commandJournal } from "@/lib/console-persistence"
@@ -64,6 +65,11 @@ export function TerminalPanel({
   const [bgRunning, setBgRunning] = useState(false)
   const bgAbortRef = useRef<AbortController | null>(null)
 
+  // 流式输出必须跨事件累积：每个事件单独 appendShellOutput 会把一次输出切成若干段，
+  // 段与段之间的换行/续行全部丢失（JSON、表格直接被撕碎）。
+  const streamRef = useRef<ShellOutputState>({ output: "", progress: "" })
+  const outputCharsRef = useRef(0)
+
   useEffect(() => {
     let active = true
     setBgSupported(Boolean(session.demo))
@@ -71,9 +77,8 @@ export function TerminalPanel({
       // detachedBackground 是 Gateway 自有能力：老 Gateway 没有 /v1/background-tasks。
       listBackgroundTasks(session, target)
         .then(() => { if (active) setBgSupported(true) })
-        .catch((err) => {
-          if (active && !(err instanceof BackgroundTaskError && err.status === 404)) setBgSupported(true)
-        })
+        // 探测失败就是不可用：旧实现把 5xx/网络错误也当成支持，按钮能点但必然失败。
+        .catch(() => { if (active) setBgSupported(false) })
     }
     return () => { active = false }
   }, [session, target])
@@ -85,6 +90,31 @@ export function TerminalPanel({
   }, [lines])
 
   const push = useCallback((line: Line) => setLines((p) => [...p, line]), [])
+
+  // 续写上一段输出，而不是每来一个事件就新起一段。
+  const appendOut = useCallback((text: string) => {
+    if (!text) return
+    const cap = 200_000
+    if (outputCharsRef.current >= cap) return
+    const clipped = outputCharsRef.current + text.length > cap
+      ? text.slice(0, cap - outputCharsRef.current) + "\n…（输出过长，已截断；请改用重定向或减少输出）"
+      : text
+    outputCharsRef.current += clipped.length
+    setLines((p) => {
+      const last = p[p.length - 1]
+      if (last?.kind === "out") return [...p.slice(0, -1), { kind: "out", text: last.text + clipped }]
+      return [...p, { kind: "out", text: clipped }]
+    })
+  }, [])
+
+  // 把一次流式增量并入累积状态，只把新增的文本续写到界面。
+  function consumeOutput(chunk: string) {
+    const before = streamRef.current
+    const next = appendShellOutput(before, chunk)
+    streamRef.current = next
+    if (next.progress) setProgress(next.progress)
+    if (next.output.length > before.output.length) appendOut(next.output.slice(before.output.length))
+  }
 
   function fail(message: string) {
     const failure = describeShellFailure(message, { stopRequested: stopRequestedRef.current, target })
@@ -106,6 +136,8 @@ export function TerminalPanel({
     setStopPending(false)
     stopRequestedRef.current = false
     cancelRef.current = null
+    streamRef.current = { output: "", progress: "" }
+    outputCharsRef.current = 0
     let settled = false
     try {
       await callTool(
@@ -115,13 +147,27 @@ export function TerminalPanel({
           instance: target.instance,
           tool: TOOLS.shell,
           arguments: { session_id: sessionId, command: cmd },
-          onCancelReady: (cancel) => { cancelRef.current = cancel },
+          onCancelReady: (cancel) => {
+            cancelRef.current = cancel
+            // 连接建立得慢时用户可能先点了停止：这里补发，别再静默丢弃。
+            if (stopRequestedRef.current) void stop()
+          },
         },
         (ev) => {
           if (ev.type === "output") {
-            const next = appendShellOutput({ output: "", progress: "" }, ev.data)
-            if (next.progress) setProgress(next.progress)
-            if (next.output) push({ kind: "out", text: next.output })
+            consumeOutput(ev.data)
+          } else if (ev.type === "cancel") {
+            // 停止请求的处理进度由服务端上报：requested / remote_canceled /
+            // rejected / unavailable。停止没有生效必须说出来。
+            if (ev.state === "remote_canceled") {
+              push({ kind: "info", text: "— 远端已确认取消，等待终态 —" })
+            } else if (ev.state === "rejected" || ev.state === "unavailable") {
+              stopRequestedRef.current = false
+              setStopPending(false)
+              push({ kind: "warn", text: `停止没有生效：${ev.error || "Gateway 未确认取消"}` })
+            }
+            // requested / remote_canceled 都还没到终态：保持「停止中…」并锁住输入，
+            // 否则按钮会立刻变回「停止」，用户以为没点上而反复点。
           } else if (ev.type === "result") {
             settled = true
             const outcome = shellResultOutcome(extractText(ev.result))
@@ -129,14 +175,23 @@ export function TerminalPanel({
               fail(outcome.text)
               return
             }
-            if (outcome.text) push({ kind: "out", text: outcome.text })
-            push({ kind: "info", text: "✓ 完成，退出码 0" })
+            if (outcome.text) appendOut(outcome.text + "\n")
+            // doops_shell 成功只回 "Operation complete."，没有退出码；只有确实读到
+            // 退出码时才显示，否则退化成「✓ 完成」，不要编一个 0。
+            push({ kind: "info", text: outcome.exitCode === undefined ? "✓ 完成" : `✓ 完成，退出码 ${outcome.exitCode}` })
           }
         },
       )
     } catch (err) {
       settled = true
-      fail((err as Error).message)
+      const message = (err as Error).message
+      // 演示模式直接中断本地流；真实链路里停止后仍等远端终态，不会走到这里。
+      // 自己请求停止导致的 abort 不是错误，别再抛一行英文 AbortError。
+      if (stopRequestedRef.current && /abort/i.test(message)) {
+        push({ kind: "info", text: "— 已停止本地执行流 —" })
+      } else {
+        fail(message)
+      }
     } finally {
       if (!settled) fail("连接已结束，未收到工具执行结果")
       commandJournal.end(session, journalId)
@@ -144,6 +199,7 @@ export function TerminalPanel({
       onRunningChange?.(false)
       setProgress("")
       setStopPending(false)
+      stopRequestedRef.current = false
       cancelRef.current = null
     }
   }
@@ -172,27 +228,25 @@ export function TerminalPanel({
         (ev) => {
           if (ev.type === "background_task") {
             submitted = true
-            push({ kind: "info", text: `已提交后台任务 #${ev.audit_id}，离开页面不会中断；在「自动化 → 后台运行任务」查看或停止` })
+            push({ kind: "info", text: `已提交后台任务 #${ev.audit_id}，离开页面不会中断；在左侧「后台任务」页查看或停止` })
             return
           }
           if (ev.type === "output") {
-            const next = appendShellOutput({ output: "", progress: "" }, ev.data)
-            if (next.progress) setProgress(next.progress)
-            if (next.output) push({ kind: "out", text: next.output })
+            consumeOutput(ev.data)
           } else if (ev.type === "result") {
             const outcome = shellResultOutcome(extractText(ev.result))
             if (!outcome.ok) {
               fail(outcome.text)
               return
             }
-            if (outcome.text) push({ kind: "out", text: outcome.text })
+            if (outcome.text) appendOut(outcome.text + "\n")
           }
         },
       )
     } catch (err) {
       // 本地流被释放不代表任务停止；已提交的任务仍由 Gateway 托管。
       if (submitted) {
-        push({ kind: "info", text: "本地流已结束；任务仍在后台运行，在「自动化 → 后台运行任务」查看终态" })
+        push({ kind: "info", text: "本地流已结束；任务仍在后台运行，在左侧「后台任务」页查看终态或停止" })
       } else {
         fail((err as Error).message)
       }
@@ -204,11 +258,34 @@ export function TerminalPanel({
   }
 
   function stop() {
-    if (!cancelRef.current || stopPending) return
+    if (stopPending) return
     stopRequestedRef.current = true
+    const cancel = cancelRef.current
+    if (!cancel) {
+      // 执行请求还没返回（连接建立中）。旧实现在这里直接 return，点「停止」
+      // 完全没有任何反应；现在记录意图，连接就绪后由 onCancelReady 补发。
+      push({ kind: "info", text: "— 停止通道尚未就绪，连接建立后会立即发送停止请求 —" })
+      return
+    }
     setStopPending(true)
     push({ kind: "info", text: "— 已请求停止，等待远端终态；请勿立即重试 —" })
-    void cancelRef.current().catch((err) => {
+    // 服务端最多等 Gateway 35 秒；超过这个时间还没有任何终态，才把按钮还回去。
+    const watchdog = setTimeout(() => {
+      if (!stopRequestedRef.current) return
+      setStopPending(false)
+      push({ kind: "warn", text: "停止请求迟迟没有回应；命令可能仍在运行，请核对后重试" })
+    }, 45_000)
+    void cancel().then((result) => {
+      if (result.state === "already_finished") {
+        clearTimeout(watchdog)
+        // 命令在点击之前已经结束（或请求停在别的实例上）：没有可停止的命令。
+        stopRequestedRef.current = false
+        setStopPending(false)
+        push({ kind: "info", text: "该命令已经结束，没有正在运行的命令需要停止" })
+      }
+      // 已下发：保持「停止中…」，直到远端终态或服务端明确的停止结果。
+    }).catch((err) => {
+      clearTimeout(watchdog)
       stopRequestedRef.current = false
       setStopPending(false)
       push({ kind: "err", text: `停止请求失败：${(err as Error).message}` })

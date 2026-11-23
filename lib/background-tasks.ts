@@ -47,13 +47,16 @@ export async function getBackgroundTask(session: Session, id: number): Promise<B
   return data
 }
 
-export async function stopBackgroundTask(session: Session, id: number): Promise<void> {
+export async function stopBackgroundTask(session: Session, id: number): Promise<"requested" | "already_finished"> {
   if (session.demo) {
     const { demoStopBackgroundTask } = await import("./demo")
     return demoStopBackgroundTask(id)
   }
   const res = await consoleFetch(`/api/background-tasks/${id}/cancel`, { method: "POST" })
-  if (res.status === 202) return
+  if (res.status === 202) return "requested"
+  // A task that is already gone or already terminal is not a failed stop: the user
+  // asked to end something that had ended. Report it as such instead of a red error.
+  if (res.status === 404 || res.status === 409) return "already_finished"
   const data = (await res.json().catch(() => ({}))) as { error?: string }
   throw new BackgroundTaskError(data.error || `停止请求失败 (${res.status})`, res.status)
 }

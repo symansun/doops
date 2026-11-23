@@ -82,6 +82,9 @@ export function agentGatewayCall(
     let timer = setTimeout(() => fail(new AgentGatewayError("Gateway 未返回连接结果")), 45_000)
     let dispatched = false
     let terminal = false
+    // A stop is only real once the Gateway acknowledges it. Track both the request
+    // and the acknowledgement so a silent cancel cannot look like a clean stop.
+    let cancelRequested = false
     const cleanup = () => {
       clearTimeout(timer)
       signal.removeEventListener("abort", abort)
@@ -97,11 +100,17 @@ export function agentGatewayCall(
     ws.on("error", (error) => fail(new AgentGatewayError(error.message)))
     const abort = () => {
       if (!dispatched) { fail(new AgentGatewayError("请求派发前已停止", 499, "not_dispatched", true)); return }
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/cancel", params: { id: 2 } }))
+      if (ws.readyState !== WebSocket.OPEN) {
+        fail(new AgentGatewayError("与 Gateway 的连接已断开，停止请求没有送达", 502, "unknown"))
+        return
       }
+      cancelRequested = true
+      ws.send(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/cancel", params: { id: 2 } }))
       clearTimeout(timer)
-      timer = setTimeout(() => fail(new AgentGatewayError("已请求停止，远端终态未确认", 409)), 15_000)
+      // The Gateway itself waits up to 30s for the Agent to confirm a cancel
+      // (backend/agent/internal/server/execution_lifecycle.go). A shorter browser
+      // watchdog turned every successful stop into "outcome unknown".
+      timer = setTimeout(() => fail(new AgentGatewayError("已请求停止，Gateway 未确认远端终态", 409)), 35_000)
     }
     signal.addEventListener("abort", abort, { once: true })
     ws.on("open", () => ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })))
@@ -128,13 +137,30 @@ export function agentGatewayCall(
           onUpdate({ kind: message.params.kind, data: message.params.data })
           return
         }
+        if (message.id === 3) {
+          // tools/cancel 的应答。canceled:false 表示 Gateway 侧已经没有这条调用在运行；
+          // 旧实现把这条应答直接丢弃，用户点了停止却看不出到底停没停。这里如实上报未知终态，
+          // 让会话保持「需核对」而不是假装已经停止。
+          if (message.result?.canceled === true) {
+            // 取消已受理，但终态还没到：重新计时等真实结果，别用旧超时误报。
+            clearTimeout(timer)
+            timer = setTimeout(() => fail(new AgentGatewayError("已请求停止，远端终态未确认", 409)), 35_000)
+            return
+          }
+          fail(new AgentGatewayError(message.error?.message || "停止没有生效：Gateway 未找到仍在运行的回合", 409, "unknown"))
+          return
+        }
         if (message.id !== 2) return
         const error = message.error?.message || (message.result?.isError
           ? message.result.content?.map((item: { text?: string }) => item.text || "").join("") : "")
         const structuredContent = publicReceipt(message.error?.data?.structuredContent ?? message.result?.structuredContent)
-        if (error) throw new AgentGatewayError(error, message.error?.code === -32001 ? 401 : message.error?.code === -32003 ? 403 : 502,
-          error === "execution_outcome_unknown" || error.startsWith("execution_outcome_unknown:") ? "unknown" : "terminal",
-          message.error?.code === -32007, structuredContent)
+        if (error) {
+          const status = message.error?.code === -32001 ? 401 : message.error?.code === -32003 ? 403 : 502
+          const unknownOutcome = error === "execution_outcome_unknown" || error.startsWith("execution_outcome_unknown:")
+          // 用户主动停止后远端回 "operation canceled"：这是一次成功的停止，不该记成红色失败。
+          const canceledStop = message.error?.code === -32007 || (cancelRequested && /cancel+ed|interrupted/i.test(error))
+          throw new AgentGatewayError(error, canceledStop ? 499 : status, unknownOutcome ? "unknown" : "terminal", canceledStop, structuredContent)
+        }
         if (!message.result || !Array.isArray(message.result.content)) throw new AgentGatewayError("Agent 执行结果无效")
         terminal = true
         const text = message.result.content.map((item: { text?: string }) => item.text || "").join("")

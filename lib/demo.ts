@@ -389,7 +389,8 @@ function shellOutput(cmd: string): string[] {
     return ["bin  conf  data  logs  releases  current -> releases/1.8.2\n"]
   if (/whoami/.test(c)) return ["doops\n"]
   if (/uname/.test(c)) return ["Linux web-01 6.1.0-21-amd64 #1 SMP x86_64 GNU/Linux\n"]
-  return [`$ ${c}\n`, "(演示模式) 命令已在目标节点执行，返回示例输出。\n"]
+  // 终端面板自己会回显键入的命令，这里再回显一次会出现两行相同的 `$ cmd`。
+  return ["(演示模式) 命令已在目标节点执行，返回示例输出。\n"]
 }
 
 // 演示 doops_k8s：按 operation 返回示例输出，不触达真实集群。
@@ -1043,23 +1044,15 @@ export async function demoBackgroundTask(id: number) {
   return { ...task }
 }
 
-export async function demoStopBackgroundTask(id: number) {
+export async function demoStopBackgroundTask(id: number): Promise<"requested" | "already_finished"> {
   await sleep(120)
   const task = demoBgTasks.find((t) => t.audit_id === id)
-  if (!task) {
-    const err = new Error("后台任务不存在") as Error & { status?: number }
-    err.status = 404
-    throw err
-  }
-  if (task.status !== "running") {
-    const err = new Error("任务已结束") as Error & { status?: number }
-    err.status = 409
-    throw err
-  }
+  if (!task || task.status !== "running") return "already_finished"
   task.cancel_requested = true
   task.status = "canceled"
   task.finished_at = nowISO()
   task.output += "Task canceled.\n"
+  return "requested"
 }
 
 export async function demoPlatformMonitor(

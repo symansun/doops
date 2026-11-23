@@ -282,6 +282,15 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   does not take the terminal running lock: leaving the page only ends the
   browser stream. It is disabled with 「Gateway 未启用后台任务」 when the
   Gateway lacks the `detachedBackground` capability or the target is offline.
+- The terminal's 「停止」 submits `tools/cancel` for the running `doops_shell`
+  call and never assumes it worked: the panel reports 「已请求停止」, then
+  「远端已确认取消」 when the Gateway acknowledges, or
+  「停止没有生效：…」 when the Gateway has no such call. The command stays
+  locked until real terminal evidence arrives — the Gateway gets 30 seconds to
+  confirm and the browser waits 35 — so an unconfirmed stop ends as
+  「远端终态未确认」 instead of a silent success. 「✓ 完成，退出码 N」 is printed
+  only when the Agent actually returned an exit code; a plain `doops_shell`
+  success reports 「✓ 完成」.
 
 Explicit execution and management buttons submit their operation directly,
 without an extra confirmation dialog or checkbox. Invalid inputs, unavailable

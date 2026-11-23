@@ -357,11 +357,22 @@ const SHELL_SUCCESS_MARKER = "Operation complete."
 
 // shellResultOutcome 解读 doops_shell 的最终结果文本：成功标记不当作输出，
 // 命令没能启动时 Agent 也返回成功响应，这里改判为失败。
-export function shellResultOutcome(text: string): { ok: boolean; text: string } {
+export interface ShellResultOutcome {
+  ok: boolean
+  text: string
+  // doops_shell 成功时只回 "Operation complete."（没有退出码），只有失败文本里带
+  // "exit status N"；doops_bg 的结果文本里带 "ExitCode: N"。拿不到就是 undefined，
+  // 界面绝不能替 Agent 编一个 0 出来。
+  exitCode?: number
+}
+
+export function shellResultOutcome(text: string): ShellResultOutcome {
   const trimmed = text.trim()
   if (trimmed === SHELL_SUCCESS_MARKER) return { ok: true, text: "" }
   if (trimmed.startsWith("Error starting command:")) return { ok: false, text: trimmed }
-  return { ok: true, text }
+  const exitCode = /ExitCode: (-?\d+)/.exec(trimmed)?.[1] ?? /exit status (\d+)/.exec(trimmed)?.[1]
+  // 原文照旧返回（保留结尾换行），只在解读时用 trim 过的副本。
+  return { ok: true, text, ...(exitCode === undefined ? {} : { exitCode: Number(exitCode) }) }
 }
 
 export type ShellFailureKind = "exit" | "signal" | "canceled" | "interrupted" | "forbidden" | "offline" | "auth" | "unknown" | "blocked" | "other"

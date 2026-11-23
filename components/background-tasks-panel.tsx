@@ -111,12 +111,12 @@ export function BackgroundTasksPanel({
     setStopping(true)
     setStopNote("")
     try {
-      await stopBackgroundTask(session, selectedId)
-      setStopNote("已请求停止，等待终态")
+      const outcome = await stopBackgroundTask(session, selectedId)
+      setStopNote(outcome === "already_finished" ? "任务已结束" : "已请求停止，等待终态")
       void loadList()
       void loadDetail(selectedId)
     } catch (err) {
-      if (err instanceof BackgroundTaskError && err.status === 409) {
+      if (err instanceof BackgroundTaskError && (err.status === 409 || err.status === 404)) {
         setStopNote("任务已结束")
       } else {
         setStopNote(`停止请求失败：${(err as Error).message}`)

@@ -22,6 +22,10 @@ interface RpcBody {
 }
 
 const AGENT_PROMPT_EXECUTION_MS = 30 * 60_000
+// Gateway 收到 tools/cancel 后最多等 30 秒让 Agent 交出终态
+// (backend/agent/internal/server/execution_lifecycle.go)。浏览器侧必须比它宽，
+// 否则一次成功的停止也会被判成「远端终态未确认」。
+const CANCEL_CONFIRM_MS = 35_000
 const RPC_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
 interface ActiveRpcCall {
@@ -90,7 +94,9 @@ export async function POST(req: Request) {
         active.cluster !== cluster ||
         active.instance !== instance ||
         active.sessionId !== args.session_id) {
-      return Response.json({ error: "RPC 不存在或已结束" }, { status: 409 })
+      // 调用已经不在这张表里：可能刚刚完成，也可能停在了别的 Next 实例上。
+      // 用 code 区分于鉴权/参数错误，浏览器据此提示「已结束」而不是「停止失败」。
+      return Response.json({ error: "RPC 不存在或已结束", code: "rpc_not_active" }, { status: 409 })
     }
     active.cancel()
     return Response.json({
@@ -196,12 +202,27 @@ export async function POST(req: Request) {
         finish()
       }
       const sendCancel = () => {
-        if (!cancellationRequested || cancelSent || terminal || !dispatched || ws?.readyState !== WebSocket.OPEN) return
+        if (!cancellationRequested || cancelSent || terminal || closed) return
+        if (!dispatched) {
+          // 派发前停止由 requestCancellation 回 -32007；这里只补一条可见提示。
+          send({ type: "cancel", state: "not_dispatched" })
+          return
+        }
+        if (ws?.readyState !== WebSocket.OPEN) {
+          // 早期版本在这里直接 return：既不通知浏览器，也不 arm 超时，
+          // 用户看到「已请求停止」而远端照跑。现在必须先报告停止没有送达。
+          send({ type: "cancel", state: "unavailable", error: "与 Gateway 的连接已断开，停止请求没有送达" })
+          finishUncertain()
+          return
+        }
         cancelSent = true
         try {
           ws.send(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/cancel", params: { id: callId } }))
-          cancelTimer = setTimeout(finishUncertain, 15_000)
+          clearCancelTimer()
+          cancelTimer = setTimeout(finishUncertain, CANCEL_CONFIRM_MS)
+          send({ type: "cancel", state: "requested" })
         } catch {
+          send({ type: "cancel", state: "unavailable", error: "停止请求没有送达" })
           finishUncertain()
         }
       }
@@ -301,6 +322,23 @@ export async function POST(req: Request) {
           dispatched = true
           armExecutionTimer()
           sendCancel()
+          return
+        }
+
+        // tools/cancel 的应答（id 恒为 3）。旧实现完全忽略它：{"canceled":false}
+        // 表示 Gateway 已没有这条调用、停止根本没生效，必须让用户看见。
+        if (msg.id === 3) {
+          if (msg.result?.canceled === true) {
+            send({ type: "cancel", state: "remote_canceled" })
+            clearCancelTimer()
+            cancelTimer = setTimeout(finishUncertain, CANCEL_CONFIRM_MS)
+            return
+          }
+          send({
+            type: "cancel",
+            state: "rejected",
+            error: msg.error?.message || "Gateway 未找到仍在运行的命令（可能已结束），停止没有生效",
+          })
           return
         }
 

@@ -230,8 +230,13 @@ async function runOperation(hosted: HostedSession, context: AgentGatewayContext,
     terminalEvents = projection.finishMessage(canceled ? TimelineItemStatus.CANCELLED : TimelineItemStatus.FAILED)
   }
   if (hosted.active?.command.commandId === command.commandId) hosted.active.uncertain = uncertain
-  const status = failure ? SessionStatus.FAILED : SessionStatus.COMPLETED
-  const receipt = commandReceipt(command, canceled ? CommandReceiptState.CANCELLED : failure ? CommandReceiptState.FAILED : CommandReceiptState.SUCCEEDED, failure, uncertain)
+  // A user-requested stop that the Gateway confirmed is a normal ending, not a failure: the
+  // protocol has no CANCELLED session status, so it must not leave a red FAILED banner and a
+  // duplicate error timeline item behind. An unconfirmed stop stays FAILED + uncertain.
+  const canceledCleanly = canceled && !uncertain
+  const status = failure && !canceledCleanly ? SessionStatus.FAILED : SessionStatus.COMPLETED
+  const receipt = commandReceipt(command, canceled ? CommandReceiptState.CANCELLED : failure ? CommandReceiptState.FAILED : CommandReceiptState.SUCCEEDED,
+    canceledCleanly ? undefined : failure, uncertain)
   if (uncertain) hosted.uncertainCommandIds.add(command.commandId)
   await hosted.source.emit([
     ...terminalEvents,
