@@ -8,9 +8,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- 智能巡检改为由内置 **Skill 包** 驱动：内置 8 个巡检 Skill（虚拟机、容器运行时、Kubernetes 集群、应用站点、软件包漏洞、代理与暴露面、数据库、SSH 主机），每个包含 `SKILL.md` 与 `scripts/inspect.sh`，随镜像以真实目录嵌入并在首次运行时落盘到 `<dbDir>/skills/`，控制台可直接查看脚本内容并在线试跑。
+- 「巡检详情」新增 **「与上次对比」** 与 **「历史趋势」** 两个面板：前者展示指标增减与检查项的新增、消失、变化，后者按 Skill 与节点展示时间序列；后端新增 `/v1/monitor/metrics` 时序接口，指标点写入 `inspection_metric_points`。
+- 巡检产物改为 **File-First** 落盘：产物写入 `<dbDir>/artifacts/<日期>/<run_id>/<item_id>/`，数据库只保留路径、sha256、字节数与截断标记；单个产物文件超过 256 KiB 会被截断并注明原始字节数。
+
+### Changed
+
+- 手动巡检请求只接受 `skills`，`strategies` 与 `ssh_hosts` 字段已移除并返回明确错误提示，前端同步停止发送这两个字段。
+
+### Removed
+
+- 移除内置原生策略采集器（`vm_host`、`ssh_host`、`k8s_cluster`、`container_runtime`、`app_service`、`database_service`）与 `doops_monitor_inspect` 工具，巡检能力改由对应 Skill 包提供（磁盘 I/O 与 Kubernetes 资源用量两项指标正在补齐）。
+
 ### Fixed
 
 - 修复「AI 助手」回合在其他标签页无法中断的问题：回合在后台运行时，控制台顶部常驻「AI 助手正在执行任务」提示条，可直接「停止 AI 任务」或「查看」，不再需要在被锁住的切换操作上先切回「AI 助手」才能找到停止按钮。
+- 修复 Gateway MySQL 迁移中 `agent_status` 等表在真机导入时报 `Error 1364` / `Error 1048` 的问题：补齐缺失列与默认值，并对 TEXT 列按运行时方言显式赋值。
 
 ## [0.3.28] — 2026-11-23
 
