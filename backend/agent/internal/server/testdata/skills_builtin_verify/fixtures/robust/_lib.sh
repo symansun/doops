@@ -66,6 +66,13 @@ all_pkgs() { # all_pkgs [env-assignment...]
   done
 }
 
+bind_diskstats() { # bind_diskstats <文件>：需 --privileged；把 /proc/diskstats 换成可控输入（SB-02 能力夹具）
+  if ! mount --bind "$1" /proc/diskstats 2>/tmp/bind.err; then
+    echo "ROBUST_FAIL $CASE bind-diskstats $(cat /tmp/bind.err)"
+    exit 1
+  fi
+}
+
 ok() {
   echo "ROBUST_OK $CASE"
 }

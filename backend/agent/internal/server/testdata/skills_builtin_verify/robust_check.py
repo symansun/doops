@@ -7,6 +7,9 @@
   - 无 userinfo 形式凭据
   - 可选 --spec 场景断言：status=、check=、detail=、mount=、forbid=、
     minmounts=、minchecks=、degraded=1、max=、target=1
+  - 指标/检查项专项断言（SB-02 能力补齐）：metric=<k1|k2> 必须存在、
+    nometric=<k1|k2> 必须不存在、metricval=<k:v|k2:v2> 数值相等（相对误差 1e-6）、
+    checkstatus=<id:status|...> 指定检查项状态（用于「降级但不改集群结论」这类断言）
 判定「是否降级 + 降级理由是否在 checks[].detail」并打印一行结论。
 用法：robust_check.py <产物文件> <slug> --spec "status=warning,check=host.disk"
 退出码：0 通过；1 失败（打印 ROBUST_CHECK_FAIL 原因）。
@@ -106,6 +109,45 @@ def main():
         fail(args.slug, "mounts 数量不足（%d < %s）" % (len(mounts), spec["minmounts"]))
     if "forbid" in spec and spec["forbid"] and spec["forbid"] in raw:
         fail(args.slug, "输出中出现禁止子串 %r" % spec["forbid"])
+
+    metrics = payload.get("metrics", [])
+    if not isinstance(metrics, list):
+        metrics = []
+    mvals = {str(m.get("key", "")): m.get("value") for m in metrics if isinstance(m, dict)}
+    if spec.get("metric"):
+        for k in spec["metric"].split("|"):
+            if k and k not in mvals:
+                fail(args.slug, "缺少指标 %s（现有 %s）" % (k, sorted(mvals)))
+    if spec.get("nometric"):
+        for k in spec["nometric"].split("|"):
+            if k and k in mvals:
+                fail(args.slug, "不应存在指标 %s（值 %r）" % (k, mvals[k]))
+    if spec.get("metricval"):
+        for pair in spec["metricval"].split("|"):
+            if not pair:
+                continue
+            if ":" not in pair:
+                fail(args.slug, "metricval 片段非法 %r（应为 key:value）" % pair)
+            k, v = pair.split(":", 1)
+            if k not in mvals:
+                fail(args.slug, "缺少指标 %s（现有 %s）" % (k, sorted(mvals)))
+            try:
+                got = float(mvals[k])
+                want = float(v)
+            except (TypeError, ValueError):
+                fail(args.slug, "指标 %s 不是数值（%r）" % (k, mvals[k]))
+            if abs(got - want) > 1e-6 * max(1.0, abs(want)):
+                fail(args.slug, "指标 %s=%r 期望 %r" % (k, mvals[k], v))
+    if spec.get("checkstatus"):
+        cstat = {str(c.get("id", "")): str(c.get("status", "")) for c in checks if isinstance(c, dict)}
+        for pair in spec["checkstatus"].split("|"):
+            if not pair:
+                continue
+            if ":" not in pair:
+                fail(args.slug, "checkstatus 片段非法 %r（应为 id:status）" % pair)
+            k, v = pair.split(":", 1)
+            if cstat.get(k) != v:
+                fail(args.slug, "检查项 %s status=%r 期望 %r" % (k, cstat.get(k), v))
 
     bad = [c for c in checks if isinstance(c, dict) and c.get("status") != "pass"]
     degraded = payload["status"] != "pass" or bool(bad)

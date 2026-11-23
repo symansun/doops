@@ -15,6 +15,8 @@
 #      C/ja locale、TZ、逐命令缺失 df/free/awk/python3、/proc/meminfo 与 /proc/loadavg 异常、
 #      符号链接环、含空格与中文的挂载路径、5000 挂载点），断言退出码 0 且产物仍为合法协议 JSON，
 #      并逐场景给出「是否降级 + 降级理由」结论
+#   F. SB-02 能力补齐：host.disk_io（/proc/diskstats 可控输入，含分区/虚拟设备排除与延迟告警）
+#      与 k8s.metrics（kubectl top 正向 + metrics-server 不可用降级），正向与降级都真跑并断言指标
 #
 # 用法：
 #   sh verify.sh                跑全部脚本包（夹具与鲁棒性矩阵始终全跑）
@@ -52,6 +54,7 @@ W="$REPO/backend/agent/internal/server/skills_builtin"
 ASSERT="$VROOT/assert_payload.py"
 FIX="$VROOT/fixtures"
 ROBUST="$FIX/robust"
+CAP="$FIX/capability"
 ROBUST_CHECK="$VROOT/robust_check.py"
 
 DOCKER=${SB01_DOCKER:-docker}
@@ -111,6 +114,7 @@ fatal() {
 [ -f "$ASSERT" ] || fatal "缺少协议校验器 $ASSERT"
 [ -f "$ROBUST_CHECK" ] || fatal "缺少鲁棒性校验器 $ROBUST_CHECK"
 [ -d "$ROBUST" ] || fatal "缺少鲁棒性夹具目录 $ROBUST"
+[ -d "$CAP" ] || fatal "缺少能力夹具目录 $CAP"
 if [ "$STATIC_ONLY" != 1 ]; then
   command -v "$DOCKER" >/dev/null 2>&1 || [ -x "$DOCKER" ] || fatal "未找到 docker（${DOCKER}）"
   command -v "$PY" >/dev/null 2>&1 || [ -x "$PY" ] || fatal "未找到 python3（${PY}）"
@@ -337,44 +341,49 @@ check_fixture() { # name file marker [docker-run-args...]
   record PASS "fixture:$name" "$(($(now) - t0))" ""
 }
 
-check_robust() { # name file spec [docker-run-args...]
-  name=$1
-  rfile=$2
-  rspec=$3
-  shift 3
+_check_case() { # label dir subdir name file spec [docker-run-args...]
+  c_label=$1
+  c_dir=$2
+  c_sub=$3
+  c_name=$4
+  c_file=$5
+  c_spec=$6
+  shift 6
   t0=$(now)
-  for f in "$ROBUST/_lib.sh" "$ROBUST/$rfile" "$ROBUST_CHECK"; do
-    [ -f "$f" ] || { record FAIL "robust:$name" "0" "缺少 $f"; return; }
+  # _lib.sh 按目录可选（capability 复用 robust 的库），场景文件与断言器必须存在
+  for cf in "$c_dir/$c_file" "$ROBUST_CHECK"; do
+    [ -f "$cf" ] || { record FAIL "$c_label:$c_name" "0" "缺少 $cf"; return; }
   done
-  for f in "$ROBUST/_lib.sh" "$ROBUST/$rfile"; do
-    if ! sh -n "$f" 2>"$TMP/rsyn"; then
-      record FAIL "robust:$name" "$(($(now) - t0))" "sh -n 失败 ${f##*/}: $(head -1 "$TMP/rsyn")"
+  for cf in "$c_dir/_lib.sh" "$c_dir/$c_file"; do
+    [ -f "$cf" ] || continue
+    if ! sh -n "$cf" 2>"$TMP/rsyn"; then
+      record FAIL "$c_label:$c_name" "$(($(now) - t0))" "sh -n 失败 ${cf##*/}: $(head -1 "$TMP/rsyn")"
       return
     fi
-    if ! "$SHELLCHECK" -s sh "$f" > "$TMP/rsc" 2>&1; then
-      record FAIL "robust:$name" "$(($(now) - t0))" "shellcheck ${f##*/}: $(head -1 "$TMP/rsc")"
+    if ! "$SHELLCHECK" -s sh "$cf" > "$TMP/rsc" 2>&1; then
+      record FAIL "$c_label:$c_name" "$(($(now) - t0))" "shellcheck ${cf##*/}: $(head -1 "$TMP/rsc")"
       return
     fi
   done
   if ! image_ok "$IMG_PY"; then
-    record FAIL "robust:$name" "$(($(now) - t0))" "缺少镜像 ${IMG_PY}（不静默跳过）"
+    record FAIL "$c_label:$c_name" "$(($(now) - t0))" "缺少镜像 ${IMG_PY}（不静默跳过）"
     return
   fi
-  rdir="$TMP/robust-$name"
+  rdir="$TMP/$c_label-$c_name"
   mkdir -p "$rdir"
-  log="$TMP/robust-$name.log"
+  log="$TMP/$c_label-$c_name.log"
   if ! "$DOCKER" run --rm --entrypoint sh "$@" \
       -v "$W:/w:ro" -v "$FIX:/f:ro" -v "$rdir:/out" \
-      -e "CASE=$name" -e "OUT=/out" -e "W=/w" \
-      "$IMG_PY" -c "sh /f/robust/$rfile" > "$log" 2>&1; then
-    record FAIL "robust:$name" "$(($(now) - t0))" "夹具执行失败: $(tail -1 "$log")"
+      -e "CASE=$c_name" -e "OUT=/out" -e "W=/w" \
+      "$IMG_PY" -c "sh /f/$c_sub/$c_file" > "$log" 2>&1; then
+    record FAIL "$c_label:$c_name" "$(($(now) - t0))" "夹具执行失败: $(tail -1 "$log")"
     return
   fi
-  if ! grep -q -- "ROBUST_OK $name" "$log"; then
-    record FAIL "robust:$name" "$(($(now) - t0))" "缺少 ROBUST_OK 标记: $(tail -1 "$log")"
+  if ! grep -q -- "ROBUST_OK $c_name" "$log"; then
+    record FAIL "$c_label:$c_name" "$(($(now) - t0))" "缺少 ROBUST_OK 标记: $(tail -1 "$log")"
     return
   fi
-  printf '%s\n' "$rspec" | tr ';' '\n' > "$TMP/rspec-$name"
+  printf '%s\n' "$c_spec" | tr ';' '\n' > "$TMP/rspec-$c_label-$c_name"
   summary=""
   while IFS= read -r item; do
     item=$(printf '%s' "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -384,19 +393,23 @@ check_robust() { # name file spec [docker-run-args...]
     case "$item" in
       *:*) ropts=${item#*:} ;;
     esac
-    rout="$rdir/$name.$rslug.md"
+    rout="$rdir/$c_name.$rslug.md"
     if [ ! -f "$rout" ]; then
-      record FAIL "robust:$name" "$(($(now) - t0))" "缺少产物 $rslug"
+      record FAIL "$c_label:$c_name" "$(($(now) - t0))" "缺少产物 $rslug"
       return
     fi
     if ! rline=$("$PY" "$ROBUST_CHECK" "$rout" "$rslug" --spec "$ropts" 2>&1); then
-      record FAIL "robust:$name" "$(($(now) - t0))" "$rline"
+      record FAIL "$c_label:$c_name" "$(($(now) - t0))" "$rline"
       return
     fi
     summary="${summary}${rline#ROBUST_CHECK }; "
-  done < "$TMP/rspec-$name"
-  record PASS "robust:$name" "$(($(now) - t0))" "$summary"
+  done < "$TMP/rspec-$c_label-$c_name"
+  record PASS "$c_label:$c_name" "$(($(now) - t0))" "$summary"
 }
+
+check_robust() { _check_case robust "$ROBUST" robust "$@"; }
+
+check_capability() { _check_case capability "$CAP" capability "$@"; }
 
 check_fixture_or_warn() { # name file marker —— 需 --privileged，受限环境下显式 WARN
   if [ "$NO_PRIV" = 1 ]; then
@@ -410,7 +423,15 @@ check_robust_or_warn() { # name file spec —— 需 --privileged，受限环境
   if [ "$NO_PRIV" = 1 ]; then
     record_warn "robust:$1" 0 "no_privileged_docker（SB01_NO_PRIVILEGED=1：需 --privileged 的场景未执行，不静默跳过）"
   else
-    check_robust "$1" "$2" "$3" --privileged
+    check_robust "$@" --privileged
+  fi
+}
+
+check_capability_or_warn() { # name file spec —— 需 --privileged（bind mount /proc），受限环境下显式 WARN
+  if [ "$NO_PRIV" = 1 ]; then
+    record_warn "capability:$1" 0 "no_privileged_docker（SB01_NO_PRIVILEGED=1：需 --privileged 的能力夹具未执行，不静默跳过）"
+  else
+    check_capability "$@" --privileged
   fi
 }
 
@@ -448,6 +469,14 @@ else
     echo "-- 运行时正常/异常路径夹具 --"
     check_fixture runtime_stats runtime_stats_shim.sh RUNTIME_STATS_OK
     check_fixture runtime_stats_fail runtime_stats_fail_shim.sh RUNTIME_STATS_FAIL_OK
+
+    echo ""
+    echo "-- SB-02 能力补齐：host.disk_io（分区/虚拟设备排除 + 延迟告警）与 k8s.metrics（正向 + 降级） --"
+    check_capability_or_warn disk_io cap_disk_io.sh 'inspect-vm-host:check=host.disk_io,checkstatus=host.disk_io:pass,metric=disk_io_reads|disk_io_writes|disk_io_read_bytes|disk_io_write_bytes|disk_io_latency_ms,metricval=disk_io_reads:4000|disk_io_writes:6000|disk_io_read_bytes:419430400|disk_io_write_bytes:629145600|disk_io_latency_ms:0.67'
+    check_capability_or_warn disk_io_latency cap_disk_io_latency.sh 'inspect-vm-host:status=warning,check=host.disk_io,checkstatus=host.disk_io:warning,metricval=disk_io_latency_ms:60'
+    check_capability_or_warn disk_io_missing cap_disk_io_missing.sh 'inspect-vm-host:check=host.disk_io,checkstatus=host.disk_io:warning,nometric=disk_io_reads|disk_io_write_bytes,detail=/proc/diskstats'
+    check_capability k8s_metrics cap_k8s_metrics.sh 'inspect-k8s-cluster:status=pass,check=k8s.metrics,checkstatus=k8s.metrics:pass,metricval=k8s_node_cpu_millicores:2000|k8s_node_memory_bytes:4294967296|k8s_pod_cpu_millicores:300|k8s_pod_memory_bytes:671088640|k8s_pods_with_usage:2'
+    check_capability k8s_metrics_gap cap_k8s_metrics_gap.sh 'inspect-k8s-cluster:status=pass,check=k8s.metrics,checkstatus=k8s.metrics:warning,nometric=k8s_node_cpu_millicores|k8s_pod_cpu_millicores,detail=Metrics API'
   fi
 
   echo ""
