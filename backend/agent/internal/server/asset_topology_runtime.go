@@ -200,7 +200,7 @@ func (h *GatewayHub) applyRuntime(ctx context.Context, auth TokenAuth, r runtime
 	}
 	defer tx.Rollback()
 	// Reserve the writer, then recheck identity, grants, managed namespace, Agent generation and previous snapshot.
-	if err = tx.QueryRow(`UPDATE audit_events SET status='executing' WHERE id=? AND session=? AND status='running' RETURNING id`, auditID, session).Scan(&auditID); err != nil {
+	if err = gatewayExecExactlyOne(tx, `UPDATE audit_events SET status='executing' WHERE id=? AND session=? AND status='running'`, auditID, session); err != nil {
 		return err
 	}
 	current, err := currentRuntime(ctx, tx, auth, r.runtimeKey)

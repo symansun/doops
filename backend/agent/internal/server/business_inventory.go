@@ -116,7 +116,7 @@ func (s *GatewayStore) applyBusinessInventory(ctx context.Context, auth TokenAut
 	}
 	defer tx.Rollback()
 	// Reserve the writer before checking the current role, revision and sources.
-	if err := tx.QueryRow(`UPDATE audit_events SET status='executing' WHERE id=? AND session=? AND status='running' RETURNING id`, auditID, session).Scan(&auditID); err != nil {
+	if err := gatewayExecExactlyOne(tx, `UPDATE audit_events SET status='executing' WHERE id=? AND session=? AND status='running'`, auditID, session); err != nil {
 		return 0, machineInventoryProblem{503, "audit_unavailable", "无法锁定本次审计记录"}
 	}
 	if err := requireInventoryAdmin(tx, auth); err != nil {
