@@ -12,7 +12,6 @@
 | SF-05 | 前端接 SF-04：viewer Diff/Trends + 删死开关 + 改发 `skill`/`actions` 停发 `strategies`/`ssh_hosts`（SF-09 后手动巡检必 400） | dev-artifact-01 | `components/inspection-artifact-viewer.tsx`、`components/skill-registry-panel.tsx`、`components/inspection-center-panel.tsx`、`lib/demo.ts`、`lib/monitor-engine.ts`(+test)、新增 `lib/monitor-metrics.ts`(+test) | 01:26，01:48 扩范围 | 运行中 |
 | SF-13 | legacy strategy 退役后的残留清扫（文档/注释/死列标注/`retiredStrategySkillSlugs` slug 钉子） | dev-sf-01 | `DOOPS_WEBUI.md`、`GATEWAY_MYSQL_MIGRATION_PLAN.md`、spec、`AGENTS.md`、`gateway_store_schema.go` 仅注释 | 01:52 | 运行中 |
 | QA-02 | 全仓回归：`go test ./...` 全包 + pytest + verify.sh + 残留扫描（SF-09 删 2186 行的保险） | qa-skill-01 | 只新增 `docs/reviews/2026-11-24-main-regression.md` | 01:52 | 运行中 |
-| SF-08 | 内置巡检包鲁棒性矩阵（10 场景真跑）+ 端口表收紧 + ssh-host 退化分支 + 消费 `DOOPS_TARGET_*` | skill-dev-01 | `skills_builtin/**`、`testdata/skills_builtin_verify/**` | 01:15，01:27 加附录 | 运行中 |
 | INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）+ `agent_status` 两列 + census 刷新 + 真机回读 | integrator-ars | `gateway_mysql_schema.sql`、`testdata/gateway-sqlite-schema.sql`、`gateway_mysql_runtime_test.go`、`gateway_store_schema.go` | 01:23 | 运行中 |
 
 ## 待办（排队/待决策）
@@ -37,6 +36,7 @@
 | SF-06 | 架构符合性核验（模板 B，只读） | 102711e6 | 符合 13 · 部分 6 · 不符合 0 · 进行中 3 · 未覆盖 1 |
 | SF-07 | 内置包真跑 + 静态契约（`testdata/skills_builtin_verify/verify.sh`） | 6 提交至 8371e99a | 20/20 PASS；6 个 inspect.sh 0644→0755 真缺陷 |
 | SB-01 | 8 个 Skill 包内容建设（脚本/degraded/去重夹具） | f00e01bf…8371e99a | disk_total 去重后 1837.15 GiB 未翻倍、canary 零命中 |
+| SF-08 | 内置巡检包鲁棒性矩阵（14 场景真跑）+ 端口表收紧 + ssh-host 退化分支 + 消费 `DOOPS_TARGET_*` | 583af310、dd755a7c、6616a0d3、f645012b、5498cb2d | 34/34 PASS（20 旧 + 14 robust）；两个真实缺陷：非 UTF-8 静默丢磁盘（反例 mounts=0）、整条产物 404113 B 超 256 KiB；静态断言锁死 PROXY_PORTS=spec §2.4 |
 | QA-01 | 独立基线实测报告 | 7beb4679 | 缺陷进 SF-07/SB-01 |
 | INT-01 | Gateway MySQL 迁移主干合入 | 801a73e6、8cf75d87 | 真 mysql:8.4 全链搬运，58 表 |
 | INT-04 | 导出/DDL 覆盖补齐 + 全等守卫 | ca443a16 | 61 表/49+4 索引/12 触发器，真机 8.655s |
