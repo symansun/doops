@@ -7,7 +7,7 @@ import { auditQueryParams, randomSession } from "@/lib/gateway"
 import { isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { workspaceArtifactsFromChanges } from "@/lib/agent-code-workspace"
 import { createVisibilityScopedRuntime } from "@/lib/agent-error"
-import { doopsStartPromptGroups } from "@/lib/doops-start-prompts"
+import { startPromptGroupsForTarget } from "@/lib/doops-start-prompts"
 import {
   Badge,
   Button,
@@ -277,7 +277,7 @@ export function AgentUiPanel({
         </div>
       }
       defaultMode="work"
-      startPromptGroups={doopsStartPromptGroups}
+      startPromptGroups={startPromptGroupsForTarget(target.kubernetes_available)}
       locale="zh-CN"
       presentation="developer"
       runtime={runtime}

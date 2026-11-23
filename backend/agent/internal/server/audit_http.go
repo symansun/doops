@@ -12,32 +12,34 @@ type auditResponse struct {
 }
 
 type auditRecord struct {
-	ID              int64                 `json:"id"`
-	UserID          string                `json:"user_id"`
-	TokenID         string                `json:"token_id"`
-	Cluster         string                `json:"cluster"`
-	Instance        string                `json:"instance"`
-	CredentialID    string                `json:"credential_id,omitempty"`
-	VersionID       string                `json:"credential_version_id,omitempty"`
-	GrantID         string                `json:"credential_grant_id,omitempty"`
-	Scope           *CredentialGrantScope `json:"scope,omitempty"`
-	ResourceVersion string                `json:"resource_version,omitempty"`
-	Digest          string                `json:"digest,omitempty"`
-	CorrelationID   string                `json:"correlation_id,omitempty"`
-	Action          string                `json:"action"`
-	Session         string                `json:"session"`
-	CommandSummary  string                `json:"command_summary"`
-	Status          string                `json:"status"`
-	Error           string                `json:"error,omitempty"`
-	Tail            string                `json:"tail,omitempty"`
-	BytesIn         int64                 `json:"bytes_in"`
-	BytesOut        int64                 `json:"bytes_out"`
-	Model           string                `json:"model,omitempty"`
-	InputTokens     int64                 `json:"input_tokens,omitempty"`
-	OutputTokens    int64                 `json:"output_tokens,omitempty"`
-	TotalTokens     int64                 `json:"total_tokens,omitempty"`
-	StartedAt       string                `json:"started_at"`
-	EndedAt         string                `json:"ended_at,omitempty"`
+	ManifestRevision uint64                `json:"manifest_revision,omitempty"`
+	ResourceRefs     []string              `json:"resource_refs,omitempty"`
+	ID               int64                 `json:"id"`
+	UserID           string                `json:"user_id"`
+	TokenID          string                `json:"token_id"`
+	Cluster          string                `json:"cluster"`
+	Instance         string                `json:"instance"`
+	CredentialID     string                `json:"credential_id,omitempty"`
+	VersionID        string                `json:"credential_version_id,omitempty"`
+	GrantID          string                `json:"credential_grant_id,omitempty"`
+	Scope            *CredentialGrantScope `json:"scope,omitempty"`
+	ResourceVersion  string                `json:"resource_version,omitempty"`
+	Digest           string                `json:"digest,omitempty"`
+	CorrelationID    string                `json:"correlation_id,omitempty"`
+	Action           string                `json:"action"`
+	Session          string                `json:"session"`
+	CommandSummary   string                `json:"command_summary"`
+	Status           string                `json:"status"`
+	Error            string                `json:"error,omitempty"`
+	Tail             string                `json:"tail,omitempty"`
+	BytesIn          int64                 `json:"bytes_in"`
+	BytesOut         int64                 `json:"bytes_out"`
+	Model            string                `json:"model,omitempty"`
+	InputTokens      int64                 `json:"input_tokens,omitempty"`
+	OutputTokens     int64                 `json:"output_tokens,omitempty"`
+	TotalTokens      int64                 `json:"total_tokens,omitempty"`
+	StartedAt        string                `json:"started_at"`
+	EndedAt          string                `json:"ended_at,omitempty"`
 }
 
 type auditPurgeResponse struct {
@@ -68,31 +70,33 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 		records := make([]auditRecord, 0, len(events))
 		for _, event := range events {
 			record := auditRecord{
-				ID:              event.ID,
-				UserID:          event.UserID,
-				TokenID:         event.TokenID,
-				Cluster:         event.Cluster,
-				Instance:        event.Instance,
-				CredentialID:    event.CredentialID,
-				VersionID:       event.VersionID,
-				GrantID:         event.GrantID,
-				Scope:           event.Scope,
-				ResourceVersion: event.ResourceVersion,
-				Digest:          event.Digest,
-				CorrelationID:   event.CorrelationID,
-				Action:          string(event.Action),
-				Session:         event.Session,
-				CommandSummary:  event.CommandSummary,
-				Status:          event.Status,
-				Error:           event.Error,
-				Tail:            event.Tail,
-				BytesIn:         event.BytesIn,
-				BytesOut:        event.BytesOut,
-				Model:           event.Model,
-				InputTokens:     event.InputTokens,
-				OutputTokens:    event.OutputTokens,
-				TotalTokens:     event.TotalTokens,
-				StartedAt:       event.StartedAt.UTC().Format(time.RFC3339),
+				ManifestRevision: event.ManifestRevision,
+				ResourceRefs:     event.ResourceRefs,
+				ID:               event.ID,
+				UserID:           event.UserID,
+				TokenID:          event.TokenID,
+				Cluster:          event.Cluster,
+				Instance:         event.Instance,
+				CredentialID:     event.CredentialID,
+				VersionID:        event.VersionID,
+				GrantID:          event.GrantID,
+				Scope:            event.Scope,
+				ResourceVersion:  event.ResourceVersion,
+				Digest:           event.Digest,
+				CorrelationID:    event.CorrelationID,
+				Action:           string(event.Action),
+				Session:          event.Session,
+				CommandSummary:   event.CommandSummary,
+				Status:           event.Status,
+				Error:            event.Error,
+				Tail:             event.Tail,
+				BytesIn:          event.BytesIn,
+				BytesOut:         event.BytesOut,
+				Model:            event.Model,
+				InputTokens:      event.InputTokens,
+				OutputTokens:     event.OutputTokens,
+				TotalTokens:      event.TotalTokens,
+				StartedAt:        event.StartedAt.UTC().Format(time.RFC3339),
 			}
 			if !event.EndedAt.IsZero() {
 				record.EndedAt = event.EndedAt.UTC().Format(time.RFC3339)

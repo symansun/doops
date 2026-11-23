@@ -157,23 +157,31 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		entry.lastUsed = time.Now()
 		gw.sessionMapMu.Unlock()
 	}
+	var systemPrompt string
+	sysPromptPaths := []string{"/app/skills/system_prompt.md", "/app/self-docs/agent/skills/system_prompt.md"}
+	for _, sp := range sysPromptPaths {
+		if data, err := os.ReadFile(sp); err == nil {
+			systemPrompt = string(data)
+			log.Printf("📋 首次会话，已注入系统提示词: %s (%d bytes)", sp, len(data))
+			break
+		}
+	}
+	var kubernetes bool
+	if manifestExecution, ok := ctx.Value(executionTargetManifestKey{}).(executionTargetManifest); ok {
+		systemPrompt += manifestExecution.promptFacts(time.Now())
+		kubernetes = manifestExecution.Manifest.Target.KubernetesAvailable != nil && *manifestExecution.Manifest.Target.KubernetesAvailable
+	} else {
+		runtime := currentTargetRuntime(ctx)
+		systemPrompt += runtime.promptFacts()
+		kubernetes = runtime.Kubernetes
+	}
+
 	// 首次会话：创建 doagent session 并注入系统提示词
 	if targetSessionID == "" {
 		requestedSessionID := doopsSessionID
 		if responseFormat == "json" {
 			requestedSessionID = fmt.Sprintf("%s-json-%d-%d", doopsSessionID, time.Now().UnixNano(), doagentPromptSessionSequence.Add(1))
 		}
-		var systemPrompt string
-		sysPromptPaths := []string{"/app/skills/system_prompt.md", "/app/self-docs/agent/skills/system_prompt.md"}
-		for _, sp := range sysPromptPaths {
-			if data, err := os.ReadFile(sp); err == nil {
-				systemPrompt = string(data)
-				log.Printf("📋 首次会话，已注入系统提示词: %s (%d bytes)", sp, len(data))
-				break
-			}
-		}
-		systemPrompt += currentTargetRuntime(ctx).promptFacts()
-
 		createResp, err := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
 			"jsonrpc": "2.0",
 			"id":      "create-" + doopsSessionID,
@@ -219,6 +227,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"method":  "session/new",
 			"params": map[string]interface{}{
 				"sessionId":      targetSessionID,
+				"systemPrompt":   systemPrompt,
 				"permissionMode": "auto",
 			},
 		}); err != nil {
@@ -355,7 +364,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	if deadline, ok := ctx.Deadline(); ok {
 		promptParams["wallClockTimeoutSecs"] = max(1, int64(time.Until(deadline)/time.Second))
 	}
-	allowedTools := doagentAllowedTools(execution.RequireToolEvidence, execution.Skill, currentTargetRuntime(ctx).Kubernetes)
+	allowedTools := doagentAllowedTools(execution.RequireToolEvidence, execution.Skill, kubernetes)
 	promptParams["allowedTools"] = allowedTools
 	promptParams["mutationAuthorized"] = execution.RequireToolEvidence
 	if execution.RequireToolEvidence {

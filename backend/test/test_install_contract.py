@@ -401,7 +401,7 @@ def test_installer_uses_release_commit_when_worktree_skill_and_docs_are_updated(
 
 @pytest.mark.parametrize("has_migrations", [True, False], ids=["inventory-release", "historical-release"])
 def test_installer_updates_existing_agent_copies_without_touching_runtime_state(tmp_path, has_migrations):
-    sql_names = ("machine_inventory.sql", "cluster_inventory.sql", "inventory_node_links.sql")
+    sql_names = ("machine_inventory.sql", "cluster_inventory.sql", "inventory_node_links.sql", "agent_resource_sync.sql")
     docs = {"release.md": "release docs\n"}
     if has_migrations:
         docs.update({f"migrations/{name}": (ROOT / "docs/migrations" / name).read_text() for name in sql_names})

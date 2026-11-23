@@ -4,7 +4,7 @@ import { proxyGatewayRequest } from "@/lib/server/gateway-proxy"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const endpoints = new Set(["catalog", "cluster-profiles", "records", "workspace", "machines", "clusters", "node-links", "dashboard", "systems", "topology", "coverage", "monitor", "inspections", "machine-diagnostics"])
+const endpoints = new Set(["catalog", "cluster-profiles", "records", "workspace", "machines", "clusters", "node-links", "dashboard", "systems", "topology", "coverage", "monitor", "inspections", "machine-diagnostics", "target-manifest"])
 
 async function inventory(req: Request, ctx: { params: Promise<{ kind: string }> }) {
   const { kind } = await ctx.params
@@ -15,7 +15,7 @@ async function inventory(req: Request, ctx: { params: Promise<{ kind: string }> 
     const query = req.method === "GET" ? new URL(req.url).search : ""
     const path = `/v1/assets/${kind}${query}`
     return await proxyGatewayRequest(req, path, {
-      errorLabel: "资产台账",
+      errorLabel: kind === "target-manifest" ? "目标资源清单" : "资产台账",
       csvDownload: kind === "coverage" && req.method === "GET" && new URL(req.url).searchParams.get("format") === "csv",
     })
   } catch (error) {

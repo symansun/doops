@@ -72,6 +72,9 @@ func toolCallParamsFor(a *GatewayAgent, params api.ToolCallParams, timeout time.
 		"name":      params.Name,
 		"arguments": params.Arguments,
 	}
+	if len(params.TargetManifest) != 0 {
+		callParams["target_manifest"] = params.TargetManifest
+	}
 	if a != nil && a.ToolDeadline && timeout > 0 {
 		callParams["timeout_ms"] = timeout.Milliseconds()
 	}

@@ -118,7 +118,10 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	)
 	hub.client = NewClientService(store, registry, opts)
 	hub.client.hub = hub
-	hub.registration.onRegistered = hub.deliverAgentCredentials
+	hub.registration.onRegistered = func(agent *GatewayAgent) {
+		go hub.deliverAgentCredentials(agent)
+		go hub.runAgentResourceSync(agent)
+	}
 	edge, err := NewEdgeRegistry(store)
 	if err != nil {
 		panic(err)
@@ -151,25 +154,26 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/mcp-servers", h.HandlePlatformMCPServers)
 	mux.HandleFunc("/v1/mcp-servers/", h.HandlePlatformMCPServers)
 	mux.HandleFunc("/v1/assets/records", h.HandlePersonalAssetRecords)
-	mux.HandleFunc("/v1/assets/catalog", h.HandleResourceCatalog)
+	mux.HandleFunc("/v1/assets/catalog", h.resourceCatalogHandler(h.HandleResourceCatalog))
 	mux.HandleFunc("/v1/assets/cluster-profiles", h.HandleClusterProfiles)
-	mux.HandleFunc("/v1/assets/workspace", h.HandleAgentAssetScope)
-	mux.HandleFunc("/v1/assets/machines", h.HandleMachineInventory)
-	mux.HandleFunc("/v1/assets/clusters", h.HandleClusterInventory)
+	mux.HandleFunc("/v1/assets/workspace", h.resourceCatalogHandler(h.HandleAgentAssetScope))
+	mux.HandleFunc("/v1/assets/machines", h.resourceCatalogHandler(h.HandleMachineInventory))
+	mux.HandleFunc("/v1/assets/clusters", h.resourceCatalogHandler(h.HandleClusterInventory))
 	mux.HandleFunc("/v1/assets/node-links", h.HandleAssetNodeLinks)
 	mux.HandleFunc("/v1/assets/dashboard", h.HandleAssetDashboard)
-	mux.HandleFunc("/v1/assets/machine-diagnostics", h.HandleMachineDiagnostics)
-	mux.HandleFunc("/v1/assets/systems", h.HandleBusinessInventory)
+	mux.HandleFunc("/v1/assets/machine-diagnostics", h.resourceCatalogHandler(h.HandleMachineDiagnostics))
+	mux.HandleFunc("/v1/assets/systems", h.resourceCatalogHandler(h.HandleBusinessInventory))
 	mux.HandleFunc("/v1/assets/topology", h.HandleAssetTopology)
 	mux.HandleFunc("/v1/assets/coverage", h.HandleAssetCoverage)
 	mux.HandleFunc("/v1/assets/monitor", h.HandleAssetMonitor)
 	mux.HandleFunc("/v1/assets/inspections", h.HandleAssetInspection)
+	mux.HandleFunc("/v1/assets/target-manifest", h.HandleTargetManifest)
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
 	mux.HandleFunc("/v1/background-tasks", h.HandleBackgroundTasks)
 	mux.HandleFunc("/v1/background-tasks/", h.HandleBackgroundTask)
-	mux.HandleFunc("/v1/credential-bundles", h.HandleCredentialBundles)
-	mux.HandleFunc("/v1/credentials", h.HandleCredentials)
-	mux.HandleFunc("/v1/credentials/", h.HandleCredential)
+	mux.HandleFunc("/v1/credential-bundles", h.resourceCatalogHandler(h.HandleCredentialBundles))
+	mux.HandleFunc("/v1/credentials", h.resourceCatalogHandler(h.HandleCredentials))
+	mux.HandleFunc("/v1/credentials/", h.resourceCatalogHandler(h.HandleCredential))
 	admin := func(path string, handler http.HandlerFunc) {
 		mux.HandleFunc(path, h.auditAdminMutation(path, handler))
 	}

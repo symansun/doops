@@ -60,6 +60,7 @@ import { AgentAssets, AgentDirectory } from "./agent-asset-scope"
 import { AgentMonitor } from "./asset-monitor-panel"
 import { CurrentMachineSection, DashboardPanel } from "./dashboard-panel"
 import { NodeInfoCard } from "./node-info-card"
+import { TargetManifestCard } from "./target-manifest-card"
 import { DeployView } from "./deploy-view"
 import { ConsoleNav } from "./console-nav"
 import { SessionInput } from "./session-input"
@@ -745,6 +746,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
         catalogKind={catalogKind}
         isAdmin={isAdmin}
         hasTarget={Boolean(onlineSelected)}
+        kubernetesAvailable={selected?.kubernetes_available}
         onNavigate={navigateEntry}
       />
       <div className="console-workspace flex min-h-0 min-w-0 flex-1 flex-col">
@@ -863,7 +865,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           onRunningChange={setSkillRunning}
         />{!session.demo && (assetPage.section==="clusters" || assetPage.section==="machines") && <LegacyAssetNotes key={assetPage.section} kind={assetPage.section==="clusters"?"k8s":"vm"}/>}</>
       ) : view === "deploy" ? (
-        <DeployView section={deploySection} onSection={setDeploySection} session={session} target={onlineSelected} sessionId={sessionId} onEnterConsole={() => { openView("console"); refresh("user") }}
+        <DeployView section={deploySection} onSection={setDeploySection} session={session} target={onlineSelected} kubernetesAvailable={selected?.kubernetes_available} sessionId={sessionId} onEnterConsole={() => { openView("console"); refresh("user") }}
           onOpenCredentials={openCredentials} />
       ) : (
       <div className={tab === "ask" && onlineSelected ? "flex shrink-0" : "flex min-h-0 flex-1"}>
@@ -884,6 +886,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           ) : tab === "overview" ? (
             <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
               <CurrentMachineSection selected={selected} />
+              {!session.demo && <TargetManifestCard key={selected.key} target={selected} />}
               <NodeInfoCard
                 key={`node-info-${selected.key}`}
                 session={session}
@@ -893,6 +896,11 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 onRunningChange={setSkillRunning}
               />
             </div>
+          ) : tab === "k8s" && selected.kubernetes_available === false ? (
+            <section className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
+              <StatusBanner tone="warning">当前目标无法访问 Kubernetes。</StatusBanner>
+              <Button size="sm" onClick={() => selectTab("overview")}>返回 Agent 概览</Button>
+            </section>
           ) : tab === "assets" || tab === "monitor" ? (
             <section className="min-h-0 flex-1 overflow-auto p-4" key={selected.key + tab}>
               {tab === "assets" ? (
