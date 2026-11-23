@@ -492,6 +492,123 @@ body {
     transition: width 200ms ease;
   }
 
+  /* 3D Holographic Command Center Surfaces & Animations */
+  .doops-3d-stage {
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(ellipse 80% 55% at 50% 0%, color-mix(in oklch, var(--brand-blue) 18%, transparent), transparent 70%),
+      radial-gradient(ellipse 65% 50% at 85% 95%, color-mix(in oklch, var(--brand-teal) 14%, transparent), transparent 70%),
+      linear-gradient(180deg, oklch(0.14 0.025 262) 0%, oklch(0.11 0.022 262) 100%);
+  }
+
+  .doops-3d-grid-floor {
+    pointer-events: none;
+    position: absolute;
+    inset: -30% -20%;
+    background-image:
+      linear-gradient(to right, color-mix(in oklch, var(--brand-teal) 12%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklch, var(--brand-blue) 14%, transparent) 1px, transparent 1px);
+    background-size: 36px 36px;
+    transform: perspective(640px) rotateX(62deg) translateY(34%);
+    transform-origin: center bottom;
+    mask-image: radial-gradient(ellipse 75% 75% at 50% 55%, #000 15%, transparent 78%);
+    -webkit-mask-image: radial-gradient(ellipse 75% 75% at 50% 55%, #000 15%, transparent 78%);
+  }
+
+  .doops-3d-slab {
+    position: relative;
+    transform-style: preserve-3d;
+    backdrop-filter: blur(8px);
+    box-shadow:
+      0 14px 28px -12px rgb(0 0 0 / 0.72),
+      0 3px 0 0 color-mix(in oklch, var(--brand-blue) 30%, oklch(0.24 0.02 262)),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.09);
+  }
+
+  .doops-3d-node {
+    transform-style: preserve-3d;
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease, border-color 180ms ease;
+    box-shadow:
+      0 8px 18px -10px rgb(0 0 0 / 0.75),
+      0 2px 0 0 rgb(255 255 255 / 0.06),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.08);
+  }
+
+  .doops-3d-node:hover {
+    transform: translateZ(16px) translateY(-2px);
+    box-shadow:
+      0 18px 32px -12px rgb(0 0 0 / 0.85),
+      0 0 18px -4px color-mix(in oklch, var(--brand-teal) 45%, transparent),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.16);
+  }
+
+  .doops-3d-node-active {
+    transform: translateZ(20px) translateY(-2px);
+    box-shadow:
+      0 20px 36px -12px rgb(0 0 0 / 0.88),
+      0 0 24px -3px color-mix(in oklch, var(--brand-teal) 60%, transparent),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.22);
+  }
+
+  .doops-beam-pulse {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .doops-beam-pulse::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 12px;
+    background: linear-gradient(180deg, transparent, var(--brand-teal), transparent);
+    animation: doops-beam-flow 1.8s linear infinite;
+  }
+
+  .doops-scan-beam {
+    pointer-events: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, transparent, var(--brand-teal), var(--brand-blue), transparent);
+    box-shadow: 0 0 26px 6px color-mix(in oklch, var(--brand-teal) 55%, transparent);
+    animation: doops-scan-sweep 1.8s ease-in-out infinite;
+    z-index: 30;
+  }
+
+  @keyframes doops-beam-flow {
+    0% {
+      transform: translateY(-100%);
+      opacity: 0;
+    }
+    25% {
+      opacity: 1;
+    }
+    75% {
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(260%);
+      opacity: 0;
+    }
+  }
+
+  @keyframes doops-scan-sweep {
+    0% {
+      top: 4%;
+      opacity: 0.15;
+    }
+    50% {
+      opacity: 0.95;
+    }
+    100% {
+      top: 94%;
+      opacity: 0.15;
+    }
+  }
+
   @media (pointer: coarse) {
     .btn,
     .segment-option {

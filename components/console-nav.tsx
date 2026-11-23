@@ -1,6 +1,6 @@
 "use client"
 
-import { ArrowUpCircle, Boxes, Database, Globe2, Layers, PackagePlus, Server, Shield, Workflow } from "lucide-react"
+import { ArrowUpCircle, Boxes, ClipboardCheck, Database, Globe2, Layers, PackagePlus, Radar, Server, Shield, Sparkles, Workflow } from "lucide-react"
 import { useEffect, useRef } from "react"
 import type { ComponentType } from "react"
 import {
@@ -34,6 +34,9 @@ const ICONS: Record<string, NavIcon> = {
   credentials: KeyIcon,
   audit: HistoryIcon,
   kb: FileTextIcon,
+  "situational-awareness": Radar,
+  "smart-inspection": ClipboardCheck,
+  "skill-registry": Sparkles,
   "platform-monitor": ActivityIcon,
   "ledger-machines": Server,
   vm: Server,

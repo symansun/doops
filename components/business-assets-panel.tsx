@@ -3,30 +3,28 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { assetRequest } from "@/lib/assets"
-import { Button, Input, PageTabs, Select } from "./ui"
-import { AssetTopologyPanel } from "./asset-topology-panel"
+import { Button, Input, Select } from "./ui"
 
 type Deployment = { cluster: string; instance: string; namespace: string; application: string; database: string; verified_at: string }
 type BusinessSystem = { asset_id: string; name: string; owner: string; active: boolean; revision: number; deployments: Deployment[] }
-type Props = { session: Session; targets: Target[] }
+type Props = { session: Session; targets: Target[]; onOpenSituation?: () => void }
 const sourceKey = (cluster: string, instance: string) => JSON.stringify([cluster, instance])
 const edgeKey = (d: Omit<Deployment, "verified_at">) => JSON.stringify([d.cluster, d.instance, d.namespace, d.application, d.database])
 
-export function BusinessAssetsPanel({ session, targets }: Props) {
+export function BusinessAssetsPanel({ session, targets, onOpenSituation }: Props) {
   const admin = sessionIsAdmin(session)
   const scope = admin ? [] : targets.map(t => sourceKey(t.cluster, t.instance)).sort()
   const identity = JSON.stringify([session.gateway, session.username, session.tokenId, session.issuedAt, admin, scope])
-  return <Ledger key={identity} session={session} targets={targets} />
+  return <Ledger key={identity} session={session} targets={targets} onOpenSituation={onOpenSituation} />
 }
 
-function Ledger({ session, targets }: Props) {
+function Ledger({ session, targets, onOpenSituation }: Props) {
   const admin = sessionIsAdmin(session)
   const [systems, setSystems] = useState<BusinessSystem[] | null>(null)
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
   const [query, setQuery] = useState("")
   const [version, setVersion] = useState(0)
-  const [subTab, setSubTab] = useState<"systems" | "topology">("systems")
   const [editor, setEditor] = useState<{ system?: BusinessSystem } | null>(null)
   function refresh() { setError(""); setSystems(null); setVersion(v => v + 1) }
   useEffect(() => {
@@ -40,23 +38,17 @@ function Ledger({ session, targets }: Props) {
   const term = query.trim().toLowerCase()
   const filtered = systems?.filter(s => [s.asset_id, s.name, s.owner, ...s.deployments.flatMap(d => [d.cluster, d.instance, d.namespace, d.application, d.database])].some(field => field.toLowerCase().includes(term)))
   return <section aria-label="业务系统台账" className="card-surface min-w-0 space-y-4 p-4">
-    <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-xl font-semibold">业务系统与拓扑</h2>
-      {subTab === "systems" && !editor && <div className="flex flex-wrap gap-2"><Button size="sm" onClick={refresh} disabled={!systems && !error}>刷新</Button>
-        {admin && <Button size="sm" variant="primary" disabled={!systems} onClick={() => { setNotice(""); setEditor({}) }}>登记系统</Button>}</div>}</header>
-    {!editor && (
-      <PageTabs
-        ariaLabel="业务系统与拓扑视图"
-        value={subTab}
-        onChange={setSubTab}
-        items={[
-          { id: "systems", label: `系统台账${systems ? ` (${systems.length})` : ""}` },
-          { id: "topology", label: "分层拓扑图" },
-        ]}
-      />
-    )}
-    {subTab === "topology" && !editor ? (
-      <AssetTopologyPanel />
-    ) : <>
+    <header className="flex flex-wrap items-center justify-between gap-2">
+      <div>
+        <h2 className="text-xl font-semibold">业务系统台账{systems ? ` (${systems.length})` : ""}</h2>
+        <p className="text-xs text-muted-foreground">维护业务系统与集群部署、数据库依赖的核验关系；全局业务→集群→机器立体架构与拓扑请在「态势感知」查看。</p>
+      </div>
+      {!editor && <div className="flex flex-wrap gap-2">
+        {onOpenSituation && <Button size="sm" variant="ghost" onClick={onOpenSituation}>前往态势感知</Button>}
+        <Button size="sm" onClick={refresh} disabled={!systems && !error}>刷新</Button>
+        {admin && <Button size="sm" variant="primary" disabled={!systems} onClick={() => { setNotice(""); setEditor({}) }}>登记系统</Button>}
+      </div>}
+    </header>
     {notice && <p role="status" className="break-all text-sm text-success">{notice}</p>}
     {error ? <div role="alert" className="status-error flex flex-wrap items-center gap-2">{error}<Button size="sm" onClick={refresh}>重新读取</Button></div>
       : !systems ? <p role="status" className="text-sm text-muted-foreground">正在读取业务系统…</p> : null}
@@ -69,7 +61,6 @@ function Ledger({ session, targets }: Props) {
           {s.deployments.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-xs text-muted-foreground"><tr>{["目标 / 命名空间", "应用", "依赖数据库", "人工核验时间"].map(title => <th key={title} className="px-2 py-1" scope="col">{title}</th>)}</tr></thead>
             <tbody className="divide-y">{s.deployments.map(d => <tr key={edgeKey(d)} className="break-all"><td className="p-2">{d.cluster}/{d.instance}<small className="block">{d.namespace}</small></td><td className="p-2">{d.application}</td><td className="p-2">{d.database || "未登记"}</td><td className="p-2"><time dateTime={d.verified_at}>{new Date(d.verified_at).toLocaleString()}</time></td></tr>)}</tbody></table></div> : <p className="text-sm text-muted-foreground">尚未登记部署关系。</p>}
         </div></details>)}</div> : <p role="status" className="py-6 text-center text-sm text-muted-foreground">{term ? "没有匹配的业务系统。" : admin ? "尚未登记业务系统。" : "当前账号没有可见的业务系统。"}</p>}</>}
-    </>}
   </section>
 }
 

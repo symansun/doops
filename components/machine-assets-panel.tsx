@@ -6,8 +6,6 @@ import { assetRequest } from "@/lib/assets"
 import { Badge, Button, Checkbox, Input, PageTabs, SegmentedControl, Select, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
 import { MachineDiagnosticPanel } from "./machine-diagnostic-panel"
 import { AssetCoveragePanel } from "./asset-coverage-panel"
-import { AssetInspectionPanel } from "./asset-inspection-panel"
-import { InspectionCenterPanel } from "./inspection-center-panel"
 import { consoleFetch } from "@/lib/network-error"
 import { inspectionKey } from "@/lib/machine-inspection"
 import { useMachineInspections } from "./use-machine-inspections"
@@ -32,8 +30,8 @@ type Machine = {
   revision: number
   login_accounts?: { username: string; credential_id: string }[]
 }
-type SubTab = "ledger" | "probe_coverage" | "coverage" | "inspections"
-type PanelProps = { session: Session; targets: Target[]; initialPage?: MachinePage; renderTargetAction: RenderAssetTargetAction }
+type SubTab = "ledger" | "probe_coverage" | "coverage"
+type PanelProps = { session: Session; targets: Target[]; initialPage?: MachinePage; renderTargetAction: RenderAssetTargetAction; onOpenInspection?: () => void }
 type Screen = { page: "list" | "create" | "csv" | "text" } | { page: "detail" | "edit" | "login"; id: string }
 const kindLabel = { physical: "物理机", vm: "虚拟机" }
 const kindOptions = [{ value: "all", label: "全部" }, { value: "physical", label: "物理机" }, { value: "vm", label: "虚拟机" }] as const
@@ -52,12 +50,12 @@ function connection(machine: Machine, target?: Target) {
   return bindingKey(machine) ? "Agent 离线" : "未接入"
 }
 
-export function MachineAssetsPanel({ session, targets, initialPage, renderTargetAction }: PanelProps) {
+export function MachineAssetsPanel({ session, targets, initialPage, renderTargetAction, onOpenInspection }: PanelProps) {
   const identity = JSON.stringify([session.gateway, session.username, session.tokenId, session.issuedAt, session.isAdmin])
-  return <Inventory key={identity} session={session} targets={targets} initialPage={initialPage} renderTargetAction={renderTargetAction} />
+  return <Inventory key={identity} session={session} targets={targets} initialPage={initialPage} renderTargetAction={renderTargetAction} onOpenInspection={onOpenInspection} />
 }
 
-function Inventory({ session, targets, initialPage, renderTargetAction }: PanelProps) {
+function Inventory({ session, targets, initialPage, renderTargetAction, onOpenInspection }: PanelProps) {
   const admin = sessionIsAdmin(session)
   const [machines, setMachines] = useState<Machine[] | null>(null)
   const inspection = useMachineInspections(machines)
@@ -65,7 +63,6 @@ function Inventory({ session, targets, initialPage, renderTargetAction }: PanelP
   const [version, setVersion] = useState(0)
   const [screen, setScreen] = useState<Screen>(initialPage ? { page: "detail", id: initialPage.machineId } : { page: "list" })
   const [subTab, setSubTab] = useState<SubTab>("ledger")
-  const [inspectMode, setInspectMode] = useState<"auto" | "compliance">("auto")
   const [sampling, setSampling] = useState(false)
   const [sampleNotice, setSampleNotice] = useState("")
   const [nodesOpen, setNodesOpen] = useState(initialPage?.nodesOpen ?? false)
@@ -197,10 +194,11 @@ function Inventory({ session, targets, initialPage, renderTargetAction }: PanelP
   return (
     <section aria-label="机器台账" className="card-surface min-w-0 space-y-4 p-4">
       <header className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-xl font-semibold">机器台账与巡检覆盖</h2>
+        <h2 className="text-xl font-semibold">机器台账与覆盖率</h2>
         {admin && screen.page === "create" && <Button size="sm" onClick={() => setScreen({ page: "text" })}>文本导入</Button>}
         {subTab === "ledger" && screen.page === "list" && <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="primary" disabled={!filtered.length || inspection.running} onClick={() => inspect(filtered)}>{inspection.running ? "巡检中…" : "发起巡检"}</Button>
+          {onOpenInspection && <Button size="sm" variant="ghost" onClick={onOpenInspection}>前往智能巡检</Button>}
+          <Button size="sm" variant="primary" disabled={!filtered.length || inspection.running} onClick={() => inspect(filtered)}>{inspection.running ? "检测中…" : "快捷主机采样"}</Button>
           <Button size="sm" onClick={refresh} disabled={inspection.running || (!machines && !readError)}>刷新</Button>
           {admin && <>
             <Button size="sm" disabled={!machines} onClick={() => setScreen({ page: "text" })}>文本导入</Button>
@@ -211,53 +209,38 @@ function Inventory({ session, targets, initialPage, renderTargetAction }: PanelP
       </header>
       {screen.page === "list" && (
         <PageTabs
-          ariaLabel="机器与巡检视图"
+          ariaLabel="机器台账视图"
           value={subTab}
           onChange={setSubTab}
           items={[
             { id: "ledger", label: `机器清单${machines ? ` (${machines.length})` : ""}` },
             { id: "probe_coverage", label: `探针覆盖率${probePct !== null ? ` (${probePct}%)` : ""}` },
             { id: "coverage", label: "纳管覆盖率 (80%)" },
-            { id: "inspections", label: "智能巡检" },
           ]}
         />
       )}
+      {(screen.page !== "list" || subTab === "ledger" || subTab === "probe_coverage") && machines === null && (
+        readError ? <div role="alert" className="status-error flex flex-wrap items-center justify-between gap-2">
+          <span className="break-words">读取机器台账失败。{readError}</span><Button size="sm" onClick={refresh}>重新读取台账</Button>
+        </div> : <p role="status" className="text-sm text-muted-foreground">正在读取机器台账…</p>
+      )}
       {subTab === "coverage" && screen.page === "list" ? (
         <AssetCoveragePanel session={session} />
-      ) : subTab === "inspections" && screen.page === "list" ? (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <SegmentedControl
-              ariaLabel="巡检模式切换"
-              value={inspectMode}
-              onChange={(v) => setInspectMode(v as "auto" | "compliance")}
-              options={[
-                { value: "auto", label: "自动策略巡检（Agent 执行）" },
-                { value: "compliance", label: "合规周检台账（离线证据）" },
-              ]}
-            />
-          </div>
-          {inspectMode === "auto" ? (
-            <InspectionCenterPanel session={session} targets={targets} />
-          ) : (
-            <AssetInspectionPanel session={session} targets={targets} />
-          )}
-        </div>
       ) : subTab === "probe_coverage" && screen.page === "list" ? (
-        <div className="space-y-4">
+        machines !== null && <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/60 p-4">
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-base font-semibold">探针机器覆盖率（目标 100%）</h3>
-                <Badge variant={probeTotal > 0 && probeCovered === probeTotal ? "success" : "warning"}>
-                  {probeTotal === 0 ? "待登记机器" : probeCovered === probeTotal ? "已达标 100%" : `缺口 ${probeTotal - probeCovered} 台`}
-                </Badge>
+                {probeTotal > 0 && <Badge variant={probeCovered === probeTotal ? "success" : "warning"}>
+                  {probeCovered === probeTotal ? "已达标 100%" : `缺口 ${probeTotal - probeCovered} 台`}
+                </Badge>}
               </div>
-              <p className="text-xs text-muted-foreground">
+              {probePct !== null && <p className="text-xs text-muted-foreground">
                 口径：已绑定在线 Agent 且最近 5 分钟内有有效监控样本的机器数 ÷ 当前可见登记机器数 ={" "}
                 <strong className="font-mono text-foreground">{probeCovered} / {probeTotal}</strong>
-                {probePct !== null ? `（${probePct}%）` : ""}
-              </p>
+                {`（${probePct}%）`}
+              </p>}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -275,9 +258,7 @@ function Inventory({ session, targets, initialPage, renderTargetAction }: PanelP
             </div>
           </div>
           {sampleNotice && <p role="status" className="text-sm">{sampleNotice}</p>}
-          {!machines ? (
-            <p role="status" className="text-sm text-muted-foreground">正在读取机器台账…</p>
-          ) : !probeRows.length ? (
+          {!probeRows.length ? (
             <p className="py-6 text-center text-sm text-muted-foreground">当前没有可见的登记机器</p>
           ) : (
             <Table wrapperClassName="rounded-lg border">
@@ -331,9 +312,6 @@ function Inventory({ session, targets, initialPage, renderTargetAction }: PanelP
           )}
         </div>
       ) : <>
-      {readError ? <div role="alert" className="status-error flex flex-wrap items-center justify-between gap-2">
-        <span className="break-words">读取机器台账失败。{readError}</span><Button size="sm" onClick={refresh}>重新读取台账</Button>
-      </div> : !machines && <p role="status" className="text-sm text-muted-foreground">正在读取机器台账…</p>}
       {admin && (screen.page === "csv" || screen.page === "text") && <MachineCsvImport key={screen.page} textMode={screen.page === "text"} machines={machines ?? []} onClose={back} onReadback={refresh} />}
       {admin && screen.page === "login" && <MachineCsvImport machines={[]} machine={{asset_id: screen.id, name: selected?.name ?? screen.id}} onClose={() => detail(screen.id)} onReadback={refresh} />}
       {machines && screen.page === "list" && <>

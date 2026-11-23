@@ -9,6 +9,9 @@ import { MachineAssetsPanel } from "./machine-assets-panel"
 import { ClusterAssetsPanel } from "./cluster-assets-panel"
 import { AssetPlatformPanel } from "./asset-platform-panel"
 import { BusinessAssetsPanel } from "./business-assets-panel"
+import { SituationalDashboardPanel } from "./situational-dashboard-panel"
+import { InspectionWorkspacePanel } from "./inspection-workspace-panel"
+import { SkillRegistryPanel } from "./skill-registry-panel"
 
 import type { ComponentProps } from "react"
 import { PlatformAssetScope } from "./agent-asset-scope"
@@ -27,7 +30,13 @@ type TargetOrigin = (MachinePage | ClusterSourcePage) & { returnTab?: TargetTab 
 type LedgerSection = "machines" | "clusters" | "systems"
 export type ClusterListState = Pick<ClusterSourcePage, "query" | "expanded">
 type LedgerPage = { section: LedgerSection } | ({ section: "clusters" } & ClusterListState) | TargetOrigin
-export type AssetPage = { section: "board"; clusterId?: string } | { section: "scope" } | LedgerPage
+export type AssetPage =
+  | { section: "situation"; clusterId?: string }
+  | { section: "inspection"; runId?: string }
+  | { section: "skills"; slug?: string }
+  | { section: "board"; clusterId?: string }
+  | { section: "scope" }
+  | LedgerPage
 
 export function assetReturnLabel(page: AssetPage) {
   if ("machineId" in page) return `返回机器 ${page.machineId}`
@@ -35,6 +44,9 @@ export function assetReturnLabel(page: AssetPage) {
     const { assetId, cluster, instance, namespace } = page.source
     return `返回集群 ${assetId} · ${cluster}/${instance}${namespace ? ` · ${namespace}` : ""}`
   }
+  if (page.section === "situation") return "返回态势感知"
+  if (page.section === "inspection") return "返回智能巡检"
+  if (page.section === "skills") return "返回 Skill 管理"
   if (page.section === "board") return "返回平台监控"
   if (page.section === "scope") return "返回 Agent管理"
   return `返回${ASSET_LEDGER_SECTIONS.find(item => item.id === page.section)!.label}`
@@ -81,6 +93,13 @@ function TargetActionButton({ target, label, restoreFocus, enter }: {
   </span>
 }
 
+function toTargetModel(cluster: string, instance: string, liveTargets: Target[]): Target {
+  const key = `${cluster}/${instance}`
+  const live = liveTargets.find((item) => item.key === key)
+  if (live) return live
+  return { key, cluster, instance, status: "offline", sessions: [] }
+}
+
 export function AssetInventory({ session, targets, selectedTarget, catalog, page, onPage, onOpenTarget, onOpenMonitorTarget, onOpenDirectK8s, onDeployAgent, onRunningChange }: {
   session: Session
   targets: Target[]
@@ -120,11 +139,41 @@ export function AssetInventory({ session, targets, selectedTarget, catalog, page
   const scope = sessionIsAdmin(session) ? "admin" : JSON.stringify(targets
     .filter((target) => target.status !== "offline")
     .map(({ cluster, instance }) => JSON.stringify([cluster, instance])).sort())
-  const onlineTargets = targets.filter((target) => target.status !== "offline")
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div key={JSON.stringify([scope, page])} className="min-h-0 flex-1 overflow-auto p-4">
-        {page.section === "board" ? (
+        {page.section === "situation" ? (
+          <SituationalDashboardPanel
+            session={session}
+            targets={targets}
+            clusterFilter={page.clusterId}
+            onOpenTarget={onOpenMonitorTarget
+              ? (cluster, instance, tab) => onOpenMonitorTarget(toTargetModel(cluster, instance, targets), tab, page)
+              : undefined}
+            onOpenInspection={(runId) => onPage(runId ? { section: "inspection", runId } : { section: "inspection" })}
+            onOpenPlatformMonitor={() => onPage({ section: "board" })}
+            onOpenArea={(area) =>
+              onPage(area === "clusters" ? { section: "clusters", query: "", expanded: [] } : { section: area })
+            }
+          />
+        ) : page.section === "inspection" ? (
+          <InspectionWorkspacePanel
+            session={session}
+            targets={targets}
+            initialRunId={page.runId}
+            onRunIdChange={(runId) => onPage(runId ? { section: "inspection", runId } : { section: "inspection" })}
+            onOpenSituation={() => onPage({ section: "situation" })}
+            onOpenSkills={() => onPage({ section: "skills" })}
+          />
+        ) : page.section === "skills" ? (
+          <SkillRegistryPanel
+            session={session}
+            targets={targets}
+            initialSlug={page.slug}
+            onOpenInspection={(runId) => onPage(runId ? { section: "inspection", runId } : { section: "inspection" })}
+          />
+        ) : page.section === "board" ? (
           <AssetPlatformPanel
             session={session}
             targets={targets}
@@ -133,16 +182,43 @@ export function AssetInventory({ session, targets, selectedTarget, catalog, page
             onOpenTarget={onOpenMonitorTarget
               ? (target, tab, operationId) => onOpenMonitorTarget(target, tab, page, operationId)
               : undefined}
+            onOpenSituation={() => onPage({ section: "situation" })}
+            onOpenInspection={() => onPage({ section: "inspection" })}
             onDeployAgent={onDeployAgent}
             onRunningChange={onRunningChange}
           />
-        ) : page.section === "scope" && sessionIsAdmin(session) ? <PlatformAssetScope {...catalog} /> : <>
-            {page.section === "machines" && <MachineAssetsPanel initialPage={"machineId" in page ? page : undefined} session={session} targets={targets} renderTargetAction={renderTargetAction} />}
-            {page.section === "clusters" && <ClusterAssetsPanel session={session} targets={targets}
-              selectedTarget={selectedTarget} onOpenTargetK8s={onOpenDirectK8s}
-              initialPage={"query" in page ? page : undefined} renderTargetAction={renderTargetAction} />}
-            {page.section === "systems" && <BusinessAssetsPanel session={session} targets={targets}/>}
-          </>}
+        ) : page.section === "scope" && sessionIsAdmin(session) ? (
+          <PlatformAssetScope {...catalog} />
+        ) : (
+          <>
+            {page.section === "machines" && (
+              <MachineAssetsPanel
+                initialPage={"machineId" in page ? page : undefined}
+                session={session}
+                targets={targets}
+                renderTargetAction={renderTargetAction}
+                onOpenInspection={() => onPage({ section: "inspection" })}
+              />
+            )}
+            {page.section === "clusters" && (
+              <ClusterAssetsPanel
+                session={session}
+                targets={targets}
+                selectedTarget={selectedTarget}
+                onOpenTargetK8s={onOpenDirectK8s}
+                initialPage={"query" in page ? page : undefined}
+                renderTargetAction={renderTargetAction}
+              />
+            )}
+            {page.section === "systems" && (
+              <BusinessAssetsPanel
+                session={session}
+                targets={targets}
+                onOpenSituation={() => onPage({ section: "situation" })}
+              />
+            )}
+          </>
+        )}
       </div>
     </div>
   )

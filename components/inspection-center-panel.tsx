@@ -24,7 +24,13 @@ import {
   type MonitorStrategyMeta,
   type MonitorThresholds,
 } from "@/lib/monitor-engine"
-import { HistoryIcon, RefreshIcon, RocketIcon } from "./icons"
+import {
+  analyzeInspectionWithAi,
+  buildCustomReportHtml,
+  buildCustomReportMarkdown,
+} from "@/lib/inspection-report"
+import { fetchPlatformSkills, SKILL_DRIVER_LABELS, type PlatformSkillRecord } from "@/lib/skills-registry"
+import { HistoryIcon, RefreshIcon, RocketIcon, SparkIcon } from "./icons"
 import {
   Badge,
   Button,
@@ -70,15 +76,18 @@ export function InspectionCenterPanel({
   targets,
   initialRunId,
   onClearInitialRun,
+  onOpenSkills,
 }: {
   session: Session
   targets: Target[]
   initialRunId?: string
   onClearInitialRun?: () => void
+  onOpenSkills?: () => void
 }) {
   const isAdmin = sessionIsAdmin(session)
   const [schedules, setSchedules] = useState<MonitorScheduleRecord[]>([])
   const [strategies, setStrategies] = useState<MonitorStrategyMeta[]>([])
+  const [platformSkills, setPlatformSkills] = useState<PlatformSkillRecord[]>([])
   const [runs, setRuns] = useState<MonitorRunRecord[]>([])
   const [selectedRunId, setSelectedRunId] = useState<string>(initialRunId || "")
   const [runDetail, setRunDetail] = useState<MonitorRunDetailData | null>(null)
@@ -110,6 +119,7 @@ export function InspectionCenterPanel({
     "app_service",
     "database_service",
   ])
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [intervalSeconds, setIntervalSeconds] = useState(300)
   const [thresholds, setThresholds] = useState<MonitorThresholds>({
     cpu_warn_percent: 80,
@@ -131,6 +141,8 @@ export function InspectionCenterPanel({
     "app_service",
     "database_service",
   ])
+  const [quickSkills, setQuickSkills] = useState<string[]>([])
+  const [quickSkillsInitialized, setQuickSkillsInitialized] = useState(false)
   const [sshOpen, setSshOpen] = useState(false)
   const [sshAssetId, setSshAssetId] = useState("")
   const [sshAddr, setSshAddr] = useState("")
@@ -150,12 +162,23 @@ export function InspectionCenterPanel({
     Promise.all([
       fetchMonitorSchedules(session, ctrl.signal),
       fetchMonitorRuns(session, { status: runStatusFilter || undefined, limit: 50 }, ctrl.signal),
+      fetchPlatformSkills(session, {}, ctrl.signal).catch(() => ({ skills: [] as PlatformSkillRecord[] })),
     ])
-      .then(([schedRes, runsRes]) => {
+      .then(([schedRes, runsRes, skillsRes]) => {
         if (ctrl.signal.aborted) return
         setSchedules(schedRes.schedules || [])
         setStrategies(schedRes.strategies || runsRes.strategies || [])
         setRuns(runsRes.runs || [])
+        const fetchedSkills = skillsRes.skills || []
+        setPlatformSkills(fetchedSkills)
+        if (!quickSkillsInitialized && fetchedSkills.length > 0) {
+          setQuickSkills(
+            fetchedSkills
+              .filter((s) => s.enabled && (s.category === "inspection" || s.category === "security"))
+              .map((s) => s.slug),
+          )
+          setQuickSkillsInitialized(true)
+        }
         setLoading(false)
       })
       .catch((err) => {
@@ -165,7 +188,7 @@ export function InspectionCenterPanel({
         }
       })
     return () => ctrl.abort()
-  }, [session, runStatusFilter, revision])
+  }, [session, runStatusFilter, revision, quickSkillsInitialized])
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -194,6 +217,25 @@ export function InspectionCenterPanel({
   const toggleItem = (list: string[], id: string) =>
     list.includes(id) ? list.filter((x) => x !== id) : [...list, id]
 
+  const skillBySlug = useMemo(() => {
+    const map = new Map<string, PlatformSkillRecord>()
+    for (const sk of platformSkills) map.set(sk.slug, sk)
+    return map
+  }, [platformSkills])
+
+  const enabledSkills = useMemo(() => platformSkills.filter((s) => s.enabled), [platformSkills])
+
+  function strategiesFromSkills(slugs: string[]): string[] {
+    const set = new Set<string>()
+    for (const slug of slugs) {
+      const sk = skillBySlug.get(slug)
+      if (sk?.driver_mode === "builtin_strategy" && sk.strategy_id) {
+        set.add(sk.strategy_id)
+      }
+    }
+    return Array.from(set)
+  }
+
   function openNewSchedule() {
     setEditingId("")
     setSchedName("")
@@ -201,7 +243,15 @@ export function InspectionCenterPanel({
     setScopeMode("all_online")
     setSelectedTargetKeys([])
     setTagsInput("")
-    setSelectedStrategies(["vm_host", "ssh_host", "k8s_cluster", "container_runtime", "app_service", "database_service"])
+    const defaultSlugs = enabledSkills
+      .filter((s) => s.category === "inspection" || s.category === "security")
+      .map((s) => s.slug)
+    setSelectedSkills(defaultSlugs)
+    setSelectedStrategies(
+      defaultSlugs.length > 0
+        ? strategiesFromSkills(defaultSlugs)
+        : ["vm_host", "ssh_host", "k8s_cluster", "container_runtime", "app_service", "database_service"],
+    )
     setIntervalSeconds(300)
     setFormOpen(true)
   }
@@ -214,6 +264,14 @@ export function InspectionCenterPanel({
     setSelectedTargetKeys((s.targets || []).map((t) => `${t.cluster}/${t.instance}`))
     setTagsInput((s.tags || []).join(", "))
     setSelectedStrategies(s.strategies || [])
+    if (s.skills && s.skills.length > 0) {
+      setSelectedSkills(s.skills)
+    } else {
+      const inferred = platformSkills
+        .filter((sk) => sk.strategy_id && (s.strategies || []).includes(sk.strategy_id))
+        .map((sk) => sk.slug)
+      setSelectedSkills(inferred)
+    }
     setIntervalSeconds(s.interval_seconds || 300)
     setThresholds({ ...thresholds, ...(s.thresholds || {}) })
     setFormOpen(true)
@@ -234,6 +292,8 @@ export function InspectionCenterPanel({
         .split(/[,，\s]+/)
         .map((x) => x.trim())
         .filter(Boolean)
+      const effectiveStrategies =
+        selectedSkills.length > 0 ? strategiesFromSkills(selectedSkills) : selectedStrategies
       await mutateMonitorSchedule(session, {
         action: editingId ? "update" : "create",
         ...(editingId ? { id: editingId } : {}),
@@ -243,12 +303,13 @@ export function InspectionCenterPanel({
         scope_mode: scopeMode,
         targets: scopeMode === "targets" ? targetRefs : [],
         tags: scopeMode === "tags" ? tags : [],
-        strategies: selectedStrategies,
+        strategies: effectiveStrategies,
+        skills: selectedSkills,
         thresholds,
         interval_seconds: intervalSeconds,
       })
       setFormOpen(false)
-      setNotice(editingId ? "定时巡检计划已更新" : "定时巡检计划已创建，Gateway 将按周期自动向 Agent 下发执行")
+      setNotice(editingId ? "定时巡检计划已更新" : "定时巡检计划已创建，Gateway 将按周期自动驱动所选 Skill 下发执行")
       reload()
     } catch (err) {
       setError((err as Error).message)
@@ -311,9 +372,15 @@ export function InspectionCenterPanel({
     setError("")
     setNotice("")
     try {
-      const payload: Parameters<typeof triggerMonitorRun>[1] = {
-        strategies: quickStrategies,
-      }
+      const useSkills = platformSkills.length > 0 && quickSkills.length > 0
+      const payload: Parameters<typeof triggerMonitorRun>[1] = useSkills
+        ? {
+            skills: quickSkills,
+            strategies: strategiesFromSkills(quickSkills),
+          }
+        : {
+            strategies: quickStrategies,
+          }
       if (quickTarget) {
         const [cluster, instance] = quickTarget.split("/")
         payload.scope_mode = "targets"
@@ -322,7 +389,10 @@ export function InspectionCenterPanel({
         payload.scope_mode = "all_online"
       }
       if (sshOpen && sshAddr.trim() && sshAssetId.trim()) {
-        payload.strategies = Array.from(new Set([...quickStrategies, "ssh_host"]))
+        payload.strategies = Array.from(new Set([...(payload.strategies || []), "ssh_host"]))
+        if (useSkills) {
+          payload.skills = Array.from(new Set([...(payload.skills || []), "inspect-ssh-host"]))
+        }
         payload.ssh_hosts = [
           {
             asset_id: sshAssetId.trim(),
@@ -335,7 +405,7 @@ export function InspectionCenterPanel({
         ]
       }
       const res = await triggerMonitorRun(session, payload)
-      setNotice(`已向 ${res.run.total_targets} 个目标下发巡检并完成收集（#${res.run.id}）`)
+      setNotice(`已向 ${res.run.total_targets} 个目标下发 Skill 巡检并完成收集（#${res.run.id}）`)
       setSelectedRunId(res.run.id)
       reload()
     } catch (err) {
@@ -379,6 +449,8 @@ export function InspectionCenterPanel({
       ["warning", "critical", "error", "offline"].includes(i.status),
     )
 
+    const aiReport = runDetail ? analyzeInspectionWithAi(runDetail) : null
+
     return (
       <Stack gap={4}>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -403,8 +475,26 @@ export function InspectionCenterPanel({
                 {busy ? "复检中…" : "仅复检异常/离线项"}
               </Button>
             )}
-            {runDetail && (
+            {runDetail && aiReport && (
               <>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const md = buildCustomReportMarkdown(
+                      {
+                        title: `智能巡检报告 #${selectedRunId}`,
+                        period: "7d",
+                        sections: ["inspection_vuln", "ai_remediation", "security_events"],
+                      },
+                      null,
+                      runDetail,
+                      aiReport,
+                    )
+                    downloadText(`inspection-${selectedRunId}.html`, buildCustomReportHtml(`智能巡检报告 #${selectedRunId}`, md), "text/html;charset=utf-8")
+                  }}
+                >
+                  导出 HTML 报告
+                </Button>
                 <Button
                   size="sm"
                   onClick={() => downloadText(`inspection-${selectedRunId}.csv`, buildRunReportCSV(runDetail), "text/csv;charset=utf-8")}
@@ -433,6 +523,41 @@ export function InspectionCenterPanel({
           <p role="status" className="py-8 text-sm text-muted-foreground">正在加载巡检明细与证据…</p>
         ) : runDetail && run ? (
           <>
+            {aiReport && (
+              <Card>
+                <CardContent className="space-y-3 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SparkIcon width={15} height={15} className="text-primary" />
+                      <h3 className="text-sm font-semibold text-foreground">浙音大模型 · AI 巡检结果智能分析</h3>
+                      <Badge variant="primary">{aiReport.model}</Badge>
+                      <Badge variant={aiReport.score >= 85 ? "success" : aiReport.score >= 70 ? "warning" : "danger"}>
+                        态势评分 {aiReport.score} / 100
+                      </Badge>
+                    </div>
+                  </div>
+                  <p className="text-xs font-medium text-foreground">{aiReport.headline}</p>
+                  <p className="text-xs text-muted-foreground">{aiReport.correlationSummary}</p>
+                  {aiReport.findings.length > 0 && (
+                    <div className="divide-y rounded-md border bg-background/60 text-xs">
+                      {aiReport.findings.map((f, idx) => (
+                        <div key={`${f.priority}-${idx}`} className="space-y-1 p-2.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant={f.priority === "P0" ? "danger" : f.priority === "P1" ? "warning" : f.priority === "P2" ? "primary" : "outline"}>
+                              {f.priority} · {f.riskLevel}
+                            </Badge>
+                            <strong className="text-foreground">{f.title}</strong>
+                            <span className="text-muted-foreground">影响：{f.businessImpact}</span>
+                          </div>
+                          <div className="text-muted-foreground">根因分析：{f.rootCause}</div>
+                          <div className="font-mono text-2xs text-foreground">修复建议：{f.remediation}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
             <Card>
               <CardContent className="space-y-3 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -480,10 +605,17 @@ export function InspectionCenterPanel({
                 <option value="pass">通过</option>
                 <option value="skipped">跳过</option>
               </Select>
-              <Select scale="sm" className="w-44" value={itemStrategyFilter} onChange={(e) => setItemStrategyFilter(e.target.value)}>
-                <option value="">全部巡检策略</option>
-                {Object.entries(STRATEGY_LABELS).map(([k, l]) => (
-                  <option key={k} value={k}>{l}</option>
+              <Select scale="sm" className="w-52" value={itemStrategyFilter} onChange={(e) => setItemStrategyFilter(e.target.value)}>
+                <option value="">全部策略 / Skill</option>
+                {Array.from(
+                  new Set([
+                    ...Object.keys(STRATEGY_LABELS),
+                    ...(runDetail.items || []).map((i) => i.strategy),
+                  ]),
+                ).map((k) => (
+                  <option key={k} value={k}>
+                    {k.startsWith("skill:") ? `Skill: ${k.slice(6)}` : STRATEGY_LABELS[k] || k}
+                  </option>
                 ))}
               </Select>
               <span className="text-xs text-muted-foreground">显示 {filteredItems.length} / {runDetail.items.length} 条资产策略结果</span>
@@ -493,6 +625,11 @@ export function InspectionCenterPanel({
               {filteredItems.map((it) => {
                 const itSt = describeMonitorStatus(it.status)
                 const m = it.metrics || {}
+                const drivenSkillSlug = it.strategy.startsWith("skill:")
+                  ? it.strategy.slice(6)
+                  : typeof it.evidence?.skill_slug === "string"
+                    ? it.evidence.skill_slug
+                    : ""
                 return (
                   <Card key={it.id}>
                     <CardContent className="space-y-3 p-4">
@@ -501,8 +638,11 @@ export function InspectionCenterPanel({
                           <Badge variant={itSt.variant}>{itSt.label}</Badge>
                           <strong className="text-sm text-foreground">{it.asset_name || it.asset_id}</strong>
                           <span className="font-mono text-xs text-muted-foreground">{it.cluster}/{it.instance}</span>
+                          {drivenSkillSlug && <Badge variant="primary">Skill: {drivenSkillSlug}</Badge>}
                           <Badge variant="outline">{ASSET_KIND_LABELS[it.asset_kind] || it.asset_kind}</Badge>
-                          <Badge variant="outline">{STRATEGY_LABELS[it.strategy] || it.strategy}</Badge>
+                          <Badge variant="outline">
+                            {it.strategy.startsWith("skill:") ? "Agent Skill 驱动" : STRATEGY_LABELS[it.strategy] || it.strategy}
+                          </Badge>
                           <Badge variant="outline">{COLLECTOR_METHOD_LABELS[it.collector_method] || it.collector_method}</Badge>
                         </div>
                         <span className="font-mono text-2xs text-muted-foreground">
@@ -577,12 +717,17 @@ export function InspectionCenterPanel({
     <Stack gap={4}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="space-y-0.5">
-          <h2 className="text-base font-semibold text-foreground">智能巡检任务、策略调度与执行记录</h2>
+          <h2 className="text-base font-semibold text-foreground">Skill 驱动巡检任务、定时调度与执行记录</h2>
           <p className="text-xs text-muted-foreground">
-            Gateway 按计划或手动下发巡检任务到对应 Agent，Agent 依据资产类型自动套用虚机/SSH/K8s/容器/应用/数据库策略采集并回传。
+            巡检由系统驱动所选 Skill（内置系统 Skill + 自定义上传 Skill）执行：内置策略类走 Agent 原生高速只读探测，自定义/安全类自动同步至 Agent 并驱动执行。
           </p>
         </div>
         <Inline gap={2}>
+          {onOpenSkills && (
+            <Button size="sm" onClick={onOpenSkills}>
+              + 上传 / 管理 Skill
+            </Button>
+          )}
           {isAdmin && (
             <Button size="sm" variant="primary" onClick={() => (formOpen ? setFormOpen(false) : openNewSchedule())}>
               {formOpen ? "收起计划表单" : "新建定时任务"}
@@ -619,23 +764,76 @@ export function InspectionCenterPanel({
                   {sshOpen ? "隐藏临时 SSH 主机" : "+ 附加 SSH 远程主机"}
                 </Button>
               </div>
-              <Button type="submit" size="sm" variant="primary" disabled={busy || quickStrategies.length === 0}>
+              <Button
+                type="submit"
+                size="sm"
+                variant="primary"
+                disabled={busy || (platformSkills.length > 0 ? quickSkills.length === 0 : quickStrategies.length === 0)}
+              >
                 <RocketIcon width={14} height={14} />
-                {busy ? "下发执行中…" : "立即下发 Agent 巡检"}
+                {busy
+                  ? "下发执行中…"
+                  : platformSkills.length > 0
+                    ? `驱动所选 ${quickSkills.length} 个 Skill 立即巡检`
+                    : "立即下发 Agent 巡检"}
               </Button>
             </div>
 
-            <div className="flex flex-wrap gap-3">
-              {(strategies.length > 0 ? strategies : Object.entries(STRATEGY_LABELS).map(([id, name]) => ({ id, name }))).map((s) => (
-                <label key={s.id} className="inline-flex items-center gap-1.5 text-xs">
-                  <Checkbox
-                    checked={quickStrategies.includes(s.id)}
-                    onChange={() => setQuickStrategies(toggleItem(quickStrategies, s.id))}
-                  />
-                  <span>{s.name}</span>
-                </label>
-              ))}
-            </div>
+            {platformSkills.length > 0 ? (
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>选择驱动本次巡检的 Skill（系统内置 + 自定义上传）：</span>
+                  <Inline gap={2}>
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() => setQuickSkills(enabledSkills.map((s) => s.slug))}
+                    >
+                      全选已启用 ({enabledSkills.length})
+                    </button>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:underline"
+                      onClick={() => setQuickSkills([])}
+                    >
+                      清空
+                    </button>
+                  </Inline>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {platformSkills.map((sk) => (
+                    <label
+                      key={sk.slug}
+                      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs ${
+                        sk.enabled ? "bg-background" : "opacity-50"
+                      }`}
+                    >
+                      <Checkbox
+                        disabled={!sk.enabled}
+                        checked={quickSkills.includes(sk.slug)}
+                        onChange={() => setQuickSkills(toggleItem(quickSkills, sk.slug))}
+                      />
+                      <span className="font-medium text-foreground">{sk.name}</span>
+                      <Badge variant={sk.scope === "system" ? "outline" : "success"}>
+                        {sk.scope === "system" ? "系统" : "自定义"}
+                      </Badge>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-3">
+                {(strategies.length > 0 ? strategies : Object.entries(STRATEGY_LABELS).map(([id, name]) => ({ id, name }))).map((s) => (
+                  <label key={s.id} className="inline-flex items-center gap-1.5 text-xs">
+                    <Checkbox
+                      checked={quickStrategies.includes(s.id)}
+                      onChange={() => setQuickStrategies(toggleItem(quickStrategies, s.id))}
+                    />
+                    <span>{s.name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
 
             {sshOpen && (
               <div className="grid gap-2 rounded-md border bg-muted/30 p-3 sm:grid-cols-4">
@@ -722,21 +920,59 @@ export function InspectionCenterPanel({
               )}
 
               <div className="space-y-1.5">
-                <div className="text-xs font-medium text-muted-foreground">启用的巡检策略（Agent 按资产类型自动匹配执行）</div>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {strategies.map((s) => (
-                    <label key={s.id} className="flex items-start gap-2 rounded-md border p-2.5 text-xs">
-                      <Checkbox
-                        checked={selectedStrategies.includes(s.id)}
-                        onChange={() => setSelectedStrategies(toggleItem(selectedStrategies, s.id))}
-                      />
-                      <span className="min-w-0">
-                        <strong className="block text-foreground">{s.name}</strong>
-                        <span className="text-2xs text-muted-foreground">{s.description}</span>
-                      </span>
-                    </label>
-                  ))}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    绑定的巡检 Skill（支持系统内置 Skill 与用户自定义 Skill，按周期自动驱动执行）
+                  </div>
+                  {onOpenSkills && (
+                    <button type="button" className="text-xs text-primary hover:underline" onClick={onOpenSkills}>
+                      去上传新 Skill →
+                    </button>
+                  )}
                 </div>
+                {platformSkills.length > 0 ? (
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {platformSkills.map((sk) => (
+                      <label
+                        key={sk.slug}
+                        className={`flex items-start gap-2 rounded-md border p-2.5 text-xs ${sk.enabled ? "" : "opacity-55"}`}
+                      >
+                        <Checkbox
+                          disabled={!sk.enabled}
+                          checked={selectedSkills.includes(sk.slug)}
+                          onChange={() => setSelectedSkills(toggleItem(selectedSkills, sk.slug))}
+                        />
+                        <span className="min-w-0 space-y-0.5">
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <strong className="text-foreground">{sk.name}</strong>
+                            <Badge variant={sk.scope === "system" ? "outline" : "success"}>
+                              {sk.scope === "system" ? "系统" : "自定义"}
+                            </Badge>
+                          </span>
+                          <span className="block font-mono text-2xs text-muted-foreground">
+                            {sk.slug} · {SKILL_DRIVER_LABELS[sk.driver_mode]}
+                          </span>
+                          <span className="block text-2xs text-muted-foreground">{sk.description}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {strategies.map((s) => (
+                      <label key={s.id} className="flex items-start gap-2 rounded-md border p-2.5 text-xs">
+                        <Checkbox
+                          checked={selectedStrategies.includes(s.id)}
+                          onChange={() => setSelectedStrategies(toggleItem(selectedStrategies, s.id))}
+                        />
+                        <span className="min-w-0">
+                          <strong className="block text-foreground">{s.name}</strong>
+                          <span className="text-2xs text-muted-foreground">{s.description}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="grid gap-2 sm:grid-cols-4">
@@ -768,7 +1004,12 @@ export function InspectionCenterPanel({
               </div>
 
               <Inline gap={2}>
-                <Button type="submit" size="sm" variant="primary" disabled={busy || !schedName.trim() || selectedStrategies.length === 0}>
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="primary"
+                  disabled={busy || !schedName.trim() || (platformSkills.length > 0 ? selectedSkills.length === 0 : selectedStrategies.length === 0)}
+                >
                   {busy ? "保存中…" : editingId ? "保存修改" : "创建并启用定时任务"}
                 </Button>
                 <Button type="button" size="sm" onClick={() => setFormOpen(false)}>取消</Button>
@@ -803,9 +1044,18 @@ export function InspectionCenterPanel({
                       </div>
                       {s.description && <p className="text-xs text-muted-foreground">{s.description}</p>}
                       <div className="flex flex-wrap gap-1">
-                        {s.strategies.map((stId) => (
-                          <Badge key={stId} variant="outline">{STRATEGY_LABELS[stId] || stId}</Badge>
-                        ))}
+                        {s.skills && s.skills.length > 0
+                          ? s.skills.map((slug) => {
+                              const sk = skillBySlug.get(slug)
+                              return (
+                                <Badge key={slug} variant={sk?.scope === "custom" ? "success" : "primary"}>
+                                  Skill: {sk?.name || slug}
+                                </Badge>
+                              )
+                            })
+                          : s.strategies.map((stId) => (
+                              <Badge key={stId} variant="outline">{STRATEGY_LABELS[stId] || stId}</Badge>
+                            ))}
                       </div>
                       <p className="font-mono text-2xs text-muted-foreground">
                         范围：{s.scope_mode === "all_online" ? "全部在线目标" : s.scope_mode === "tags" ? `标签 ${s.tags.join(",")}` : `${s.targets.length} 个目标`}

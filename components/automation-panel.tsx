@@ -1,43 +1,33 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { BackgroundTasksPanel } from "./background-tasks-panel"
-import { InspectionCenterPanel } from "./inspection-center-panel"
-import { Badge, Button, Card, CardContent, Inline, PageTabs, Stack } from "./ui"
-
-export type AutomationTab = "inspections" | "background"
+import { Badge, Button, Card, CardContent, Inline, Stack } from "./ui"
 
 export function AutomationPanel({
   session,
   targets,
   selectedTarget,
-  initialTab = "inspections",
   onSelectTarget,
+  onOpenInspection,
 }: {
   session: Session
   targets: Target[]
   selectedTarget: Target | null
-  initialTab?: AutomationTab
   onSelectTarget?: (target: Target) => void
+  onOpenInspection?: () => void
 }) {
   const isAdmin = sessionIsAdmin(session)
-  const [subTab, setSubTab] = useState<AutomationTab>(initialTab)
-
-  useEffect(() => {
-    setSubTab(initialTab)
-  }, [initialTab])
-
   const onlineTargets = targets.filter((t) => t.status !== "offline")
 
   return (
-    <section aria-label="自动化" className="space-y-4">
+    <section aria-label="后台任务" className="space-y-4">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-foreground">自动化</h1>
+            <h1 className="text-xl font-semibold text-foreground">后台任务</h1>
             <Badge variant={isAdmin ? "primary" : "outline"}>
-              {isAdmin ? "全局巡检权限" : "本人授权范围"}
+              {isAdmin ? "全局权限" : "本人授权范围"}
             </Badge>
             {selectedTarget && (
               <Badge variant="outline">
@@ -46,29 +36,17 @@ export function AutomationPanel({
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            统一管理定时策略巡检与执行记录（虚机 / SSH / K8s / 容器 / 应用 / 数据库），以及 Gateway 托管的后台运行任务（<code className="font-mono text-xs">exec --bg</code>）。
+            管理当前目标 Agent 上由 Gateway 托管的 <code className="font-mono text-xs">exec --bg</code> 后台运行任务；全局定时巡检与安全巡检 MCP 请前往独立的「智能巡检」功能。
           </p>
         </div>
+        {onOpenInspection && (
+          <Button size="sm" variant="ghost" onClick={onOpenInspection}>
+            前往智能巡检
+          </Button>
+        )}
       </header>
 
-      <PageTabs
-        ariaLabel="自动化视图"
-        value={subTab}
-        onChange={(next) => setSubTab(next as AutomationTab)}
-        items={[
-          { id: "inspections", label: "定时巡检与记录" },
-          {
-            id: "background",
-            label: selectedTarget
-              ? `后台运行任务 (${selectedTarget.cluster}/${selectedTarget.instance})`
-              : "后台运行任务",
-          },
-        ]}
-      />
-
-      {subTab === "inspections" ? (
-        <InspectionCenterPanel session={session} targets={targets} />
-      ) : selectedTarget ? (
+      {selectedTarget ? (
         <BackgroundTasksPanel session={session} target={selectedTarget} embedded />
       ) : (
         <Stack gap={3}>

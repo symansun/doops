@@ -28,8 +28,6 @@ import {
   type PlatformUsageBucket,
 } from "@/lib/platform-monitor"
 import { ActivityIcon, HistoryIcon, PlugIcon, RefreshIcon, RocketIcon, ServerIcon, SparkIcon, UsersIcon } from "./icons"
-import { InspectionCenterPanel } from "./inspection-center-panel"
-import { SystemResourceMonitor } from "./system-resource-monitor"
 import {
   Badge,
   Button,
@@ -51,7 +49,7 @@ import {
   TableRow,
 } from "./ui"
 
-type MonitorTab = "overview" | "resources" | "inspections" | "agents" | "usage" | "operations"
+type MonitorTab = "overview" | "agents" | "usage" | "operations"
 type TrendMode = "calls" | "load"
 
 type ProbeState = {
@@ -373,6 +371,8 @@ export interface PlatformMonitorPanelProps {
   initialClusterId?: string
   onClusterChange?: (cluster?: string) => void
   onOpenTarget?: (target: Target, tab: TargetTab, operationId?: string) => void
+  onOpenSituation?: () => void
+  onOpenInspection?: () => void
   onDeployAgent?: () => void
   onRunningChange?: (running: boolean) => void
 }
@@ -383,6 +383,8 @@ export function AssetPlatformPanel({
   initialClusterId,
   onClusterChange,
   onOpenTarget,
+  onOpenSituation,
+  onOpenInspection,
   onDeployAgent,
   onRunningChange,
 }: PlatformMonitorPanelProps) {
@@ -390,7 +392,6 @@ export function AssetPlatformPanel({
   const [range, setRange] = useState<PlatformMonitorRange>("24h")
   const [cluster, setCluster] = useState(initialClusterId ?? "")
   const [tab, setTab] = useState<MonitorTab>("overview")
-  const [inspectionRunId, setInspectionRunId] = useState("")
   const [trendMode, setTrendMode] = useState<TrendMode>("calls")
   const [visibility, setVisibility] = useState<AgentVisibilityScope>("active")
   const [agentQuery, setAgentQuery] = useState("")
@@ -514,6 +515,7 @@ export function AssetPlatformPanel({
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold text-foreground">平台监控</h1>
+            <Badge variant="outline">Agent 维度</Badge>
             <Badge variant={isAdmin ? "primary" : "outline"}>
               {isAdmin ? "全局视角" : "本人授权范围"}
             </Badge>
@@ -525,11 +527,21 @@ export function AssetPlatformPanel({
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            统一监控 Agent 隧道连接与大模型消耗、全网主机/SSH/K8s/容器/应用资源水位，以及策略化定时巡检与历史记录。
+            以 Agent 为维度集中监控隧道在线与版本一致性、并发与排队水位、调用与大模型 Token 消耗及运行异常。
           </p>
         </div>
 
         <Inline gap={2} className="flex-wrap">
+          {onOpenSituation && (
+            <Button size="sm" variant="ghost" onClick={onOpenSituation}>
+              态势感知
+            </Button>
+          )}
+          {onOpenInspection && (
+            <Button size="sm" variant="ghost" onClick={onOpenInspection}>
+              智能巡检
+            </Button>
+          )}
           <Select
             aria-label="按集群筛选"
             scale="sm"
@@ -634,9 +646,7 @@ export function AssetPlatformPanel({
             value={tab}
             onChange={setTab}
             items={[
-              { id: "overview", label: "总览" },
-              { id: "resources", label: "系统资源监控" },
-              { id: "inspections", label: "巡检任务与记录" },
+              { id: "overview", label: "平台总览" },
               { id: "agents", label: `Agent 节点 (${activeAgentCount})` },
               { id: "usage", label: `使用排行 (${data.usage_summary.total})` },
               { id: "operations", label: `运行与异常 (${attentionCount})` },
@@ -876,35 +886,6 @@ export function AssetPlatformPanel({
                         })}
                       </div>
                     )}
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="grid gap-4 lg:grid-cols-2">
-                <Card>
-                  <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
-                    <div className="min-w-0 space-y-1">
-                      <h2 className="text-base font-semibold text-foreground">系统资源监控与阈值告警</h2>
-                      <p className="text-xs text-muted-foreground">
-                        查看各 Agent 汇总的虚机/物理机、SSH 远程主机、K8s 集群、容器与应用资源水位、历史趋势及活跃阈值告警。
-                      </p>
-                    </div>
-                    <Button size="sm" variant="primary" onClick={() => setTab("resources")}>
-                      进入系统资源监控
-                    </Button>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
-                    <div className="min-w-0 space-y-1">
-                      <h2 className="text-base font-semibold text-foreground">策略巡检任务与执行历史</h2>
-                      <p className="text-xs text-muted-foreground">
-                        按资产类型配置定时巡检计划，由 Gateway 下发给对应 Agent 执行，并可回看每次巡检明细与一键复检异常项。
-                      </p>
-                    </div>
-                    <Button size="sm" onClick={() => setTab("inspections")}>
-                      管理巡检与记录
-                    </Button>
                   </CardContent>
                 </Card>
               </div>
@@ -1390,28 +1371,6 @@ export function AssetPlatformPanel({
                 </Card>
               </div>
             </Stack>
-          )}
-
-          {tab === "resources" && (
-            <SystemResourceMonitor
-              session={session}
-              targets={targets}
-              clusterFilter={cluster || undefined}
-              onOpenTarget={onOpenTarget ? jumpToTarget : undefined}
-              onOpenRunDetail={(runId) => {
-                setInspectionRunId(runId)
-                setTab("inspections")
-              }}
-            />
-          )}
-
-          {tab === "inspections" && (
-            <InspectionCenterPanel
-              session={session}
-              targets={targets}
-              initialRunId={inspectionRunId || undefined}
-              onClearInitialRun={() => setInspectionRunId("")}
-            />
           )}
 
           {tab === "operations" && (

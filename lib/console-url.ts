@@ -23,7 +23,7 @@ export interface ConsoleRouteState {
 
 const VALID_VIEWS = new Set<ConsoleView>([CONSOLE_HOME, "console", "assets", "deploy", "catalog"])
 const VALID_TABS = new Set<string>(TARGET_TABS)
-const VALID_AREAS = new Set<AssetArea>(["board", "machines", "clusters", "systems", "scope"])
+const VALID_AREAS = new Set<AssetArea>(["situation", "inspection", "skills", "board", "machines", "clusters", "systems", "scope"])
 const VALID_DEPLOY = new Set<DeploySection>(DEPLOY_SECTIONS.map((item) => item.id))
 const VALID_CATALOG = new Set<string>(Object.keys(assetKinds))
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/
@@ -54,7 +54,16 @@ export function parseConsoleSearch(search: string): ConsoleRouteState {
   const rawArea = params.get("area") as AssetArea | null
   const area: AssetArea = rawArea && VALID_AREAS.has(rawArea) ? rawArea : "board"
   let assetPage: AssetPage
-  if (area === "board") {
+  if (area === "situation") {
+    const clusterId = params.get("cluster") ?? ""
+    assetPage = SAFE_ID.test(clusterId) ? { section: "situation", clusterId } : { section: "situation" }
+  } else if (area === "inspection") {
+    const runId = params.get("run") ?? ""
+    assetPage = SAFE_ID.test(runId) ? { section: "inspection", runId } : { section: "inspection" }
+  } else if (area === "skills") {
+    const slug = params.get("skill") ?? ""
+    assetPage = SAFE_ID.test(slug) ? { section: "skills", slug } : { section: "skills" }
+  } else if (area === "board") {
     const clusterId = params.get("cluster") ?? ""
     assetPage = SAFE_ID.test(clusterId) ? { section: "board", clusterId } : { section: "board" }
   } else if (area === "machines") {
@@ -93,8 +102,12 @@ export function buildConsoleSearch(currentSearch: string, state: ConsoleRouteSta
   } else if (state.view === "assets") {
     next.set("view", "assets")
     next.set("area", state.assetPage.section)
-    if (state.assetPage.section === "board" && state.assetPage.clusterId) {
+    if ((state.assetPage.section === "board" || state.assetPage.section === "situation") && state.assetPage.clusterId) {
       next.set("cluster", state.assetPage.clusterId)
+    } else if (state.assetPage.section === "inspection" && state.assetPage.runId) {
+      next.set("run", state.assetPage.runId)
+    } else if (state.assetPage.section === "skills" && state.assetPage.slug) {
+      next.set("skill", state.assetPage.slug)
     } else if (state.assetPage.section === "machines" && "machineId" in state.assetPage && state.assetPage.machineId) {
       next.set("machine", state.assetPage.machineId)
     }

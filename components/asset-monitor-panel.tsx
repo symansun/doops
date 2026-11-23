@@ -35,6 +35,8 @@ const metrics: Record<string, string> = {
   disk_write_bytes_per_second: "磁盘写吞吐",
   disk_read_latency_ms: "磁盘平均读延迟",
   disk_write_latency_ms: "磁盘平均写延迟",
+  db_tps: "数据库事务处理 (TPS)",
+  db_lock_waits: "数据库锁等待",
 }
 const units: Record<string, string> = {
   cpu: "cores",
@@ -55,6 +57,8 @@ const units: Record<string, string> = {
   disk_write_bytes_per_second: "bytes/s",
   disk_read_latency_ms: "ms",
   disk_write_latency_ms: "ms",
+  db_tps: "tx/s",
+  db_lock_waits: "waits",
 }
 const states: Record<string, string> = {
   missing: "缺数据",
@@ -136,10 +140,15 @@ function visibleMetricsForAsset(asset: Asset, seriesList: Series[]): string[] {
     for (const m of Object.keys(metrics)) if (present.has(m) && !base.includes(m)) base.push(m)
     return base
   }
-  if (asset.type === "kernel") {
+  if (asset.type === "kernel" || asset.type === "os" || asset.type === "process") {
     const base = ["cpu", "memory"]
     for (const m of Object.keys(metrics)) if (present.has(m) && !base.includes(m)) base.push(m)
     return base
+  }
+  if (asset.type === "database") {
+    const base = ["active_connections", "response_time_ms", "requests", "db_tps", "db_lock_waits"]
+    const list = base.filter((m) => present.has(m))
+    return list.length ? list : ["active_connections", "response_time_ms", "requests"]
   }
   if (asset.type === "app" && asset.origin === "app_probe") {
     const base = ["response_time_ms", "error_rate", "active_connections", "requests"]
@@ -152,7 +161,7 @@ function visibleMetricsForAsset(asset: Asset, seriesList: Series[]): string[] {
     return base
   }
   return Object.keys(metrics).filter((m) => {
-    if ((m.startsWith("disk_") || m === "memory_limit" || m === "response_time_ms" || m === "active_connections" || m === "error_rate") && !present.has(m)) return false
+    if ((m.startsWith("disk_") || m.startsWith("db_") || m === "memory_limit" || m === "response_time_ms" || m === "active_connections" || m === "error_rate") && !present.has(m)) return false
     return true
   })
 }

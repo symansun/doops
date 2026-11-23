@@ -490,19 +490,35 @@ function demoK8sResourceJson(kind: string, namespace: string): string {
 
 export function demoAssistantReply(prompt: string): string {
   const p = prompt.toLowerCase()
+  if (/漏洞|根因|异常诊断|浙音|mcp|态势|风险|排序|分析/.test(p)) {
+    return `## 浙音大模型 · 多源巡检智能分析报告（\`zycm/zhejiang-conservatory-llm-72b\`）
+
+已自动调用 **5 个安全巡检 MCP 智能服务**（\`mcp-host-compliance\`、\`mcp-vuln-patch\`、\`mcp-app-websec\`、\`mcp-db-audit\`、\`mcp-auth-anomaly\`）并关联机器、K8s、漏洞、应用与数据库多源巡检数据：
+
+### 风险评级与优先级排序
+
+| 优先级 | 风险项 | 影响业务系统 | 问题根因智能分析 | 智能修复建议 |
+| --- | --- | --- | --- | --- |
+| **P1 高危** | \`k8s-prod-cn\` 节点 \`node-web-02\` 内存压力 & \`report-worker\` 重启 | 全校教务管理系统 | 定时报表任务峰值导致 \`vm-web-02\` 内存达 \`83.8%\`（触发超阈值告警），与 \`report-worker\` 未配置独立内存上限直接相关 | 为 \`report-worker\` 配置 \`resources.limits.memory: 1Gi\` 并调整并发批处理窗口 |
+| **P2 中危** | \`ssh-archive-02\` 根分区占用 \`87.6%\` | 财务网上报销系统 | 历史财务归档日志未自动轮转，近 7 天日均增长 \`4.2 GiB\` | 启用 \`logrotate\` 归档 30 天前压缩包并迁移至冷存储卷 |
+| **P2 中危** | OpenSSL / Nginx 安全补丁待更新（\`CVE-2026-24811\`） | 教务门户 / 统一认证 | 漏洞巡检服务比对基准库发现 \`nginx 1.26.1\` 存在中危 HTTP/2 补丁更新；上期 \`CVE-2026-21409\` 已复验修复通过 | 建议在周末维护窗口执行 \`apt-get install --only-upgrade openssl nginx\` 并自动复验 |
+| **P3 低危** | \`vm-db-01\` 磁盘写延迟短时峰值 \`18.6ms\` | 核心数据库层 | PostgreSQL 定时全量备份与选课写入并发叠加；当前活跃连接 \`64/300\`、\`428 TPS\`、锁等待 \`1\` 次 | 将 \`pg_dump\` 调度移至凌晨 \`02:30\` 低峰窗口并开启 \`--jobs=2\` 限速 |
+
+> 以上为演示模式智能体关联分析结果，不改动真实生产节点。`
+  }
   if (/状态|检查|巡检|status|健康|检查一下/.test(p)) {
-    return `## 巡检结果：节点健康 ✅
+    return `## 浙音大模型 · 全维度巡检结果 ✅
 
-**总体状态**：负载正常、核心服务全部存活、无错误日志。以下是演示数据，没有连接真实节点。
+已通过 **5 个安全巡检 MCP 服务** 完成机器（M1–M5）、漏洞补丁、应用/Web/API 与数据库巡检（演示数据，未连接真实节点）：
 
-| 检查项 | 结果 | 说明 |
-| --- | --- | --- |
-| 系统负载 | 正常 | load 0.18，低于告警阈值 |
-| 服务存活 | 正常 | \`doops-app\` / \`nginx\` / \`redis\` 均 active |
-| 磁盘使用 | 正常 | 根分区 37% |
-| 错误日志 | 无 | 近 1 小时无 error 级日志 |
+| 巡检维度 | 检查项 | 结果 | 关键指标 / 说明 |
+| --- | --- | --- | --- |
+| **机器巡检** | 运行状态、CPU/内存/GPU、进程、合规与异常登录 (M1–M5) | 通过 / 1 告警 | 全校 8/8 探针在线（覆盖率 **100%**）；\`phy-gpu-01\` 双 A100 负载 74%/62%；近 24h 拦截 3 次异常登录 |
+| **漏洞巡检** | 应用漏洞检测、修复验证、补丁管理 | 1 待更新 | 上期 \`CVE-2026-21409\` 修复复验通过；安全补丁覆盖率 96.4%，1 项 Nginx 中危补丁待窗升级 |
+| **应用巡检** | 可用性、流量异常、Web 安全、API 接口 | 通过 | 门户 HTTP 200（\`42.6ms\`、\`186.4 req/s\`、\`128\` 并发、错误率 \`0.18%\`），TLS1.3 证书剩余 68 天 |
+| **数据库巡检** | 连接数、查询性能、事务处理、锁等待 | 正常 | PostgreSQL 主库 \`64/300\` 连接、查询均耗 \`4.2ms\`、\`428 TPS\`、锁等待 \`0\` 次 |
 
-**建议**：无需处理，保持当前监控频率即可。`
+**优先级建议**：优先为 \`node-web-02\` 的 \`report-worker\` 设定内存上限（P1），其次清理 \`ssh-archive-02\` 归档盘（P2）。`
   }
   if (/回滚|rollback|上一个版本|恢复/.test(p)) {
     return `## 回滚完成 ✅
@@ -1227,8 +1243,8 @@ export async function demoPlatformMonitor(
       { action: "write", total: Math.max(1, totalCalls - Math.round(totalCalls * 0.88)), success: Math.max(1, totalCalls - Math.round(totalCalls * 0.88)), failed: 0, running: 0, avg_duration_ms: 610, bytes_in: Math.round(bytesIn * 0.18), bytes_out: Math.round(bytesOut * 0.1), total_tokens: 0 },
     ],
     by_model: [
-      { model: "openai/gpt-5.2", total: Math.max(1, Math.round(totalCalls * 0.28)), input_tokens: Math.round(inputTokens * 0.72), output_tokens: Math.round(outputTokens * 0.74), total_tokens: Math.round(totalTokens * 0.73) },
-      { model: "deepseek/deepseek-v3", total: Math.max(1, Math.round(totalCalls * 0.14)), input_tokens: Math.round(inputTokens * 0.28), output_tokens: Math.round(outputTokens * 0.26), total_tokens: Math.max(0, totalTokens - Math.round(totalTokens * 0.73)) },
+      { model: "zycm/zhejiang-conservatory-llm-72b", total: Math.max(1, Math.round(totalCalls * 0.28)), input_tokens: Math.round(inputTokens * 0.72), output_tokens: Math.round(outputTokens * 0.74), total_tokens: Math.round(totalTokens * 0.73) },
+      { model: "zycm/zhejiang-conservatory-coder-32b", total: Math.max(1, Math.round(totalCalls * 0.14)), input_tokens: Math.round(inputTokens * 0.28), output_tokens: Math.round(outputTokens * 0.26), total_tokens: Math.max(0, totalTokens - Math.round(totalTokens * 0.73)) },
     ],
     by_target: agents.map((a) => ({
       cluster: a.cluster, instance: a.instance, key: a.key,
@@ -1255,7 +1271,7 @@ export async function demoPlatformMonitor(
         ],
     running_ops: (!cluster || cluster === "prod-cn")
       ? [
-          { id: 1098, user_id: "usr_ops01", user_name: "ops-zhang", cluster: "prod-cn", instance: "web-02", action: "ask", session: "deploy-zz99", command_summary: "Helm upgrade doops-app release 1.8.3 in apps", status: "executing", correlation_id: "op-helm-prod-1098", model: "openai/gpt-5.2", total_tokens: 8420, bytes_in: 512, bytes_out: 4096, started_at: new Date(now - 42_000).toISOString(), duration_ms: 42_000 },
+          { id: 1098, user_id: "usr_ops01", user_name: "ops-zhang", cluster: "prod-cn", instance: "web-02", action: "ask", session: "deploy-zz99", command_summary: "调用浙音大模型分析全校巡检异常与修复建议", status: "executing", correlation_id: "op-helm-prod-1098", model: "zycm/zhejiang-conservatory-llm-72b", total_tokens: 8420, bytes_in: 512, bytes_out: 4096, started_at: new Date(now - 42_000).toISOString(), duration_ms: 42_000 },
           { id: 1097, user_id: "usr_admin01", user_name: "admin", cluster: "prod-cn", instance: "web-01", action: "exec", session: "console-a1b2c3d4", command_summary: "kubectl top pods -n apps", status: "running", bytes_in: 48, bytes_out: 312, started_at: new Date(now - 9_000).toISOString(), duration_ms: 9_000 },
         ]
       : [],
@@ -1316,6 +1332,7 @@ export async function demoAssetMonitorRead(url: string): Promise<unknown> {
     ...(instance === "web-02"
       ? [{ type: "machine", asset_id: "phy-gpu-01", namespace: "", origin: "agent_host" }]
       : []),
+    { type: "os", asset_id: `ubuntu-24.04-${instance}`, namespace: "", origin: "agent_host" },
     { type: "kernel", asset_id: `vm-${instance}`, namespace: "", origin: "agent_host" },
     { type: "process", asset_id: "nginx", namespace: "", origin: "exporter" },
     { type: "process", asset_id: "doops-app", namespace: "", origin: "exporter" },
@@ -1371,6 +1388,11 @@ export async function demoAssetMonitorRead(url: string): Promise<unknown> {
       mkSeries("memory", "bytes", 620 * 1048576 * scale),
       mkSeries("memory_limit", "bytes", limit, undefined, true),
     ]
+  } else if (q.get("type") === "os") {
+    series = [
+      mkSeries("cpu", "cores", instance === "web-02" ? 7.8 : 1.85),
+      mkSeries("memory", "bytes", (instance === "web-02" ? 26.8 : 5.4) * 1073741824),
+    ]
   } else if (q.get("type") === "kernel") {
     series = [
       mkSeries("cpu", "cores", 0.28),
@@ -1383,9 +1405,11 @@ export async function demoAssetMonitorRead(url: string): Promise<unknown> {
     ]
   } else if (q.get("type") === "database") {
     series = [
-      mkSeries("response_time_ms", "ms", 4.2),
       mkSeries("active_connections", "connections", 64),
+      mkSeries("response_time_ms", "ms", 4.2),
       mkSeries("requests", "req/s", 312),
+      mkSeries("db_tps", "tx/s", 428),
+      mkSeries("db_lock_waits", "waits", 1),
     ]
   } else if (origin === "app_probe") {
     series = assetId === "nginx"
@@ -1472,10 +1496,15 @@ export async function demoAssetMonitorWrite(body: Record<string, unknown>): Prom
 const demoMonitorSchedulesStore: Array<Record<string, unknown>> = []
 const demoMonitorRunsStore: Array<Record<string, unknown>> = []
 const demoMonitorRunItemsMap = new Map<string, Array<Record<string, unknown>>>()
+let demoInspectionWave = 0
+let demoLastCollectedMs = 0
 
 export async function demoMonitorEngineRequest(path: string, body?: Record<string, unknown>): Promise<unknown> {
   await sleep(70)
   const now = Date.now()
+  if (demoLastCollectedMs === 0) demoLastCollectedMs = now - 25_000
+  const jitter = (base: number, amp: number, phase = 0) =>
+    Number((base + Math.sin(demoInspectionWave * 1.15 + phase) * amp).toFixed(1))
   const parsed = new URL(`http://console.local/${path.replace(/^\/+/, "")}`)
   const route = parsed.pathname.replace(/^\/+/, "")
   const clusterFilter = parsed.searchParams.get("cluster") || ""
@@ -1484,22 +1513,22 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
   const statusFilter = parsed.searchParams.get("status") || ""
 
   const strategies = [
-    { id: "vm_host", name: "虚机 / 物理机本机策略", description: "直采 CPU、内存、磁盘 I/O、网络、GPU 及 M1–M5 巡检。", asset_kinds: ["vm", "physical"], collector_method: "agent_local", checks: ["M1", "M2", "M3", "M4", "M5"] },
-    { id: "ssh_host", name: "SSH 远程主机策略", description: "经结构化只读 SSH 采集无 Agent 主机指标与巡检项。", asset_kinds: ["vm", "physical"], collector_method: "ssh", checks: ["SSH连通性", "M1", "M2", "磁盘容量"] },
+    { id: "vm_host", name: "虚机 / 物理机本机策略", description: "直采 CPU、内存、磁盘 I/O、网络、GPU 及 M1–M5 机器安全巡检。", asset_kinds: ["vm", "physical"], collector_method: "agent_local", checks: ["M1", "M2", "M3", "M4", "M5"] },
+    { id: "ssh_host", name: "SSH 远程主机策略", description: "经结构化只读 SSH 采集无 Agent 主机指标、补丁基线与巡检项。", asset_kinds: ["vm", "physical"], collector_method: "ssh", checks: ["SSH连通性", "M1", "M2", "磁盘容量"] },
     { id: "k8s_cluster", name: "Kubernetes 集群策略", description: "采集节点健康、Pod 异常、副本、PVC 与 Warning 事件。", asset_kinds: ["k8s"], collector_method: "k8s_api", checks: ["节点健康", "Pod状态", "控制器副本"] },
     { id: "container_runtime", name: "容器运行时策略", description: "采集 Docker/nerdctl/Podman 容器 CPU 与内存限额。", asset_kinds: ["container"], collector_method: "agent_local", checks: ["运行时可用性", "内存限额"] },
-    { id: "app_service", name: "应用 / Web / API 策略", description: "采集 Nginx 并发、请求速率、响应时间及 HTTPS 安全头。", asset_kinds: ["app"], collector_method: "http_probe", checks: ["A1可用性", "响应时间", "A4安全头"] },
-    { id: "database_service", name: "数据库策略", description: "探测已登记数据库连通性与延迟。", asset_kinds: ["database"], collector_method: "tcp_probe", checks: ["A2连通性", "建连延迟"] },
+    { id: "app_service", name: "应用 / 漏洞 / Web / API 策略", description: "采集应用可用性、流量异常、Web安全、API接口及应用漏洞补丁核查。", asset_kinds: ["app"], collector_method: "http_probe", checks: ["A1可用性", "流量异常", "Web安全", "API巡检", "漏洞补丁"] },
+    { id: "database_service", name: "数据库运行状态与性能策略", description: "探测数据库连通性、连接数、查询性能、事务处理 TPS 与锁等待。", asset_kinds: ["database"], collector_method: "tcp_probe", checks: ["连接数", "查询性能", "事务TPS", "锁等待"] },
   ]
 
   const allResources = [
     {
       id: 1, cluster: "prod-cn", instance: "web-01", asset_id: "vm-web-01", asset_name: "教务门户节点 01", asset_kind: "vm",
-      strategy: "vm_host", collector_method: "agent_local", collected_at_ms: now - 25_000, run_id: "run_demo04", status: "ok",
-      online: true, stale: false, cpu_cores: 1.85, cpu_total_cores: 8, cpu_percent: 23.1,
-      memory_used_bytes: 5.4 * 1073741824, memory_total_bytes: 16 * 1073741824, memory_percent: 33.8,
+      strategy: "vm_host", collector_method: "agent_local", collected_at_ms: demoLastCollectedMs, run_id: String(demoMonitorRunsStore[0]?.id || "run_demo04"), status: "ok",
+      online: true, stale: false, cpu_cores: Number((1.85 + Math.sin(demoInspectionWave) * 0.25).toFixed(2)), cpu_total_cores: 8, cpu_percent: jitter(23.1, 3.2, 0.2),
+      memory_used_bytes: 5.4 * 1073741824, memory_total_bytes: 16 * 1073741824, memory_percent: jitter(33.8, 1.8, 0.5),
       disk_used_bytes: 62.8 * 1073741824, disk_total_bytes: 180 * 1073741824, disk_percent: 38.8,
-      net_bytes_per_sec: 1_850_000, disk_iops: 237, disk_latency_ms: 2.8, uptime_seconds: 864000, load_1m: 0.82,
+      net_bytes_per_sec: Math.round(1_850_000 * (1 + Math.sin(demoInspectionWave * 0.8) * 0.14)), disk_iops: Math.round(237 + Math.sin(demoInspectionWave) * 28), disk_latency_ms: jitter(2.8, 0.5, 1), uptime_seconds: 864000 + demoInspectionWave * 60, load_1m: jitter(0.82, 0.16, 0.3),
       os_info: "Ubuntu 24.04 LTS", kernel_info: "Linux 6.8.0-49-generic", tags: ["env=prod", "dept=edu", "role=web"],
       details: {
         mounts: [
@@ -1509,16 +1538,17 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
         disks: [
           { device_id: "vda", read_iops: 145, write_iops: 92, read_bytes_per_sec: 3_200_000, write_bytes_per_sec: 1_900_000, read_latency_ms: 2.1, write_latency_ms: 3.4 },
         ],
-        networks: [{ device_id: "eth0", bytes_per_sec: 1_850_000 }],
+        networks: [{ device_id: "eth0", bytes_per_sec: Math.round(1_850_000 * (1 + Math.sin(demoInspectionWave * 0.8) * 0.14)) }],
+        security_events: { failed_logins_blocked: 3 + (demoInspectionWave % 2), privilege_changes: 2, sensitive_ops: 4 + demoInspectionWave },
       },
     },
     {
       id: 2, cluster: "prod-cn", instance: "web-02", asset_id: "phy-gpu-01", asset_name: "科研算力 GPU 物理机 G01", asset_kind: "physical",
-      strategy: "vm_host", collector_method: "agent_local", collected_at_ms: now - 30_000, run_id: "run_demo04", status: "ok",
-      online: true, stale: false, cpu_cores: 37.4, cpu_total_cores: 64, cpu_percent: 58.4,
-      memory_used_bytes: 342 * 1073741824, memory_total_bytes: 512 * 1073741824, memory_percent: 66.8,
+      strategy: "vm_host", collector_method: "agent_local", collected_at_ms: demoLastCollectedMs, run_id: String(demoMonitorRunsStore[0]?.id || "run_demo04"), status: "ok",
+      online: true, stale: false, cpu_cores: Number((37.4 + Math.cos(demoInspectionWave) * 2.1).toFixed(2)), cpu_total_cores: 64, cpu_percent: jitter(58.4, 4.5, 1.1),
+      memory_used_bytes: 342 * 1073741824, memory_total_bytes: 512 * 1073741824, memory_percent: jitter(66.8, 2.2, 0.8),
       disk_used_bytes: 4920 * 1073741824, disk_total_bytes: 8000 * 1073741824, disk_percent: 61.5,
-      net_bytes_per_sec: 48_600_000, disk_iops: 2100, disk_latency_ms: 0.7, gpu_percent: 74.2, uptime_seconds: 2_592_000, load_1m: 14.6,
+      net_bytes_per_sec: Math.round(48_600_000 * (1 + Math.cos(demoInspectionWave) * 0.12)), disk_iops: Math.round(2100 + Math.sin(demoInspectionWave) * 180), disk_latency_ms: jitter(0.7, 0.15, 0.4), gpu_percent: jitter(74.2, 5.1, 0.7), uptime_seconds: 2_592_000 + demoInspectionWave * 60, load_1m: jitter(14.6, 1.8, 0.9),
       os_info: "Ubuntu 24.04 LTS", kernel_info: "Linux 6.8.0-49-generic", tags: ["env=prod", "rack=G01", "gpu=a100", "dept=research"],
       details: {
         mounts: [
@@ -1533,33 +1563,33 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
           { device_id: "ib0", bytes_per_sec: 128_000_000 },
         ],
         gpus: [
-          { uuid: "GPU-a1b2c3d4-1111-2222-3333-444455556666", name: "NVIDIA A100-SXM4-80GB #0", util_percent: 74.2, mem_used_mib: 58420, mem_total_mib: 81920, temp_c: 67 },
-          { uuid: "GPU-e5f6a7b8-7777-8888-9999-aaaabbbbcccc", name: "NVIDIA A100-SXM4-80GB #1", util_percent: 61.5, mem_used_mib: 49152, mem_total_mib: 81920, temp_c: 63 },
+          { uuid: "GPU-a1b2c3d4-1111-2222-3333-444455556666", name: "NVIDIA A100-SXM4-80GB #0", util_percent: jitter(74.2, 5.1, 0.7), mem_used_mib: 58420, mem_total_mib: 81920, temp_c: 67 },
+          { uuid: "GPU-e5f6a7b8-7777-8888-9999-aaaabbbbcccc", name: "NVIDIA A100-SXM4-80GB #1", util_percent: jitter(61.5, 4.4, 1.7), mem_used_mib: 49152, mem_total_mib: 81920, temp_c: 63 },
         ],
       },
     },
     {
       id: 3, cluster: "prod-cn", instance: "web-02", asset_id: "k8s-prod-cn", asset_name: "核心业务生产集群 (K8s)", asset_kind: "k8s",
-      strategy: "k8s_cluster", collector_method: "k8s_api", collected_at_ms: now - 30_000, run_id: "run_demo04", status: "warning",
-      online: true, stale: false, cpu_cores: 18.4, cpu_total_cores: 32, cpu_percent: 57.5,
-      memory_used_bytes: 53.6 * 1073741824, memory_total_bytes: 64 * 1073741824, memory_percent: 83.8,
+      strategy: "k8s_cluster", collector_method: "k8s_api", collected_at_ms: demoLastCollectedMs, run_id: String(demoMonitorRunsStore[0]?.id || "run_demo04"), status: demoInspectionWave % 3 === 2 ? "ok" : "warning",
+      online: true, stale: false, cpu_cores: 18.4, cpu_total_cores: 32, cpu_percent: jitter(57.5, 3.8, 1.4),
+      memory_used_bytes: 53.6 * 1073741824, memory_total_bytes: 64 * 1073741824, memory_percent: demoInspectionWave % 3 === 2 ? 76.2 : jitter(83.8, 1.9, 1.2),
       os_info: "K8s v1.30.2", tags: ["env=prod", "tier=core"],
       details: {
         nodes: [
           { name: "node-web-01", ready: true, pressures: [] },
-          { name: "node-web-02", ready: true, pressures: ["MemoryPressure"] },
+          { name: "node-web-02", ready: true, pressures: demoInspectionWave % 3 === 2 ? [] : ["MemoryPressure"] },
           { name: "node-gpu-01", ready: true, pressures: [] },
         ],
-        abnormal_pods: [
-          { namespace: "apps", name: "report-worker-7b8d", phase: "Running", reason: "HighRestarts", restarts: 6 },
-        ],
+        abnormal_pods: demoInspectionWave % 3 === 2
+          ? []
+          : [{ namespace: "apps", name: "report-worker-7b8d", phase: "Running", reason: "HighRestarts", restarts: 6 }],
       },
     },
     {
       id: 4, cluster: "prod-cn", instance: "web-02", asset_id: "docker-web-02", asset_name: "核心节点容器运行时 (Docker)", asset_kind: "container",
-      strategy: "container_runtime", collector_method: "agent_local", collected_at_ms: now - 28_000, run_id: "run_demo04", status: "ok",
-      online: true, stale: false, cpu_cores: 1.18, cpu_total_cores: 16, cpu_percent: 7.4,
-      memory_used_bytes: 1.02 * 1073741824, memory_total_bytes: 3 * 1073741824, memory_percent: 34.0,
+      strategy: "container_runtime", collector_method: "agent_local", collected_at_ms: demoLastCollectedMs, run_id: String(demoMonitorRunsStore[0]?.id || "run_demo04"), status: "ok",
+      online: true, stale: false, cpu_cores: 1.18, cpu_total_cores: 16, cpu_percent: jitter(7.4, 1.1, 2.0),
+      memory_used_bytes: 1.02 * 1073741824, memory_total_bytes: 3 * 1073741824, memory_percent: jitter(34.0, 1.5, 2.2),
       os_info: "Docker 27.3.1", tags: ["env=prod", "runtime=docker"],
       details: {
         containers: [
@@ -1571,35 +1601,35 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
     },
     {
       id: 5, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-legacy-01", asset_name: "教务老旧业务机 (SSH)", asset_kind: "vm",
-      strategy: "ssh_host", collector_method: "ssh", collected_at_ms: now - 45_000, run_id: "run_demo04", status: "ok",
-      online: true, stale: false, cpu_cores: 1.1, cpu_total_cores: 4, cpu_percent: 27.5,
-      memory_used_bytes: 4.9 * 1073741824, memory_total_bytes: 8 * 1073741824, memory_percent: 61.3,
+      strategy: "ssh_host", collector_method: "ssh", collected_at_ms: demoLastCollectedMs, run_id: String(demoMonitorRunsStore[0]?.id || "run_demo04"), status: "ok",
+      online: true, stale: false, cpu_cores: 1.1, cpu_total_cores: 4, cpu_percent: jitter(27.5, 2.4, 2.6),
+      memory_used_bytes: 4.9 * 1073741824, memory_total_bytes: 8 * 1073741824, memory_percent: jitter(61.3, 1.5, 2.1),
       disk_used_bytes: 68 * 1073741824, disk_total_bytes: 100 * 1073741824, disk_percent: 68.0,
       uptime_seconds: 1_920_000, load_1m: 1.05, os_info: "Rocky Linux 9.4", tags: ["env=prod", "via=ssh", "dept=edu"],
       details: { mounts: [{ mount: "/", total_bytes: 100 * 1073741824, used_bytes: 68 * 1073741824, avail_bytes: 32 * 1073741824, used_pct: 68.0 }] },
     },
     {
       id: 6, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-archive-02", asset_name: "财务归档服务器 (SSH)", asset_kind: "vm",
-      strategy: "ssh_host", collector_method: "ssh", collected_at_ms: now - 50_000, run_id: "run_demo04", status: "warning",
-      online: true, stale: false, cpu_cores: 2.2, cpu_total_cores: 8, cpu_percent: 27.5,
+      strategy: "ssh_host", collector_method: "ssh", collected_at_ms: demoLastCollectedMs, run_id: String(demoMonitorRunsStore[0]?.id || "run_demo04"), status: "warning",
+      online: true, stale: false, cpu_cores: 2.2, cpu_total_cores: 8, cpu_percent: jitter(27.5, 2.2, 3.0),
       memory_used_bytes: 10.6 * 1073741824, memory_total_bytes: 16 * 1073741824, memory_percent: 66.3,
       disk_used_bytes: 438 * 1073741824, disk_total_bytes: 500 * 1073741824, disk_percent: 87.6,
       uptime_seconds: 4_120_000, load_1m: 1.42, os_info: "CentOS Stream 9", tags: ["env=prod", "via=ssh", "dept=finance"],
       details: { mounts: [{ mount: "/", total_bytes: 500 * 1073741824, used_bytes: 438 * 1073741824, avail_bytes: 62 * 1073741824, used_pct: 87.6 }] },
     },
     {
-      id: 7, cluster: "prod-cn", instance: "web-01", asset_id: "portal.edu.example", asset_name: "教务门户站点 (HTTPS)", asset_kind: "app",
-      strategy: "app_service", collector_method: "http_probe", collected_at_ms: now - 25_000, run_id: "run_demo04", status: "ok",
-      online: true, stale: false, response_time_ms: 42.6, error_rate: 0.2, active_connections: 128, requests_per_sec: 186.4,
+      id: 7, cluster: "prod-cn", instance: "web-01", asset_id: "portal.edu.example", asset_name: "教务门户与统一 API 网关 (HTTPS)", asset_kind: "app",
+      strategy: "app_service", collector_method: "http_probe", collected_at_ms: demoLastCollectedMs, run_id: String(demoMonitorRunsStore[0]?.id || "run_demo04"), status: "ok",
+      online: true, stale: false, response_time_ms: jitter(42.6, 5.2, 0.9), error_rate: 0.18, active_connections: Math.round(128 + Math.sin(demoInspectionWave) * 18), requests_per_sec: jitter(186.4, 24.0, 1.3),
       tags: ["env=prod", "dept=edu", "proto=https"],
-      details: {},
+      details: { tls_days_remaining: 68, traffic_baseline_delta_pct: 4.2, api_endpoints_checked: 6 },
     },
     {
-      id: 8, cluster: "staging", instance: "db-01", asset_id: "pg-main-01", asset_name: "PostgreSQL 核心主库 (TCP)", asset_kind: "database",
-      strategy: "database_service", collector_method: "tcp_probe", collected_at_ms: now - 30_000, run_id: "run_demo04", status: "ok",
-      online: true, stale: false, response_time_ms: 4.2, error_rate: 0, active_connections: 64, requests_per_sec: 312,
+      id: 8, cluster: "staging", instance: "db-01", asset_id: "pg-main-01", asset_name: "PostgreSQL 核心主库", asset_kind: "database",
+      strategy: "database_service", collector_method: "tcp_probe", collected_at_ms: demoLastCollectedMs, run_id: String(demoMonitorRunsStore[0]?.id || "run_demo04"), status: "ok",
+      online: true, stale: false, response_time_ms: jitter(4.2, 0.7, 1.8), error_rate: 0, active_connections: Math.round(64 + Math.cos(demoInspectionWave) * 8), requests_per_sec: jitter(312, 26, 2.2),
       tags: ["env=staging", "dept=finance", "db=postgres"],
-      details: {},
+      details: { db_stats: { connections: Math.round(64 + Math.cos(demoInspectionWave) * 8), max_connections: 300, query_ms: jitter(4.2, 0.7, 1.8), tps: Math.round(428 + Math.sin(demoInspectionWave) * 34), lock_waits: demoInspectionWave % 2, slow_queries: 0 } },
     },
   ]
 
@@ -1637,27 +1667,40 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
   const seedSchedules = [
     {
       id: "sched_demo01", name: "全校核心基础设施 5 分钟自动巡检",
-      description: "覆盖虚机/GPU物理机、SSH 远程主机、K8s、容器、站点与数据库全策略巡检",
+      description: "由系统内置巡检 Skill 驱动，覆盖机器(M1–M5)、GPU物理机、SSH远程主机、K8s、容器、漏洞补丁、Web/API与数据库全策略巡检",
       enabled: true, scope_mode: "all_online", targets: [], tags: [],
       strategies: ["vm_host", "ssh_host", "k8s_cluster", "container_runtime", "app_service", "database_service"],
+      skills: ["inspect-vm-host", "inspect-ssh-host", "inspect-k8s-cluster", "inspect-container-runtime", "inspect-app-web", "inspect-database", "inspect-proxy-evasion"],
       thresholds: defaultThresholds,
       interval_seconds: 300, next_run_at_ms: now + 240_000, last_run_at_ms: now - 60_000, last_run_id: "run_demo04", last_status: "warning",
       created_by: "admin", created_at: new Date(now - 7 * 86400_000).toISOString(), updated_at: new Date(now - 60_000).toISOString(),
     },
     {
-      id: "sched_demo02", name: "重点门户站点与数据库 15 分钟拨测",
-      description: "专注 HTTPS 可用性、证书剩余天数、Nginx 并发与 PostgreSQL 建连延迟",
+      id: "sched_demo04", name: "全校每周安全漏洞与合规自动化巡检",
+      description: "满足每周至少一次全维度自动化巡检要求：驱动系统安全 Skill 完成应用漏洞、补丁基线及 M4/M5 合规检查并输出报告",
+      enabled: true, scope_mode: "all_online", targets: [], tags: [],
+      strategies: ["vm_host", "ssh_host", "app_service", "database_service"],
+      skills: ["inspect-vm-host", "inspect-ssh-host", "inspect-app-web", "inspect-database", "inspect-package-vuln"],
+      thresholds: defaultThresholds,
+      interval_seconds: 604800, next_run_at_ms: now + 4 * 86400_000, last_run_at_ms: now - 3 * 86400_000, last_run_id: "run_demo03", last_status: "warning",
+      created_by: "admin", created_at: new Date(now - 14 * 86400_000).toISOString(), updated_at: new Date(now - 3 * 86400_000).toISOString(),
+    },
+    {
+      id: "sched_demo02", name: "重点门户站点、API 与数据库 15 分钟拨测",
+      description: "专注 HTTPS 可用性、流量异常、安全头、API 契约与 PostgreSQL 连接/TPS/锁等待监测",
       enabled: true, scope_mode: "targets", targets: [{ cluster: "prod-cn", instance: "web-01" }, { cluster: "staging", instance: "db-01" }], tags: [],
       strategies: ["app_service", "database_service"],
+      skills: ["inspect-app-web", "inspect-database"],
       thresholds: { ...defaultThresholds, latency_warn_ms: 300, cert_warn_days: 30 },
       interval_seconds: 900, next_run_at_ms: now + 540_000, last_run_at_ms: now - 360_000, last_run_id: "run_demo02", last_status: "pass",
       created_by: "admin", created_at: new Date(now - 5 * 86400_000).toISOString(), updated_at: new Date(now - 360_000).toISOString(),
     },
     {
-      id: "sched_demo03", name: "GPU 算力节点每小时深度合规巡检",
-      description: "针对带 gpu=a100 标签的高密度算力物理机核查 GPU 温度、显存与 M4/M5 安全基线",
+      id: "sched_demo03", name: "GPU 算力节点每小时深度巡检",
+      description: "针对带 gpu=a100 标签的高密度算力物理机核查双卡 GPU 显存温度、NVMe I/O 与进程合规",
       enabled: false, scope_mode: "tags", targets: [], tags: ["gpu=a100"],
       strategies: ["vm_host", "container_runtime"],
+      skills: ["inspect-vm-host", "inspect-container-runtime"],
       thresholds: defaultThresholds,
       interval_seconds: 3600, next_run_at_ms: 0, last_run_at_ms: now - 4 * 3600_000, last_run_id: "run_demo01", last_status: "critical",
       created_by: "admin", created_at: new Date(now - 3 * 86400_000).toISOString(), updated_at: new Date(now - 2 * 3600_000).toISOString(),
@@ -1666,35 +1709,34 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
 
   const buildStandardItems = (runId: string, baseMs: number, includeOffline = false, includeCriticalK8s = false): Array<Record<string, unknown>> => [
     {
-      id: 1, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "vm-web-01", asset_name: "教务门户节点 01", asset_kind: "vm",
+      id: 1, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "vm-web-01", asset_name: "教务门户节点 01（机器巡检）", asset_kind: "vm",
       strategy: "vm_host", collector_method: "agent_local", status: "pass", started_at_ms: baseMs, finished_at_ms: baseMs + 420, duration_ms: 420,
-      metrics: { cpu_percent: 23.1, memory_percent: 33.8, disk_percent: 38.8, memory_used_bytes: 5.4 * 1073741824, os_info: "Ubuntu 24.04 LTS" },
+      metrics: { cpu_percent: jitter(23.1, 3.2, 0.2), memory_percent: jitter(33.8, 1.8, 0.5), disk_percent: 38.8, memory_used_bytes: 5.4 * 1073741824, os_info: "Ubuntu 24.04 LTS" },
       checks: [
-        { id: "host.uptime", name: "运行与重启 (M1)", category: "availability", status: "pass", value: "864000s", threshold: ">=300s", detail: "运行稳定，近 10 天无异常重启" },
-        { id: "host.cpu_memory", name: "CPU 与内存水位 (M2)", category: "resource", status: "pass", value: "CPU 23.1% / 内存 33.8%", threshold: "<80%", detail: "水位正常" },
-        { id: "host.disk_capacity", name: "磁盘存储容量", category: "resource", status: "pass", value: "/ 38.8%", threshold: "<85%", detail: "检查 2 个挂载点，最高占用 38.8%" },
-        { id: "host.disk_io", name: "磁盘 I/O 与延迟", category: "resource", status: "pass", value: "237 ops/s · 3.4ms", threshold: "<50ms", detail: "vda 读写延迟正常" },
-        { id: "host.processes", name: "进程与可疑进程 (M3)", category: "security", status: "pass", value: "142 进程 / 0 僵尸", threshold: "无黑名单进程", detail: "正常" },
-        { id: "host.sysctl_compliance", name: "内核配置合规 (M4)", category: "compliance", status: "pass", value: "4/4 合规", threshold: "全部基线符合", detail: "全部满足加固基线" },
-        { id: "host.auth_security", name: "登录与权限基线 (M5)", category: "security", status: "pass", value: "0 异常失败登录", threshold: "账户基线可核验", detail: "指纹一致" },
+        { id: "host.uptime", name: "机器正常运行检查 (M1)", category: "availability", status: "pass", value: "864000s", threshold: ">=300s", detail: "运行稳定，近 10 天无异常重启" },
+        { id: "host.cpu_memory", name: "CPU 与内存水位检查 (M2)", category: "resource", status: "pass", value: `CPU ${jitter(23.1, 3.2, 0.2)}% / 内存 ${jitter(33.8, 1.8, 0.5)}%`, threshold: "<80%", detail: "系统级负载正常" },
+        { id: "host.disk_capacity", name: "磁盘容量与 I/O 延迟", category: "resource", status: "pass", value: "/ 38.8% · 3.4ms", threshold: "<85% / <50ms", detail: "检查 2 个挂载点及 vda 块设备" },
+        { id: "host.processes", name: "可疑进程检测 (M3)", category: "security", status: "pass", value: "142 进程 / 0 可疑 / 0 僵尸", threshold: "无异常驻留进程", detail: "白名单与进程指纹核验通过" },
+        { id: "host.sysctl_compliance", name: "系统配置合规性检查 (M4)", category: "compliance", status: "pass", value: "4/4 合规", threshold: "全部基线符合", detail: "sysctl / SSH 加固项全部满足基线" },
+        { id: "host.auth_security", name: "异常登录与权限变更检测 (M5)", category: "security", status: "pass", value: "拦截 3 次失败登录 · 0 非法提权", threshold: "无越权变更", detail: "sudoers 与 /etc/passwd 基线一致" },
       ],
-      evidence: { mounts: [{ mount: "/", used_pct: 38.8 }, { mount: "/var/log", used_pct: 30.0 }], load_1m: 0.82 },
+      evidence: { mcp_service: "mcp-host-compliance", mounts: [{ mount: "/", used_pct: 38.8 }, { mount: "/var/log", used_pct: 30.0 }], failed_logins_blocked: 3 },
     },
     {
       id: 2, run_id: runId, cluster: "prod-cn", instance: "web-02", asset_id: "phy-gpu-01", asset_name: "科研算力 GPU 物理机 G01", asset_kind: "physical",
       strategy: "vm_host", collector_method: "agent_local", status: "pass", started_at_ms: baseMs + 100, finished_at_ms: baseMs + 680, duration_ms: 580,
-      metrics: { cpu_percent: 58.4, memory_percent: 66.8, disk_percent: 63.4, gpu_percent: 74.2, os_info: "Ubuntu 24.04 LTS" },
+      metrics: { cpu_percent: jitter(58.4, 4.5, 1.1), memory_percent: jitter(66.8, 2.2, 0.8), disk_percent: 63.4, gpu_percent: jitter(74.2, 5.1, 0.7), os_info: "Ubuntu 24.04 LTS" },
       checks: [
-        { id: "host.cpu_memory", name: "CPU 与内存水位 (M2)", category: "resource", status: "pass", value: "CPU 58.4% / 内存 66.8%", threshold: "<80%", detail: "算力负载健康" },
-        { id: "host.gpu", name: "NVIDIA GPU 状态", category: "resource", status: "pass", value: "2 卡在线 · 峰值 74.2% / 67°C", threshold: "<95% / <85°C", detail: "A100 #0 74.2%，A100 #1 61.5%" },
-        { id: "host.disk_io", name: "NVMe 磁盘 I/O", category: "resource", status: "pass", value: "2100 ops/s · 0.7ms", threshold: "<50ms", detail: "nvme0n1 读写吞吐正常" },
+        { id: "host.cpu_memory", name: "CPU 与内存水位 (M2)", category: "resource", status: "pass", value: `CPU ${jitter(58.4, 4.5, 1.1)}% / 内存 ${jitter(66.8, 2.2, 0.8)}%`, threshold: "<80%", detail: "AI 算力节点负载健康" },
+        { id: "host.gpu", name: "NVIDIA GPU 多卡状态", category: "resource", status: "pass", value: `2 卡在线 · 峰值 ${jitter(74.2, 5.1, 0.7)}% / 67°C`, threshold: "<95% / <85°C", detail: "A100 #0 显存 58.4 GiB，A100 #1 显存 49.2 GiB" },
+        { id: "host.disk_io", name: "NVMe 磁盘 I/O 与吞吐", category: "resource", status: "pass", value: "2100 ops/s · 0.7ms", threshold: "<50ms", detail: "nvme0n1 读写延迟正常" },
       ],
-      evidence: { gpu_count: 2, max_temp_c: 67, nvme_iops: 2100 },
+      evidence: { mcp_service: "mcp-host-compliance", gpu_count: 2, max_temp_c: 67, nvme_iops: 2100 },
     },
     {
       id: 3, run_id: runId, cluster: "prod-cn", instance: "web-02", asset_id: "k8s-prod-cn", asset_name: "核心业务生产集群 (K8s)", asset_kind: "k8s",
       strategy: "k8s_cluster", collector_method: "k8s_api", status: includeCriticalK8s ? "critical" : "warning", started_at_ms: baseMs + 200, finished_at_ms: baseMs + 1050, duration_ms: 850,
-      metrics: { cpu_percent: 57.5, memory_percent: 83.8, os_info: "K8s v1.30.2" },
+      metrics: { cpu_percent: jitter(57.5, 3.8, 1.4), memory_percent: jitter(83.8, 1.9, 1.2), os_info: "K8s v1.30.2" },
       checks: [
         { id: "k8s.nodes", name: "K8s 节点健康", category: "availability", status: "warning", value: "3 节点 Ready · 1 节点 MemoryPressure", threshold: "0 压力节点", detail: "node-web-02 报告 MemoryPressure" },
         {
@@ -1719,7 +1761,7 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       evidence: { runtime: "docker", running_containers: 3 },
     },
     {
-      id: 5, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-archive-02", asset_name: "财务归档服务器 (SSH)", asset_kind: "vm",
+      id: 5, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "ssh-archive-02", asset_name: "财务归档服务器 (SSH 远程巡检)", asset_kind: "vm",
       strategy: "ssh_host", collector_method: "ssh", status: "warning", started_at_ms: baseMs + 400, finished_at_ms: baseMs + 1310, duration_ms: 910,
       metrics: { cpu_percent: 27.5, memory_percent: 66.3, disk_percent: 87.6, os_info: "CentOS Stream 9" },
       checks: [
@@ -1729,33 +1771,73 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       evidence: { collector: "ssh_batch_readonly", root_used_pct: 87.6 },
     },
     {
-      id: 6, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "portal.edu.example", asset_name: "教务门户站点 (HTTPS)", asset_kind: "app",
-      strategy: "app_service", collector_method: "http_probe", status: "pass", started_at_ms: baseMs + 500, finished_at_ms: baseMs + 690, duration_ms: 190,
-      metrics: { response_time_ms: 42.6, error_rate: 0.2, active_connections: 128, requests_per_sec: 186.4 },
+      id: 6, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "portal.edu.example", asset_name: "教务门户与统一 API（应用 & 漏洞巡检）", asset_kind: "app",
+      strategy: "app_service", collector_method: "http_probe", status: "warning", started_at_ms: baseMs + 500, finished_at_ms: baseMs + 890, duration_ms: 390,
+      metrics: { response_time_ms: jitter(42.6, 5.2, 0.9), error_rate: 0.18, active_connections: Math.round(128 + Math.sin(demoInspectionWave) * 18), requests_per_sec: jitter(186.4, 24.0, 1.3) },
       checks: [
-        { id: "app.availability", name: "HTTPS 可用性与响应 (A1)", category: "availability", status: "pass", value: "HTTP 200 · 42.6ms", threshold: "<1000ms", detail: "状态正常，错误率 0.2%" },
-        { id: "app.tls_security", name: "证书有效期与安全头 (A4)", category: "security", status: "pass", value: "剩余 68 天 · HSTS/nosniff", threshold: ">=14 天", detail: "TLS 1.3 + 完整安全响应头" },
-        { id: "app.nginx", name: "Nginx 并发与请求速率", category: "resource", status: "pass", value: "128 并发 · 186.4 req/s", threshold: "stub_status 可达", detail: "吞吐平稳" },
+        { id: "app.availability", name: "应用服务可用性监测 (A1)", category: "availability", status: "pass", value: `HTTP 200 · ${jitter(42.6, 5.2, 0.9)}ms`, threshold: "<1000ms", detail: "响应稳定，错误率 0.18%" },
+        { id: "app.traffic_anomaly", name: "流量异常检测", category: "security", status: "pass", value: `${jitter(186.4, 24.0, 1.3)} req/s · 128 并发`, threshold: "基线偏离 <30%", detail: "较 7 日同期基线偏离 +4.2%，无 CC/突发流量异常" },
+        { id: "app.web_security", name: "Web 应用安全巡检 (A4)", category: "security", status: "pass", value: "TLS 1.3 · 剩余 68 天 · HSTS/CSP", threshold: ">=14 天", detail: "安全响应头齐全，无敏感目录暴露" },
+        { id: "app.api_probe", name: "API 接口巡检", category: "availability", status: "pass", value: "6/6 核心接口 200 OK", threshold: "全部契约通过", detail: "/api/v1/health、/auth/jwks、/courses、/rooms 均正常" },
+        { id: "vuln.app_cve", name: "应用漏洞检测", category: "vulnerability", status: "warning", value: "发现 1 项中危 CVE-2026-24811", threshold: "0 高危 / 0 中危", detail: "nginx 1.26.1 存在 HTTP/2 帧处理补丁待更新，无高危/严重漏洞" },
+        { id: "vuln.fix_verify", name: "漏洞修复验证", category: "vulnerability", status: "pass", value: "CVE-2026-21409 复验已闭环", threshold: "已修复项不复发", detail: "上期 OpenSSL 高危漏洞补丁已验证生效" },
+        { id: "vuln.patch_mgmt", name: "补丁管理与更新检查", category: "vulnerability", status: "pass", value: "基线补丁覆盖率 96.4%", threshold: ">=95%", detail: "108/112 安全补丁已安装，4 项低危排期下周窗口" },
       ],
-      evidence: { status_code: 200, tls_days_remaining: 68, hsts: true },
+      evidence: { mcp_services: ["mcp-app-websec", "mcp-vuln-patch"], status_code: 200, tls_days_remaining: 68, pending_cves: ["CVE-2026-24811"] },
     },
     {
-      id: 7, run_id: runId, cluster: "staging", instance: "db-01", asset_id: "pg-main-01", asset_name: "PostgreSQL 核心主库 (TCP)", asset_kind: "database",
-      strategy: "database_service", collector_method: "tcp_probe", status: "pass", started_at_ms: baseMs + 600, finished_at_ms: baseMs + 615, duration_ms: 15,
-      metrics: { response_time_ms: 4.2, error_rate: 0 },
+      id: 7, run_id: runId, cluster: "staging", instance: "db-01", asset_id: "pg-main-01", asset_name: "PostgreSQL 核心主库（数据库巡检）", asset_kind: "database",
+      strategy: "database_service", collector_method: "tcp_probe", status: "pass", started_at_ms: baseMs + 600, finished_at_ms: baseMs + 645, duration_ms: 45,
+      metrics: { response_time_ms: jitter(4.2, 0.7, 1.8), error_rate: 0, active_connections: Math.round(64 + Math.cos(demoInspectionWave) * 8), requests_per_sec: jitter(312, 26, 2.2) },
       checks: [
-        { id: "db.connectivity", name: "数据库 TCP 连通与延迟 (A2)", category: "availability", status: "pass", value: "4.2ms (10.0.2.21:5432)", threshold: "<500ms", detail: "TCP 握手成功，连接池健康" },
+        { id: "db.connections", name: "数据库连接数检查 (A2)", category: "availability", status: "pass", value: `${Math.round(64 + Math.cos(demoInspectionWave) * 8)} / 300 (21.3%)`, threshold: "<80% 连接池", detail: "主库连接池余量充足" },
+        { id: "db.query_perf", name: "查询性能与慢查询检查", category: "performance", status: "pass", value: `均耗 ${jitter(4.2, 0.7, 1.8)}ms · 0 慢查询`, threshold: "<50ms", detail: "索引命中率 99.4%" },
+        { id: "db.transactions", name: "事务处理与锁等待检查", category: "performance", status: "pass", value: `${Math.round(428 + Math.sin(demoInspectionWave) * 34)} TPS · 锁等待 ${demoInspectionWave % 2}`, threshold: "锁等待 <5", detail: "无长事务阻塞或死锁" },
       ],
-      evidence: { host: "10.0.2.21", port: 5432, latency_ms: 4.2 },
+      evidence: { mcp_service: "mcp-database-inspect", host: "10.0.2.21", port: 5432, connections: 64, max_connections: 300, tps: 428, lock_waits: demoInspectionWave % 2 },
+    },
+    {
+      id: 8, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "fw-campus-edge-01", asset_name: "校园出口边界防火墙 NGFW-01（防火墙 MCP）", asset_kind: "firewall",
+      strategy: "firewall", collector_method: "mcp_service", status: "warning", started_at_ms: baseMs + 650, finished_at_ms: baseMs + 990, duration_ms: 340,
+      metrics: { cpu_percent: jitter(31.4, 3.0, 0.6), memory_percent: jitter(46.2, 2.0, 0.9), active_connections: Math.round(48200 + Math.sin(demoInspectionWave) * 3200) },
+      checks: [
+        { id: "fw.ha_session", name: "双机 HA 与并发会话水位", category: "availability", status: "pass", value: `主备同步正常 · ${Math.round(48200 + Math.sin(demoInspectionWave) * 3200)} / 500,000 (9.6%)`, threshold: "<75% 会话上限", detail: "主备心跳延迟 0.8ms，吞吐正常" },
+        { id: "fw.highrisk_policy", name: "高危全通策略审计", category: "security", status: "warning", value: "发现 1 条临时高危放行 (RULE-TEMP-3389)", threshold: "0 条 any->高危端口策略", detail: "策略 RULE-TEMP-3389 允许外部临时访问 3389 端口，已超过 72h 审批有效期" },
+        { id: "fw.ips_signature", name: "IPS / 防病毒特征库版本", category: "security", status: "pass", value: "IPS v2026.11.21 · AV v2026.11.22", threshold: "<=7 天内更新", detail: "特征库自动同步正常，24h 拦截扫描 412 次" },
+        { id: "fw.mgmt_acl", name: "管理口 ACL 与 Syslog 外发", category: "compliance", status: "pass", value: "仅限运维网段 · Syslog TLS 在线", threshold: "最小权限接入", detail: "管理平面隔离符合等保 2.0 三级基线" },
+      ],
+      evidence: { mcp_service: "mcp-firewall-inspect", ha_state: "active-standby", flagged_rules: ["RULE-TEMP-3389"], ips_blocks_24h: 412 },
+    },
+    {
+      id: 9, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "ac-behavior-01", asset_name: "全校上网行为管理 AC-01（行为审计 MCP）", asset_kind: "internet_behavior",
+      strategy: "internet_behavior", collector_method: "mcp_service", status: "pass", started_at_ms: baseMs + 700, finished_at_ms: baseMs + 980, duration_ms: 280,
+      metrics: { cpu_percent: jitter(28.6, 2.5, 1.3), memory_percent: jitter(51.8, 1.8, 1.1), net_bytes_per_sec: Math.round(425_000_000 * (1 + Math.sin(demoInspectionWave) * 0.1)) },
+      checks: [
+        { id: "ac.log_retention", name: "实名认证联动与日志留存合规", category: "compliance", status: "pass", value: "已联动 SSO 实名 · 留存 192 天", threshold: ">=180 天留存", detail: "满足网络安全法 ≥180 天留存要求" },
+        { id: "ac.url_blocking", name: "恶意域名 / 矿池 / 违规站点拦截", category: "security", status: "pass", value: "近 24h 拦截 17 次恶意/矿池请求", threshold: "规则库实时生效", detail: "已自动阻断挖矿域名与钓鱼站点外联" },
+        { id: "ac.ssl_engine", name: "出口带宽与 SSL 审计引擎", category: "availability", status: "pass", value: "出口 3.4 Gbps · 审计延迟 1.2ms", threshold: "<80% 出口容量", detail: "旁路镜像与串行审计通道运行平稳" },
+      ],
+      evidence: { mcp_service: "mcp-internet-behavior-inspect", retention_days: 192, blocked_domains_24h: 17, egress_gbps: 3.4 },
+    },
+    {
+      id: 10, run_id: runId, cluster: "prod-cn", instance: "web-02", asset_id: "evasion-guard-campus", asset_name: "全校违规翻墙与代理穿透监测（翻墙巡检 MCP）", asset_kind: "proxy_evasion",
+      strategy: "proxy_evasion", collector_method: "mcp_service", status: "warning", started_at_ms: baseMs + 750, finished_at_ms: baseMs + 1160, duration_ms: 410,
+      metrics: { active_connections: 5 },
+      checks: [
+        { id: "evasion.proxy_process", name: "主机翻墙与代理进程扫描", category: "security", status: "warning", value: "检出 1 个未备案穿透进程 (frpc @ 10.0.3.41)", threshold: "0 违规代理/穿透进程", detail: "在 10.0.3.41 检测到未备案 frpc 客户端进程（外联 47.x.x.x:7000）；未检出 clash/v2ray/xray/sing-box" },
+        { id: "evasion.encrypted_tunnel", name: "非常规加密隧道外联特征识别", category: "security", status: "pass", value: "已阻断 2 次可疑 VLESS/VMess 握手", threshold: "阻断率 100%", detail: "出口深度包检测特征库 v2026.11.22 已拦截违规协议握手" },
+        { id: "evasion.doh_bypass", name: "DNS-over-HTTPS (DoH) 绕过审计", category: "compliance", status: "pass", value: "拦截 5 次外部 DoH 绕过请求", threshold: "统一走校内递归 DNS", detail: "已强制回落校内合规 DNS 审计" },
+      ],
+      evidence: { mcp_service: "mcp-proxy-evasion-inspect", scanned_hosts: 8, flagged_processes: [{ host: "10.0.3.41", proc: "frpc" }], doh_blocked_24h: 5 },
     },
     ...(includeOffline
       ? [{
-          id: 8, run_id: runId, cluster: "staging", instance: "worker-legacy", asset_id: "vm-worker-legacy", asset_name: "离线计算测试节点", asset_kind: "vm",
+          id: 11, run_id: runId, cluster: "staging", instance: "worker-legacy", asset_id: "vm-worker-legacy", asset_name: "历史归档计算节点", asset_kind: "vm",
           strategy: "vm_host", collector_method: "agent_local", status: "offline", reason: "target_offline",
           started_at_ms: baseMs + 650, finished_at_ms: baseMs + 652, duration_ms: 2,
           metrics: {},
           checks: [
-            { id: "target.online", name: "Agent 在线可达性", category: "availability", status: "offline", value: "offline", threshold: "online", detail: "目标 staging/worker-legacy 当前离线，记为巡检缺口" },
+            { id: "target.online", name: "Agent 在线可达性", category: "availability", status: "offline", value: "offline", threshold: "online", detail: "目标 staging/worker-legacy 当时处于维护窗口，记为巡检缺口" },
           ],
           evidence: { reason: "target_offline" },
         }]
@@ -1768,32 +1850,32 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
   if (demoMonitorRunsStore.length === 0) {
     const seedRuns = [
       {
-        id: "run_demo04", schedule_id: "sched_demo01", schedule_name: "全校核心基础设施 5 分钟自动巡检", trigger_kind: "scheduled",
-        triggered_by: "system", status: "warning", total_targets: 3, total_assets: 7, passed_checks: 16, warning_checks: 3,
-        failed_checks: 0, skipped_checks: 0, offline_targets: 0, metrics_written: 124,
+        id: "run_demo04", schedule_id: "sched_demo01", schedule_name: "全校 7 大安全巡检 MCP 联合自动巡检", trigger_kind: "scheduled",
+        triggered_by: "system", status: "warning", total_targets: 3, total_assets: 10, passed_checks: 30, warning_checks: 6,
+        failed_checks: 0, skipped_checks: 0, offline_targets: 0, metrics_written: 176,
         started_at_ms: now - 65_000, finished_at_ms: now - 60_000, duration_ms: 5000,
-        summary: "7 项资产完成巡检：通过 16 项，告警 3 项（K8s 节点内存压力、归档服务器磁盘 87.6%）",
+        summary: "7 大安全巡检 MCP（虚机/K8s/防火墙/上网行为/翻墙检测/数据库/漏洞应用）巡检完成：通过 30，告警 6（含防火墙临时规则 RULE-TEMP-3389、未备案 frpc 穿透进程、K8s 内存压力）",
       },
       {
-        id: "run_demo03", schedule_id: "", schedule_name: "全量节点手动核查", trigger_kind: "manual",
-        triggered_by: "admin", status: "partial", total_targets: 4, total_assets: 8, passed_checks: 16, warning_checks: 3,
-        failed_checks: 0, skipped_checks: 0, offline_targets: 1, metrics_written: 124,
+        id: "run_demo03", schedule_id: "sched_demo04", schedule_name: "全校每周安全漏洞与合规自动化巡检", trigger_kind: "scheduled",
+        triggered_by: "system", status: "partial", total_targets: 4, total_assets: 8, passed_checks: 22, warning_checks: 4,
+        failed_checks: 0, skipped_checks: 0, offline_targets: 1, metrics_written: 148,
         started_at_ms: now - 25 * 60_000, finished_at_ms: now - 25 * 60_000 + 5400, duration_ms: 5400,
-        summary: "部分完成：离线缺口 1（staging/worker-legacy），通过 16，告警 3",
+        summary: "周度自动化巡检：通过 22，告警 4，历史维护离线缺口 1（staging/worker-legacy）",
       },
       {
-        id: "run_demo02", schedule_id: "sched_demo02", schedule_name: "重点门户站点与数据库 15 分钟拨测", trigger_kind: "scheduled",
-        triggered_by: "system", status: "pass", total_targets: 2, total_assets: 2, passed_checks: 4, warning_checks: 0,
-        failed_checks: 0, skipped_checks: 0, offline_targets: 0, metrics_written: 18,
+        id: "run_demo02", schedule_id: "sched_demo02", schedule_name: "重点门户站点、API 与数据库 15 分钟拨测", trigger_kind: "scheduled",
+        triggered_by: "system", status: "pass", total_targets: 2, total_assets: 2, passed_checks: 9, warning_checks: 1,
+        failed_checks: 0, skipped_checks: 0, offline_targets: 0, metrics_written: 32,
         started_at_ms: now - 6 * 60_000, finished_at_ms: now - 6 * 60_000 + 620, duration_ms: 620,
-        summary: "全部通过：门户 HTTPS (42.6ms) 与 PostgreSQL 主库 (4.2ms) 正常",
+        summary: "站点与数据库拨测完成：HTTPS 42.6ms、API 6/6 通过、PostgreSQL 428 TPS 零慢查询",
       },
       {
         id: "run_demo01", schedule_id: "sched_demo01", schedule_name: "全校核心基础设施 5 分钟自动巡检", trigger_kind: "scheduled",
-        triggered_by: "system", status: "critical", total_targets: 3, total_assets: 7, passed_checks: 15, warning_checks: 2,
-        failed_checks: 1, skipped_checks: 0, offline_targets: 0, metrics_written: 120,
+        triggered_by: "system", status: "critical", total_targets: 3, total_assets: 7, passed_checks: 21, warning_checks: 3,
+        failed_checks: 1, skipped_checks: 0, offline_targets: 0, metrics_written: 142,
         started_at_ms: now - 90 * 60_000, finished_at_ms: now - 90 * 60_000 + 5800, duration_ms: 5800,
-        summary: "发现 1 项严重异常（K8s batch/etl-sync-9x2k CrashLoopBackOff），通过 15，告警 2",
+        summary: "发现 1 项严重异常（K8s batch/etl-sync-9x2k CrashLoopBackOff），浙音大模型已生成 P1 修复建议",
       },
     ]
     demoMonitorRunsStore.push(...seedRuns)
@@ -1825,13 +1907,13 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       summary: {
         total_assets: sampleResources.length,
         online_agents: clusterFilter === "staging" ? 1 : clusterFilter === "prod-cn" ? 2 : 3,
-        offline_agents: clusterFilter === "prod-cn" ? 0 : 1,
+        offline_agents: 0,
         covered_assets: sampleResources.length,
-        probe_coverage_pct: sampleResources.length ? (clusterFilter === "prod-cn" ? 100 : 87.5) : 0,
+        probe_coverage_pct: sampleResources.length ? 100 : 0,
         healthy_assets: sampleResources.filter((r) => r.status === "ok").length,
         warning_assets: sampleResources.filter((r) => r.status === "warning").length,
         critical_assets: sampleResources.filter((r) => r.status === "critical").length,
-        offline_assets: clusterFilter === "prod-cn" ? 0 : 1,
+        offline_assets: 0,
         open_threshold_alerts: thresholdAlerts.length,
         avg_cpu_percent: cpuItems.length ? Number((cpuItems.reduce((s, r) => s + (r.cpu_percent || 0), 0) / cpuItems.length).toFixed(1)) : 0,
         avg_memory_percent: memItems.length ? Number((memItems.reduce((s, r) => s + (r.memory_percent || 0), 0) / memItems.length).toFixed(1)) : 0,
@@ -1844,7 +1926,7 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
         used_disk_bytes: hostItems.reduce((s, r) => s + (r.disk_used_bytes || 0), 0),
         active_schedules: demoMonitorSchedulesStore.filter((s) => s.enabled).length,
         total_runs: demoMonitorRunsStore.length,
-        last_collected_at_ms: now - 25_000,
+        last_collected_at_ms: demoLastCollectedMs,
       },
       by_kind: byKind,
       resources: sampleResources,
@@ -1852,17 +1934,17 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       top_memory: [...memItems].sort((a, b) => (b.memory_percent || 0) - (a.memory_percent || 0)).slice(0, 5),
       top_disk: [...diskItems].sort((a, b) => (b.disk_percent || 0) - (a.disk_percent || 0)).slice(0, 5),
       trends: Array.from({ length: sp.buckets }, (_, i) => {
-        const wave = Math.sin(i * 0.55)
+        const wave = Math.sin((i + demoInspectionWave) * 0.55)
         return {
           start_ms: Math.round(now - sp.ms + (sp.ms * i) / sp.buckets),
           end_ms: Math.round(now - sp.ms + (sp.ms * (i + 1)) / sp.buckets),
           samples: sampleResources.length,
           avg_cpu_percent: Number((33.8 + wave * 6.2).toFixed(1)),
-          avg_memory_percent: Number((58.4 + Math.cos(i * 0.4) * 4.1).toFixed(1)),
+          avg_memory_percent: Number((58.4 + Math.cos((i + demoInspectionWave) * 0.4) * 4.1).toFixed(1)),
           avg_disk_percent: Number((63.9 + (i * 0.08)).toFixed(1)),
         }
       }),
-      recent_runs: demoMonitorRunsStore.slice(0, 6),
+      recent_runs: demoMonitorRunsStore.slice(0, 8),
       threshold_alerts: thresholdAlerts,
       strategies,
     }
@@ -1905,6 +1987,13 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
         }
         return { schedule: found || demoMonitorSchedulesStore[0] }
       }
+      const nextSkills = Array.isArray(body.skills) ? (body.skills as string[]).filter(Boolean) : []
+      ensureDemoSkillsSeeded()
+      const derivedStrategies = Array.isArray(body.strategies) && body.strategies.length
+        ? (body.strategies as string[])
+        : nextSkills
+          .map((slug) => demoSkillsStore.find((sk) => sk.slug === slug)?.strategy_id || "")
+          .filter(Boolean)
       const next = {
         ...seedSchedules[0],
         id: String(body.id || `sched_demo_${Math.floor(now / 1000)}`),
@@ -1915,7 +2004,8 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
         targets: Array.isArray(body.targets) ? body.targets : [],
         tags: Array.isArray(body.tags) ? body.tags : [],
         interval_seconds: Number(body.interval_seconds || 300),
-        strategies: Array.isArray(body.strategies) && body.strategies.length ? body.strategies : seedSchedules[0].strategies,
+        strategies: derivedStrategies.length ? derivedStrategies : (nextSkills.length ? [] : seedSchedules[0].strategies),
+        skills: nextSkills,
         thresholds: body.thresholds && typeof body.thresholds === "object" ? { ...defaultThresholds, ...(body.thresholds as Record<string, unknown>) } : defaultThresholds,
         updated_at: new Date(now).toISOString(),
       }
@@ -1937,12 +2027,19 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
     return { run, strategies, items }
   }
   if (body) {
-    const newId = `run_demo_${Math.floor(now / 1000)}`
+    demoInspectionWave += 1
+    demoLastCollectedMs = now
+    const newId = `run_demo_${Math.floor(now / 1000)}_${demoInspectionWave}`
+    const sched = body.schedule_id ? demoMonitorSchedulesStore.find((s) => s.id === body.schedule_id) : null
     const reqStrategies = Array.isArray(body.strategies) && body.strategies.length ? (body.strategies as string[]) : null
+    const reqMcps = Array.isArray(body.mcp_services) && body.mcp_services.length ? (body.mcp_services as string[]) : null
+    const reqSkills = Array.isArray(body.skills) && body.skills.length
+      ? (body.skills as string[])
+      : (sched && Array.isArray(sched.skills) && sched.skills.length ? (sched.skills as string[]) : null)
     const reqTargets = Array.isArray(body.targets) ? (body.targets as Array<{ cluster: string; instance: string }>) : []
     const sshHosts = Array.isArray(body.ssh_hosts) ? (body.ssh_hosts as Array<Record<string, unknown>>) : []
 
-    let generatedItems = buildStandardItems(newId, now - 2200, false, false)
+    let generatedItems = buildStandardItems(newId, now - 2200, false, demoInspectionWave % 4 === 1)
     if (body.retest_run_id) {
       const prevItems = demoMonitorRunItemsMap.get(String(body.retest_run_id)) || []
       const flagged = prevItems.filter((i) => ["warning", "critical", "error", "offline"].includes(String(i.status)))
@@ -1954,6 +2051,191 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
         started_at_ms: now - 1400,
         finished_at_ms: now - 200,
       }))
+    } else if (reqMcps) {
+      const mcpToStrategies: Record<string, string[]> = {
+        "mcp-vm-inspect": ["vm_host", "ssh_host"],
+        "mcp-k8s-inspect": ["k8s_cluster", "container_runtime"],
+        "mcp-firewall-inspect": ["firewall"],
+        "mcp-internet-behavior-inspect": ["internet_behavior"],
+        "mcp-proxy-evasion-inspect": ["proxy_evasion"],
+        "mcp-database-inspect": ["database_service"],
+        "mcp-vuln-web-inspect": ["app_service"],
+      }
+      const allowedStrategies = new Set<string>()
+      const customMcps: string[] = []
+      for (const id of reqMcps) {
+        if (mcpToStrategies[id]) {
+          for (const st of mcpToStrategies[id]) allowedStrategies.add(st)
+        } else {
+          customMcps.push(id)
+        }
+      }
+      generatedItems = generatedItems.filter((it) => allowedStrategies.has(String(it.strategy)))
+      for (const cid of customMcps) {
+        generatedItems.push({
+          id: generatedItems.length + 1,
+          run_id: newId,
+          cluster: "prod-cn",
+          instance: "web-01",
+          asset_id: cid,
+          asset_name: `${cid}（自定义安全巡检 MCP）`,
+          asset_kind: "custom_mcp",
+          strategy: "custom_mcp",
+          collector_method: "mcp_service",
+          status: "pass",
+          started_at_ms: now - 900,
+          finished_at_ms: now - 520,
+          duration_ms: 380,
+          metrics: {},
+          checks: [
+            { id: `${cid}.connectivity`, name: "MCP 服务连通与认证", category: "availability", status: "pass", value: "MCP ready · 210ms", threshold: "<2000ms", detail: "已通过智能体平台标准 MCP 通道完成握手" },
+            { id: `${cid}.baseline`, name: "自定义安全基线核查", category: "compliance", status: "pass", value: "基线全部合规", threshold: "0 违例", detail: "自定义巡检项全部通过" },
+          ],
+          evidence: { mcp_service: cid, protocol: "mcp-v1" },
+        })
+      }
+    } else if (reqSkills && reqSkills.length > 0) {
+      ensureDemoSkillsSeeded()
+      const strategyToSkill = new Map<string, string>()
+      const promptSkills: DemoPlatformSkill[] = []
+      for (const slug of reqSkills) {
+        const sk = demoSkillsStore.find((item) => item.slug === slug)
+        if (!sk) continue
+        sk.run_count += 1
+        sk.last_run_at_ms = now
+        if (sk.driver_mode === "builtin_strategy" && sk.strategy_id) {
+          strategyToSkill.set(sk.strategy_id, sk.slug)
+        } else {
+          promptSkills.push(sk)
+        }
+      }
+      const allowedStrategies = new Set<string>([...strategyToSkill.keys(), ...(reqStrategies || [])])
+      const filteredBuiltin = generatedItems
+        .filter((it) => allowedStrategies.has(String(it.strategy)))
+        .filter((it) => reqTargets.length === 0 || reqTargets.some((t) => t.cluster === it.cluster && t.instance === it.instance))
+        .map((it) => {
+          const skillSlug = strategyToSkill.get(String(it.strategy))
+          if (!skillSlug) return it
+          return {
+            ...it,
+            evidence: { ...(it.evidence as Record<string, unknown>), skill_slug: skillSlug, driver_mode: "builtin_strategy" },
+          }
+        })
+      const targetCluster = reqTargets[0]?.cluster || "prod-cn"
+      const targetInstance = reqTargets[0]?.instance || "web-01"
+      const skillItems: Array<Record<string, unknown>> = []
+      for (const sk of promptSkills) {
+        if (sk.slug === "inspect-proxy-evasion") {
+          const baseEvasion = generatedItems.find((it) => it.strategy === "proxy_evasion")
+          skillItems.push({
+            ...(baseEvasion || {}),
+            id: filteredBuiltin.length + skillItems.length + 1,
+            run_id: newId,
+            cluster: targetCluster,
+            instance: targetInstance,
+            asset_id: `skill-${sk.slug}`,
+            asset_name: `${sk.name} (${sk.slug})`,
+            asset_kind: "skill",
+            strategy: `skill:${sk.slug}`,
+            collector_method: "agent_skill",
+            status: "warning",
+            started_at_ms: now - 1100,
+            finished_at_ms: now - 520,
+            duration_ms: 580,
+            evidence: {
+              ...((baseEvasion?.evidence as Record<string, unknown>) || {}),
+              skill_slug: sk.slug,
+              skill_scope: sk.scope,
+              driver_mode: "agent_prompt",
+              synced_path: `/root/.agent/skills/${sk.slug}/SKILL.md`,
+            },
+          })
+        } else if (sk.slug === "inspect-package-vuln") {
+          skillItems.push({
+            id: filteredBuiltin.length + skillItems.length + 1,
+            run_id: newId,
+            cluster: targetCluster,
+            instance: targetInstance,
+            asset_id: `skill-${sk.slug}`,
+            asset_name: `${sk.name} (${sk.slug})`,
+            asset_kind: "skill",
+            strategy: `skill:${sk.slug}`,
+            collector_method: "agent_skill",
+            status: "warning",
+            started_at_ms: now - 1050,
+            finished_at_ms: now - 480,
+            duration_ms: 570,
+            metrics: {},
+            checks: [
+              { id: "pkg.core_versions", name: "核心组件版本盘点", category: "security", status: "pass", value: "OpenSSL 3.0.13 · OpenSSH 9.6p1 · Linux 6.8.0", threshold: "版本清晰可追溯", detail: "已只读完成 dpkg-query 核心安全组件盘点" },
+              { id: "pkg.security_updates", name: "待更新安全补丁检查", category: "vulnerability", status: "warning", value: "2 项安全补丁待维护窗口更新", threshold: "0 项高危待更新", detail: "nginx-common 与 libssl3 存在例行补丁更新，无高危紧急漏洞" },
+            ],
+            evidence: {
+              skill_slug: sk.slug,
+              skill_scope: sk.scope,
+              driver_mode: "agent_prompt",
+              synced_path: `/root/.agent/skills/${sk.slug}/SKILL.md`,
+              upgradable_security_packages: ["nginx-common", "libssl3"],
+            },
+          })
+        } else {
+          const headings = sk.skill_md
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => /^##+\s+/.test(line))
+            .map((line) => line.replace(/^##+\s+/, "").trim())
+            .slice(0, 3)
+          const checkNames = headings.length > 0 ? headings : ["Skill 规则基线核验", "只读证据采集"]
+          skillItems.push({
+            id: filteredBuiltin.length + skillItems.length + 1,
+            run_id: newId,
+            cluster: targetCluster,
+            instance: targetInstance,
+            asset_id: `skill-${sk.slug}`,
+            asset_name: `${sk.name} (${sk.slug})`,
+            asset_kind: "skill",
+            strategy: `skill:${sk.slug}`,
+            collector_method: "agent_skill",
+            status: "pass",
+            started_at_ms: now - 980,
+            finished_at_ms: now - 420,
+            duration_ms: 560,
+            metrics: {},
+            checks: [
+              {
+                id: `${sk.slug}.sync`,
+                name: "Skill 下发与校验",
+                category: "availability",
+                status: "pass",
+                value: `已同步至 /root/.agent/skills/${sk.slug}/ (${sk.files.length + 1} 个文件)`,
+                threshold: "SHA256 校验通过",
+                detail: `已通过内部控制面 doops_skill_sync 下发并加载 ${sk.scope === "system" ? "系统" : "自定义"} Skill`,
+              },
+              ...checkNames.map((title, idx) => ({
+                id: `${sk.slug}.step_${idx + 1}`,
+                name: title,
+                category: sk.category === "security" ? "security" : "compliance",
+                status: "pass",
+                value: "只读核查通过",
+                threshold: "符合 Skill 约定基线",
+                detail: `Agent 已按 ${sk.slug}/SKILL.md 定义的检查项完成只读验证`,
+              })),
+            ],
+            evidence: {
+              skill_slug: sk.slug,
+              skill_scope: sk.scope,
+              driver_mode: sk.driver_mode,
+              synced_path: `/root/.agent/skills/${sk.slug}/SKILL.md`,
+              attached_files: sk.files.map((f) => f.path),
+              sha256: sk.sha256,
+            },
+          })
+        }
+      }
+      generatedItems = [...filteredBuiltin, ...skillItems].map((it, idx) => ({ ...it, id: idx + 1 }))
+      if (generatedItems.length === 0) {
+        generatedItems = buildStandardItems(newId, now - 1800, false, false).slice(0, 2)
+      }
     } else {
       if (reqTargets.length > 0) {
         generatedItems = generatedItems.filter((it) =>
@@ -1998,11 +2280,23 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
     const failChecks = generatedItems.reduce((sum, it) => sum + ((it.checks as Array<{ status: string }>).filter((c) => ["critical", "error"].includes(c.status)).length), 0)
     const offlineCount = generatedItems.filter((it) => it.status === "offline").length
     const runStatus = failChecks > 0 ? "critical" : offlineCount > 0 ? "partial" : warnChecks > 0 ? "warning" : "pass"
-    const sched = body.schedule_id ? demoMonitorSchedulesStore.find((s) => s.id === body.schedule_id) : null
+    const singleSkillObj = reqSkills && reqSkills.length === 1 ? demoSkillsStore.find((sk) => sk.slug === reqSkills[0]) : null
     const newRun = {
       id: newId,
       schedule_id: String(body.schedule_id || ""),
-      schedule_name: sched ? String(sched.name) : body.retest_run_id ? "异常项一键复检" : "手动立即巡检",
+      schedule_name: body.mcp_title
+        ? String(body.mcp_title)
+        : sched
+          ? String(sched.name)
+          : body.retest_run_id
+            ? "异常项一键复检"
+            : reqMcps
+              ? `MCP 联合安全巡检（${reqMcps.length} 个服务）`
+              : singleSkillObj
+                ? `Skill 巡检：${singleSkillObj.name}`
+                : reqSkills
+                  ? `Skill 驱动巡检（${reqSkills.length} 个 Skill）`
+                  : "手动立即巡检",
       trigger_kind: body.retest_run_id ? "retest" : "manual",
       triggered_by: "admin",
       status: runStatus,
@@ -2017,7 +2311,7 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       started_at_ms: now - 2200,
       finished_at_ms: now,
       duration_ms: 2200,
-      summary: `本次完成 ${generatedItems.length} 项资产巡检：通过 ${passedChecks}，告警 ${warnChecks}${failChecks ? `，严重 ${failChecks}` : ""}${offlineCount ? `，离线 ${offlineCount}` : ""}；指标已同步。`,
+      summary: `本次完成 ${generatedItems.length} 项巡检：通过 ${passedChecks}，告警 ${warnChecks}${failChecks ? `，严重 ${failChecks}` : ""}${offlineCount ? `，离线 ${offlineCount}` : ""}；指标已同步。`,
     }
     demoMonitorRunItemsMap.set(newId, generatedItems)
     demoMonitorRunsStore.unshift(newRun)
@@ -2027,4 +2321,475 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
     ? demoMonitorRunsStore.filter((r) => r.status === statusFilter)
     : [...demoMonitorRunsStore]
   return { runs: filteredRuns, strategies }
+}
+
+// ===================== 平台 Skill 仓库演示数据（系统内置 + 自定义上传） =====================
+
+interface DemoPlatformSkill {
+  slug: string
+  name: string
+  description: string
+  scope: "system" | "custom"
+  category: "inspection" | "security" | "ops"
+  driver_mode: "builtin_strategy" | "agent_prompt"
+  strategy_id?: string
+  enabled: boolean
+  skill_md: string
+  files: Array<{ path: string; content: string }>
+  sha256: string
+  owner_id: string
+  owner_name: string
+  created_at_ms: number
+  updated_at_ms: number
+  last_run_at_ms?: number
+  run_count: number
+}
+
+function demoSkillDigest(skillMD: string, files: Array<{ path: string; content: string }>): string {
+  let hash = 2166136261
+  const feed = `${skillMD}\n${files.map((f) => `${f.path}:${f.content}`).join("\n")}`
+  for (let i = 0; i < feed.length; i++) {
+    hash ^= feed.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  const hex = (hash >>> 0).toString(16).padStart(8, "0")
+  return `${hex}${(feed.length >>> 0).toString(16).padStart(8, "0")}`.repeat(4).slice(0, 64)
+}
+
+function makeSystemSeed(
+  slug: string,
+  name: string,
+  description: string,
+  category: "inspection" | "security" | "ops",
+  driver_mode: "builtin_strategy" | "agent_prompt",
+  skill_md: string,
+  strategy_id?: string,
+  run_count = 12,
+): DemoPlatformSkill {
+  const baseMs = Date.now() - 14 * 86400_000
+  return {
+    slug,
+    name,
+    description,
+    scope: "system",
+    category,
+    driver_mode,
+    strategy_id,
+    enabled: true,
+    skill_md,
+    files: [],
+    sha256: demoSkillDigest(skill_md, []),
+    owner_id: "system",
+    owner_name: "system",
+    created_at_ms: baseMs,
+    updated_at_ms: baseMs,
+    last_run_at_ms: run_count > 0 ? Date.now() - 60_000 : undefined,
+    run_count,
+  }
+}
+
+const DEMO_SYSTEM_SKILL_SEEDS: DemoPlatformSkill[] = [
+  makeSystemSeed(
+    "inspect-vm-host",
+    "虚机与物理机系统巡检 Skill",
+    "通过 Agent 本机只读探测 CPU、内存、内核、磁盘容量与 I/O、网卡流量、NVIDIA GPU 及 M1–M5 主机安全基线。",
+    "inspection",
+    "builtin_strategy",
+    `---
+name: inspect-vm-host
+description: 虚拟机与物理机系统及 M1–M5 安全基线巡检 Skill
+---
+
+# 虚机与物理机系统巡检 Skill
+
+## 目标范围
+覆盖已接入在线 Agent 的物理机、GPU 宿主机与虚拟机。
+
+## 核心检查项
+1. **M1 运行与重启**：检查主机运行时长与异常重启。
+2. **M2 CPU 与内存水位**：对比告警/严重阈值（默认 80% / 90%），记录内核态 CPU 与 Slab。
+3. **存储与磁盘 I/O**：检查全部真实目录挂载点容量与物理块设备读写 IOPS、平均延迟。
+4. **GPU 与网络**：检测 NVIDIA GPU 利用率/显存/温度及物理网卡实时吞吐。
+5. **M3 进程安全**：统计总进程、僵尸进程并匹配可疑黑名单进程名。
+6. **M4/M5 合规与登录基线**：核验 Linux sysctl 安全参数、账户文件指纹与认证失败日志。
+
+## 执行约束
+只读采集，不修改宿主机配置、不读取凭据载荷。
+`,
+    "vm_host",
+    42,
+  ),
+  makeSystemSeed(
+    "inspect-ssh-host",
+    "无 Agent 远程主机 SSH 巡检 Skill",
+    "由在线 Agent 通过结构化只读 BatchMode SSH 远程采集无 Agent 主机的资源水位与系统安全基线。",
+    "inspection",
+    "builtin_strategy",
+    `---
+name: inspect-ssh-host
+description: 无 Agent 远程 Linux 主机结构化只读 SSH 巡检 Skill
+---
+
+# 无 Agent 远程主机 SSH 巡检 Skill
+
+## 目标范围
+覆盖已登记在机器台账中、通过跳板或同网段在线 Agent 纳管的远程 Linux 主机。
+
+## 核心检查项
+1. **SSH 连通性**：以 \`BatchMode=yes\` 只读连接测试主机可达性。
+2. **资源水位**：采集远程 CPU 差值、内存（MemTotal/MemAvailable/Slab）、磁盘挂载点（\`df -P -k\`）与网卡吞吐。
+3. **进程与内核基线**：统计僵尸进程并核验 4 项 Linux sysctl 安全参数。
+`,
+    "ssh_host",
+    28,
+  ),
+  makeSystemSeed(
+    "inspect-k8s-cluster",
+    "Kubernetes 容器集群巡检 Skill",
+    "通过 Agent 内置只读 kubectl 巡检 K8s 节点健康压力、异常/高重启 Pod、控制器副本、PVC 绑定、Warning 事件及资源水位。",
+    "inspection",
+    "builtin_strategy",
+    `---
+name: inspect-k8s-cluster
+description: Kubernetes 集群健康、工作负载与资源水位巡检 Skill
+---
+
+# Kubernetes 容器集群巡检 Skill
+
+## 核心检查项
+1. **节点健康与压力**：核查所有 Node Ready 状态及 MemoryPressure / DiskPressure / PIDPressure。
+2. **Pod 运行态与重启**：定位 CrashLoopBackOff、OOMKilled、Pending 与高重启（≥5 次）Pod。
+3. **控制器副本**：校验 Deployment 与 StatefulSet 就绪副本数是否等于期望副本数。
+4. **PVC 与事件**：检查未 Bound 的 PVC 与近 15 分钟集群 Warning 事件。
+5. **节点与 Pod 资源指标**：若部署 metrics-server，采集实时 CPU/内存并桥接时序库。
+`,
+    "k8s_cluster",
+    36,
+  ),
+  makeSystemSeed(
+    "inspect-container-runtime",
+    "容器运行时巡检 Skill",
+    "自动识别 Docker / nerdctl / Podman，采集运行中容器 CPU、内存与内存上限（memory_limit）占比。",
+    "inspection",
+    "builtin_strategy",
+    `---
+name: inspect-container-runtime
+description: Docker / nerdctl / Podman 运行态容器资源与限额巡检 Skill
+---
+
+# 容器运行时巡检 Skill
+
+## 核心检查项
+1. **运行时可用性**：探测宿主机 Docker / nerdctl / Podman 守护进程状态与运行容器数量。
+2. **容器内存上限水位**：对比容器内存用量与 memory_limit，识别接近 OOM 风险的容器。
+3. **时序同步**：写入 \`type=container\` 的 cpu / memory / memory_limit 指标供控制台监控展示。
+`,
+    "container_runtime",
+    31,
+  ),
+  makeSystemSeed(
+    "inspect-app-web",
+    "应用服务与 Web 安全巡检 Skill",
+    "探测已登记站点 HTTP/HTTPS 可用性、响应延迟、错误率、TLS 证书剩余天数、安全响应头及本机 Nginx 并发请求速率。",
+    "inspection",
+    "builtin_strategy",
+    `---
+name: inspect-app-web
+description: Web 应用可用性、响应延迟、TLS 证书与安全响应头巡检 Skill
+---
+
+# 应用服务与 Web 安全巡检 Skill
+
+## 核心检查项
+1. **服务可用性 (A1)**：检查已登记站点的 HTTP 状态码与可达性。
+2. **响应延迟与错误率**：测量 HTTP GET 响应耗时（ms）并写入监控时序。
+3. **Web 安全与证书 (A4)**：校验 HTTPS 证书剩余有效期（默认 <14 天告警）、HSTS 与 X-Content-Type-Options。
+4. **Nginx 并发与请求速率**：当本机开放回环 \`stub_status\` 时采集活跃连接数与 req/s。
+`,
+    "app_service",
+    45,
+  ),
+  makeSystemSeed(
+    "inspect-database",
+    "数据库运行与连通性巡检 Skill",
+    "探测已登记数据库实例（PostgreSQL / MySQL / Redis 等）的 TCP 连通性与建连延迟，识别实例不可达或高延迟风险。",
+    "inspection",
+    "builtin_strategy",
+    `---
+name: inspect-database
+description: 数据库实例连通性、建连延迟与只读状态巡检 Skill
+---
+
+# 数据库运行与连通性巡检 Skill
+
+## 核心检查项
+1. **实例连通性 (A2)**：验证已登记数据库地址解析与 TCP 握手连通性。
+2. **建连延迟**：监控 TCP 握手耗时并与延迟阈值对比。
+3. **安全边界**：巡检探活阶段不暴露凭据载荷；需要深度 SQL 诊断时经由 DoSql 受管只读凭据执行。
+`,
+    "database_service",
+    39,
+  ),
+  makeSystemSeed(
+    "inspect-proxy-evasion",
+    "主机违规代理与内网穿透巡检 Skill",
+    "由系统驱动 Agent Skill 检查主机是否存在未备案代理/翻墙/穿透进程（clash、v2ray、xray、frpc、trojan 等）及异常监听端口。",
+    "security",
+    "agent_prompt",
+    `---
+name: inspect-proxy-evasion
+description: 主机违规代理、翻墙软件与内网穿透进程只读安全巡检 Skill
+---
+
+# 主机违规代理与内网穿透巡检 Skill
+
+## 执行步骤（严格只读）
+1. 检查当前主机进程列表中是否包含未备案的代理或穿透客户端：\`clash\`、\`mihomo\`、\`v2ray\`、\`xray\`、\`sing-box\`、\`frpc\`、\`frps\`、\`nps\`、\`trojan\`、\`ss-local\`。
+2. 检查常见代理本地监听端口（7890、7891、1080、10808、20171 等）是否存在未备案监听。
+3. 禁止终止进程或修改网络配置，仅汇总真实观测证据并输出结构化 JSON 结论。
+`,
+    undefined,
+    18,
+  ),
+  makeSystemSeed(
+    "inspect-package-vuln",
+    "主机软件包与补丁基线巡检 Skill",
+    "由系统驱动 Agent Skill 只读盘点本机已安装关键软件包版本（OpenSSL、OpenSSH、Nginx、内核等）与待更新安全补丁概况。",
+    "security",
+    "agent_prompt",
+    `---
+name: inspect-package-vuln
+description: 主机关键软件组件版本与安全补丁状态只读盘点 Skill
+---
+
+# 主机软件包与补丁基线巡检 Skill
+
+## 执行步骤（严格只读）
+1. 检测操作系统包管理器（\`dpkg-query\` / \`rpm\` / \`apk\`），只读查询核心基础组件版本（\`openssl\`、\`openssh-server\`、\`nginx\`、\`curl\`、\`sudo\`、内核版本）。
+2. 若本地存在缓存升级索引，只读统计待升级安全补丁数量，不执行安装或变更。
+3. 按要求输出结构化 JSON 巡检结果，未观测到的项标记为 \`skipped\`，不得编造 CVE 编号。
+`,
+    undefined,
+    14,
+  ),
+]
+
+const demoSkillsStore: DemoPlatformSkill[] = []
+
+function ensureDemoSkillsSeeded() {
+  if (demoSkillsStore.length > 0) return
+  for (const s of DEMO_SYSTEM_SKILL_SEEDS) {
+    demoSkillsStore.push({ ...s, files: s.files.map((f) => ({ ...f })) })
+  }
+}
+
+function parseDemoFrontmatter(md: string): { name: string; description: string } {
+  const trimmed = md.trim()
+  if (!trimmed.startsWith("---")) return { name: "", description: "" }
+  const rest = trimmed.slice(3).replace(/^\r?\n/, "")
+  const endIdx = rest.indexOf("\n---")
+  if (endIdx < 0) return { name: "", description: "" }
+  let name = ""
+  let description = ""
+  for (const rawLine of rest.slice(0, endIdx).split(/\r?\n/)) {
+    const colon = rawLine.indexOf(":")
+    if (colon <= 0) continue
+    const k = rawLine.slice(0, colon).trim().toLowerCase()
+    const v = rawLine.slice(colon + 1).trim().replace(/^["']|["']$/g, "")
+    if (k === "name" && !name) name = v
+    else if (k === "description" && !description) description = v
+  }
+  return { name, description }
+}
+
+export async function demoSkillsRequest(
+  session: { isAdmin?: boolean; username?: string; user?: { id?: string; name?: string; is_admin?: boolean } },
+  path: string,
+  body?: Record<string, unknown>,
+): Promise<unknown> {
+  await sleep(70)
+  ensureDemoSkillsSeeded()
+
+  const userLike = session.user
+  const isAdmin = Boolean(session.isAdmin || userLike?.is_admin)
+  const ownerName = session.username || userLike?.name || (isAdmin ? "admin" : "ops-zhang")
+  const ownerId = userLike?.id || (isAdmin ? "usr_admin01" : `usr_${ownerName}`)
+
+  const toView = (sk: DemoPlatformSkill, includeBody: boolean) => {
+    const canEdit = isAdmin || (sk.scope === "custom" && sk.owner_id === ownerId)
+    const canDelete = sk.scope === "custom" && (isAdmin || sk.owner_id === ownerId)
+    return {
+      slug: sk.slug,
+      name: sk.name,
+      description: sk.description,
+      scope: sk.scope,
+      category: sk.category,
+      driver_mode: sk.driver_mode,
+      ...(sk.strategy_id ? { strategy_id: sk.strategy_id } : {}),
+      enabled: sk.enabled,
+      ...(includeBody ? { skill_md: sk.skill_md, files: sk.files.map((f) => ({ ...f })) } : {}),
+      file_count: sk.files.length,
+      sha256: sk.sha256,
+      owner_id: sk.owner_id,
+      owner_name: sk.owner_name,
+      created_at_ms: sk.created_at_ms,
+      updated_at_ms: sk.updated_at_ms,
+      ...(sk.last_run_at_ms ? { last_run_at_ms: sk.last_run_at_ms } : {}),
+      run_count: sk.run_count,
+      can_edit: canEdit,
+      can_delete: canDelete,
+    }
+  }
+
+  if (body) {
+    const action = String(body.action || "upsert")
+    const now = Date.now()
+    if (action === "upsert") {
+      const slug = String(body.slug || "").trim().toLowerCase()
+      if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) {
+        throw new Error("Skill 标识（slug）仅允许小写字母、数字和短横线，且需以字母或数字开头")
+      }
+      const skillMD = String(body.skill_md || "").trim()
+      if (!skillMD) throw new Error("SKILL.md 正文不能为空")
+      const files = Array.isArray(body.files)
+        ? (body.files as Array<{ path?: string; content?: string }>)
+            .map((f) => ({ path: String(f.path || "").trim().replace(/^\/+/, ""), content: String(f.content || "") }))
+            .filter((f) => f.path && !f.path.includes("..") && f.path.toLowerCase() !== "skill.md")
+        : []
+      const existing = demoSkillsStore.find((s) => s.slug === slug)
+      const requestedScope = body.scope === "system" ? "system" : "custom"
+      if (existing) {
+        if (existing.scope === "system" && !isAdmin) {
+          throw new Error("仅平台管理员可修改系统 Skill")
+        }
+        if (existing.scope === "custom" && !isAdmin && existing.owner_id !== ownerId) {
+          throw new Error("仅创建人或平台管理员可编辑该自定义 Skill")
+        }
+      } else if (requestedScope === "system" && !isAdmin) {
+        throw new Error("仅平台管理员可创建系统 Skill")
+      }
+      const fm = parseDemoFrontmatter(skillMD)
+      const name = String(body.name || "").trim() || fm.name || existing?.name || slug
+      const description = String(body.description || "").trim() || fm.description || existing?.description || ""
+      const category = (["inspection", "security", "ops"].includes(String(body.category)) ? body.category : existing?.category || "inspection") as DemoPlatformSkill["category"]
+      const scope: "system" | "custom" = existing ? existing.scope : requestedScope
+      const driver_mode = (
+        body.driver_mode === "builtin_strategy" && scope === "system"
+          ? "builtin_strategy"
+          : existing?.driver_mode === "builtin_strategy" && !body.driver_mode
+            ? "builtin_strategy"
+            : "agent_prompt"
+      ) as DemoPlatformSkill["driver_mode"]
+      const strategy_id = driver_mode === "builtin_strategy" ? (String(body.strategy_id || "").trim() || existing?.strategy_id) : undefined
+      const next: DemoPlatformSkill = {
+        slug,
+        name,
+        description,
+        scope,
+        category,
+        driver_mode,
+        strategy_id,
+        enabled: body.enabled !== undefined ? Boolean(body.enabled) : (existing ? existing.enabled : true),
+        skill_md: skillMD,
+        files,
+        sha256: demoSkillDigest(skillMD, files),
+        owner_id: existing ? existing.owner_id : (scope === "system" ? "system" : ownerId),
+        owner_name: existing ? existing.owner_name : (scope === "system" ? "system" : ownerName),
+        created_at_ms: existing ? existing.created_at_ms : now,
+        updated_at_ms: now,
+        last_run_at_ms: existing?.last_run_at_ms,
+        run_count: existing?.run_count ?? 0,
+      }
+      const idx = demoSkillsStore.findIndex((s) => s.slug === slug)
+      if (idx >= 0) demoSkillsStore[idx] = next
+      else demoSkillsStore.unshift(next)
+      return { skill: toView(next, true) }
+    }
+
+    if (action === "toggle") {
+      const slug = String(body.slug || "").trim()
+      const found = demoSkillsStore.find((s) => s.slug === slug)
+      if (!found) throw new Error(`Skill 不存在：${slug}`)
+      if (found.scope === "system" && !isAdmin) throw new Error("仅平台管理员可启停系统 Skill")
+      if (found.scope === "custom" && !isAdmin && found.owner_id !== ownerId) throw new Error("无权操作他人创建的自定义 Skill")
+      found.enabled = Boolean(body.enabled)
+      found.updated_at_ms = now
+      return { skill: toView(found, false) }
+    }
+
+    if (action === "delete") {
+      const slug = String(body.slug || "").trim()
+      const idx = demoSkillsStore.findIndex((s) => s.slug === slug)
+      if (idx < 0) throw new Error(`Skill 不存在：${slug}`)
+      const found = demoSkillsStore[idx]
+      if (found.scope === "system") throw new Error("系统内置 Skill 不允许删除，可改为禁用或编辑后恢复默认")
+      if (!isAdmin && found.owner_id !== ownerId) throw new Error("仅创建人或平台管理员可删除该自定义 Skill")
+      demoSkillsStore.splice(idx, 1)
+      return { deleted: slug }
+    }
+
+    if (action === "reset_system") {
+      if (!isAdmin) throw new Error("仅平台管理员可重置系统内置 Skill")
+      const slug = String(body.slug || "").trim()
+      const seed = DEMO_SYSTEM_SKILL_SEEDS.find((s) => s.slug === slug)
+      if (!seed) throw new Error(`未找到系统内置 Skill 模板：${slug}`)
+      const idx = demoSkillsStore.findIndex((s) => s.slug === slug)
+      const restored: DemoPlatformSkill = {
+        ...seed,
+        files: [],
+        updated_at_ms: now,
+        run_count: idx >= 0 ? demoSkillsStore[idx].run_count : seed.run_count,
+        last_run_at_ms: idx >= 0 ? demoSkillsStore[idx].last_run_at_ms : seed.last_run_at_ms,
+      }
+      if (idx >= 0) demoSkillsStore[idx] = restored
+      else demoSkillsStore.push(restored)
+      return { skill: toView(restored, true) }
+    }
+
+    if (action === "sync") {
+      const slug = String(body.slug || "").trim()
+      const count = slug
+        ? (demoSkillsStore.some((s) => s.slug === slug) ? 1 : 0)
+        : demoSkillsStore.filter((s) => s.enabled).length
+      const reqTargets = Array.isArray(body.targets) ? (body.targets as Array<{ cluster: string; instance: string }>) : []
+      const pool = reqTargets.length > 0
+        ? reqTargets.map((t) => ({
+            cluster: t.cluster,
+            instance: t.instance,
+            online: !(t.cluster === "staging" && t.instance === "db-01"),
+          }))
+        : [
+            { cluster: "prod-cn", instance: "web-01", online: true },
+            { cluster: "prod-cn", instance: "web-02", online: true },
+            { cluster: "staging", instance: "db-01", online: false },
+          ]
+      return {
+        results: pool.map((t) =>
+          t.online
+            ? { cluster: t.cluster, instance: t.instance, synced_count: count, status: "ok", detail: `已同步 ${count} 个 Skill 至 /root/.agent/skills/` }
+            : { cluster: t.cluster, instance: t.instance, synced_count: 0, status: "offline", detail: "目标 Agent 当前离线" },
+        ),
+      }
+    }
+
+    throw new Error(`不支持的 Skill 操作：${action}`)
+  }
+
+  // GET detail or list
+  const [cleanPath, queryStr = ""] = path.split("?")
+  const params = new URLSearchParams(queryStr)
+  if (cleanPath && cleanPath !== "") {
+    const slug = decodeURIComponent(cleanPath)
+    const found = demoSkillsStore.find((s) => s.slug === slug)
+    if (!found) throw new Error(`Skill 不存在：${slug}`)
+    return { skill: toView(found, true) }
+  }
+
+  const scopeFilter = params.get("scope") || ""
+  const categoryFilter = params.get("category") || ""
+  const includeBody = params.get("include_body") === "1" || params.get("include_body") === "true"
+  const list = demoSkillsStore
+    .filter((s) => (!scopeFilter || s.scope === scopeFilter) && (!categoryFilter || s.category === categoryFilter))
+    .map((s) => toView(s, includeBody))
+  return { skills: list }
 }

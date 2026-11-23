@@ -22,9 +22,10 @@ export const TARGET_TABS = [
 ]
 export type TargetTab = (typeof TARGET_TABS)[number]
 
-// Areas of the platform asset view. "board" is 平台监控; the rest are the ledger
-// sections, which keep the view open on the section the user picked.
-export type AssetArea = "board" | "machines" | "clusters" | "systems" | "scope"
+// Areas of the platform asset view. "situation" is 态势感知 (Business -> Cluster -> Machine),
+// "inspection" is 智能巡检, "skills" is Skill 管理 (System + Custom Skills driving inspection),
+// "board" is 平台监控 (Agent-dimension); the rest are ledger sections.
+export type AssetArea = "situation" | "inspection" | "skills" | "board" | "machines" | "clusters" | "systems" | "scope"
 
 export const ASSET_LEDGER_SECTIONS: { id: AssetArea; label: string }[] = [
   { id: "machines", label: "机器台账" },
@@ -77,7 +78,7 @@ const NAV: ConsoleNavEntry[] = [
   { id: "overview", label: "Agent 概览", destination: { view: "console", tab: "overview" } },
   { id: "ask", label: "AI 助手", destination: { view: "console", tab: "ask" } },
   { id: "terminal", label: "终端", destination: { view: "console", tab: "terminal" } },
-  { id: "tasks", label: "自动化", destination: { view: "console", tab: "tasks" } },
+  { id: "tasks", label: "后台任务", destination: { view: "console", tab: "tasks" } },
   { id: "files", label: "文件", destination: { view: "console", tab: "files" } },
   { id: "assets", label: "Agent 资产", destination: { view: "console", tab: "assets" } },
   { id: "monitor", label: "Agent 监控", destination: { view: "console", tab: "monitor" } },
@@ -88,6 +89,9 @@ const NAV: ConsoleNavEntry[] = [
     id: kind, label, destination: kind === "k8s" ? { view: "assets", area: "clusters" } : { view: "catalog", kind: kind as CatalogKind },
   })),
   // Platform functions, grouped by destination in the sidebar.
+  { id: "situational-awareness", label: "态势感知", destination: { view: "assets", area: "situation" } },
+  { id: "smart-inspection", label: "智能巡检", destination: { view: "assets", area: "inspection" } },
+  { id: "skill-registry", label: "Skill 管理", destination: { view: "assets", area: "skills" } },
   { id: "platform-monitor", label: "平台监控", destination: { view: "assets", area: "board" } },
   { id: "ledger-machines", label: "机器台账", destination: { view: "assets", area: "machines" } },
   { id: "ledger-systems", label: "业务系统", destination: { view: "assets", area: "systems" } },

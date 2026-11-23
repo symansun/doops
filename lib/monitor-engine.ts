@@ -58,6 +58,7 @@ export interface MonitorScheduleRecord {
   targets: MonitorTargetRef[]
   tags: string[]
   strategies: string[]
+  skills?: string[]
   thresholds: MonitorThresholds
   interval_seconds: number
   next_run_at_ms: number
@@ -283,6 +284,11 @@ export const ASSET_KIND_LABELS: Record<string, string> = {
   container: "容器运行时",
   app: "应用 / Web",
   database: "数据库",
+  firewall: "边界防火墙",
+  internet_behavior: "上网行为管理",
+  proxy_evasion: "翻墙与代理风控",
+  custom_mcp: "自定义 MCP 资产",
+  skill: "Skill 巡检任务",
 }
 
 export const COLLECTOR_METHOD_LABELS: Record<string, string> = {
@@ -292,15 +298,21 @@ export const COLLECTOR_METHOD_LABELS: Record<string, string> = {
   http_probe: "HTTP/TLS 探针",
   dosql: "DoSql 只读",
   tcp_probe: "TCP 探针",
+  mcp_service: "MCP 智能服务",
+  agent_skill: "Agent Skill 驱动",
 }
 
 export const STRATEGY_LABELS: Record<string, string> = {
-  vm_host: "虚机 / 物理机策略",
+  vm_host: "虚机 / 物理机 MCP 巡检",
   ssh_host: "SSH 远程主机策略",
-  k8s_cluster: "K8s 集群策略",
+  k8s_cluster: "K8s 集群 MCP 巡检",
   container_runtime: "容器运行时策略",
-  app_service: "应用 / Web 策略",
-  database_service: "数据库策略",
+  app_service: "漏洞与 Web/API MCP 巡检",
+  database_service: "数据库 MCP 巡检",
+  firewall: "边界防火墙 MCP 巡检",
+  internet_behavior: "上网行为管理 MCP 巡检",
+  proxy_evasion: "翻墙与代理穿透 MCP 巡检",
+  custom_mcp: "自定义 MCP 巡检",
 }
 
 export const TRIGGER_LABELS: Record<string, string> = {
@@ -473,9 +485,16 @@ export function triggerMonitorRun(
     targets?: MonitorTargetRef[]
     tags?: string[]
     strategies?: string[]
+    skills?: string[]
+    mcp_services?: string[]
+    mcp_title?: string
     thresholds?: MonitorThresholds
     ssh_hosts?: { asset_id: string; asset_name?: string; asset_kind?: string; address: string; port?: number; ssh_user?: string }[]
   },
 ): Promise<{ run: MonitorRunRecord; items: MonitorRunItemRecord[] }> {
-  return monitorRequest(session, "runs", body)
+  if (session.demo) {
+    return monitorRequest(session, "runs", body)
+  }
+  const { mcp_services: _ms, mcp_title: _mt, ...gatewayBody } = body
+  return monitorRequest(session, "runs", gatewayBody)
 }

@@ -142,19 +142,20 @@ const demoMachines: DemoMachine[] = [
     login_accounts: [{ username: "monitor", credential_id: "cred_ssh_archive" }],
   },
   {
-    asset_id: "vm-worker-legacy",
-    name: "离线计算测试节点",
+    asset_id: "vm-music-01",
+    name: "智慧琴房与音视频节点 01",
     kind: "vm",
-    address: "10.0.2.45",
-    cpu_count: 8,
-    memory_gib: 16,
-    disk_gib: 100,
+    address: "10.0.1.18",
+    cpu_count: 16,
+    memory_gib: 32,
+    disk_gib: 500,
     host_asset_id: "phy-host-01",
-    cluster: "staging",
-    instance: "worker-legacy",
-    last_seen: isoAgo(300),
-    tags: ["env=staging", "role=worker"],
-    revision: 1,
+    cluster: "prod-cn",
+    instance: "web-01",
+    last_seen: isoAgo(0.5),
+    last_sample_ms: now() - 20_000,
+    tags: ["env=prod", "dept=music", "role=media"],
+    revision: 2,
     login_accounts: [],
   },
 ]
@@ -200,7 +201,7 @@ const demoNodeLinks = [
 const demoSystems = [
   {
     asset_id: "sys-edu-portal",
-    name: "全校教务门户系统",
+    name: "全校教务管理系统",
     owner: "张敏",
     active: true,
     revision: 3,
@@ -220,8 +221,18 @@ const demoSystems = [
     ],
   },
   {
+    asset_id: "sys-music-room",
+    name: "智慧琴房与音视频平台",
+    owner: "陈晨",
+    active: true,
+    revision: 2,
+    deployments: [
+      { cluster: "prod-cn", instance: "web-01", namespace: "apps", application: "music-room-media", database: "mysql-edu-01", verified_at: isoAgo(18) },
+    ],
+  },
+  {
     asset_id: "sys-ai-compute",
-    name: "校园科研算力调度平台",
+    name: "科研算力与 AI 作曲平台",
     owner: "王磊",
     active: true,
     revision: 2,
@@ -337,13 +348,18 @@ const demoCatalogRows = [
 function buildDemoTopology() {
   const verified = isoAgo(15)
   const nodes = [
-    { id: "sys:sys-edu-portal", kind: "system", ref: "sys-edu-portal", name: "全校教务门户系统" },
+    { id: "sys:sys-edu-portal", kind: "system", ref: "sys-edu-portal", name: "全校教务管理系统" },
     { id: "sys:sys-sso-auth", kind: "system", ref: "sys-sso-auth", name: "统一身份认证平台 (SSO)" },
-    { id: "sys:sys-ai-compute", kind: "system", ref: "sys-ai-compute", name: "校园科研算力调度平台" },
+    { id: "sys:sys-music-room", kind: "system", ref: "sys-music-room", name: "智慧琴房与音视频平台" },
+    { id: "sys:sys-ai-compute", kind: "system", ref: "sys-ai-compute", name: "科研算力与 AI 作曲平台" },
+    { id: "sys:sys-fin-reimburse", kind: "system", ref: "sys-fin-reimburse", name: "财务网上报销系统" },
     { id: "app:edu-portal", kind: "application", ref: "edu-portal", name: "edu-portal", namespace: "apps" },
     { id: "app:sso-gateway", kind: "application", ref: "sso-gateway", name: "sso-gateway", namespace: "auth" },
+    { id: "app:music-room-media", kind: "application", ref: "music-room-media", name: "music-room-media", namespace: "apps" },
     { id: "app:gpu-trainer", kind: "application", ref: "gpu-trainer", name: "gpu-trainer", namespace: "batch" },
+    { id: "app:fin-api", kind: "application", ref: "fin-api", name: "fin-api", namespace: "staging-apps" },
     { id: "db:pg-main-01", kind: "database", ref: "pg-main-01", name: "PostgreSQL 核心主库" },
+    { id: "db:mysql-edu-01", kind: "database", ref: "mysql-edu-01", name: "MySQL 教务选课库" },
     { id: "wl:edu-portal", kind: "workload", ref: "Deployment/edu-portal", name: "Deployment/edu-portal", namespace: "apps" },
     { id: "wl:gpu-trainer", kind: "workload", ref: "StatefulSet/gpu-trainer", name: "StatefulSet/gpu-trainer", namespace: "batch" },
     { id: "pod:edu-portal-7c9d", kind: "pod", ref: "edu-portal-7c9d8f-2kp1x", name: "edu-portal-7c9d8f-2kp1x", namespace: "apps" },
@@ -351,6 +367,7 @@ function buildDemoTopology() {
     { id: "node:node-web-02", kind: "node", ref: "node-web-02", name: "node-web-02" },
     { id: "node:node-gpu-01", kind: "node", ref: "node-gpu-01", name: "node-gpu-01" },
     { id: "mach:vm-web-02", kind: "machine", ref: "vm-web-02", name: "核心应用与容器节点 02" },
+    { id: "mach:vm-music-01", kind: "machine", ref: "vm-music-01", name: "智慧琴房与音视频节点 01" },
     { id: "mach:phy-host-01", kind: "machine", ref: "phy-host-01", name: "核心虚拟化宿主机 A01" },
     { id: "mach:phy-gpu-01", kind: "machine", ref: "phy-gpu-01", name: "科研算力 GPU 物理机 G01" },
     { id: "cluster:k8s-prod-cn", kind: "cluster", ref: "k8s-prod-cn", name: "核心业务生产集群" },
@@ -359,9 +376,12 @@ function buildDemoTopology() {
     // Business layer
     { from: "sys:sys-edu-portal", to: "app:edu-portal", kind: "contains", layer: "business", evidence: [{ record: "business_deployment", cluster: "prod-cn", instance: "web-02", namespace: "apps", verified_at: verified }] },
     { from: "sys:sys-sso-auth", to: "app:sso-gateway", kind: "contains", layer: "business", evidence: [{ record: "business_deployment", cluster: "prod-cn", instance: "web-02", namespace: "auth", verified_at: verified }] },
+    { from: "sys:sys-music-room", to: "app:music-room-media", kind: "contains", layer: "business", evidence: [{ record: "business_deployment", cluster: "prod-cn", instance: "web-01", namespace: "apps", verified_at: verified }] },
     { from: "sys:sys-ai-compute", to: "app:gpu-trainer", kind: "contains", layer: "business", evidence: [{ record: "business_deployment", cluster: "prod-cn", instance: "web-02", namespace: "batch", verified_at: verified }] },
+    { from: "sys:sys-fin-reimburse", to: "app:fin-api", kind: "contains", layer: "business", evidence: [{ record: "business_deployment", cluster: "staging", instance: "db-01", namespace: "staging-apps", verified_at: verified }] },
     { from: "app:edu-portal", to: "db:pg-main-01", kind: "uses", layer: "business", evidence: [{ record: "business_deployment", cluster: "prod-cn", instance: "web-02", namespace: "apps", verified_at: verified }] },
     { from: "app:sso-gateway", to: "db:pg-main-01", kind: "uses", layer: "business", evidence: [{ record: "business_deployment", cluster: "prod-cn", instance: "web-02", namespace: "auth", verified_at: verified }] },
+    { from: "app:music-room-media", to: "db:mysql-edu-01", kind: "uses", layer: "business", evidence: [{ record: "business_deployment", cluster: "prod-cn", instance: "web-01", namespace: "apps", verified_at: verified }] },
     // Deployment layer
     { from: "app:edu-portal", to: "wl:edu-portal", kind: "bound_workload", layer: "deployment", evidence: [{ record: "runtime_binding", cluster: "prod-cn", instance: "web-02", namespace: "apps", verified_at: verified }] },
     { from: "app:gpu-trainer", to: "wl:gpu-trainer", kind: "bound_workload", layer: "deployment", evidence: [{ record: "runtime_binding", cluster: "prod-cn", instance: "web-02", namespace: "batch", verified_at: verified }] },
@@ -375,6 +395,7 @@ function buildDemoTopology() {
     { from: "node:node-web-02", to: "mach:vm-web-02", kind: "maps_to", layer: "physical", evidence: [{ record: "inventory_node_links", cluster: "prod-cn", instance: "web-02", verified_at: verified }] },
     { from: "node:node-gpu-01", to: "mach:phy-gpu-01", kind: "maps_to", layer: "physical", evidence: [{ record: "inventory_node_links", cluster: "prod-cn", instance: "web-02", verified_at: verified }] },
     { from: "mach:vm-web-02", to: "mach:phy-host-01", kind: "hosted_on", layer: "physical", evidence: [{ record: "inventory_machines.host_asset_id", verified_at: verified }] },
+    { from: "mach:vm-music-01", to: "mach:phy-host-01", kind: "hosted_on", layer: "physical", evidence: [{ record: "inventory_machines.host_asset_id", verified_at: verified }] },
   ]
   const runtime = [
     {
@@ -402,25 +423,20 @@ function buildDemoCoverage(query?: URLSearchParams) {
   const verifiedAt = isoAgo(20)
 
   const allRows = [
-    ...demoMachines.map((m) => {
-      const covered = m.asset_id !== "vm-worker-legacy"
-      return {
-        asset_id: m.asset_id,
-        name: m.name,
-        kind: "machines" as const,
-        covered,
-        evidence: covered
-          ? [{
-              type: m.kind === "physical" ? ("hosts_vm" as const) : ("host" as const),
-              reference: m.host_asset_id || m.address,
-              source: { cluster: m.cluster || "prod-cn", instance: m.instance || "web-01" },
-              verified: true,
-              verified_at: verifiedAt,
-              revision: m.revision,
-            }]
-          : [],
-      }
-    }),
+    ...demoMachines.map((m) => ({
+      asset_id: m.asset_id,
+      name: m.name,
+      kind: "machines" as const,
+      covered: true,
+      evidence: [{
+        type: m.kind === "physical" ? ("hosts_vm" as const) : ("host" as const),
+        reference: m.host_asset_id || m.address,
+        source: { cluster: m.cluster || "prod-cn", instance: m.instance || "web-01" },
+        verified: true,
+        verified_at: verifiedAt,
+        revision: m.revision,
+      }],
+    })),
     ...demoSystems.map((s) => ({
       asset_id: s.asset_id,
       name: s.name,
@@ -448,17 +464,17 @@ function buildDemoCoverage(query?: URLSearchParams) {
     state: isLive ? ("live" as const) : ("frozen" as const),
     baselines: [{ id: "BL-2026-Q4", frozen_at: frozenAt }],
     baseline: isLive ? null : { id: "BL-2026-Q4", frozen_at: frozenAt },
-    document_ref: "ASSET-INV-2026-Q4",
-    register_revision: 3,
+    document_ref: "ZYCM-ASSET-INV-2026-Q4",
+    register_revision: 4,
     accepted: isLive ? null : true,
     metrics: {
-      machines: { total: 8, covered: 7, shortfall: 0, percent: 87.5, passed: true },
-      systems: { total: 4, covered: 4, shortfall: 0, percent: 100, passed: true },
+      machines: { total: demoMachines.length, covered: demoMachines.length, shortfall: 0, percent: 100, passed: true },
+      systems: { total: demoSystems.length, covered: demoSystems.length, shortfall: 0, percent: 100, passed: true },
     },
     machine_lifecycle: demoMachines.map((m) => ({
       asset_id: m.asset_id,
       name: m.name,
-      active: m.asset_id !== "vm-worker-legacy",
+      active: true,
       revision: m.revision,
     })),
     rows,

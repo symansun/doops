@@ -41,7 +41,7 @@ import {
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
-import { AutomationPanel, type AutomationTab } from "./automation-panel"
+import { AutomationPanel } from "./automation-panel"
 import { navigationBlocker, nextTerminalPrefill, prefillToApply, targetSwitchBlocker, TERMINAL_RUNNING_MESSAGE, type TerminalPrefill } from "@/lib/shell-blocks"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
@@ -130,7 +130,6 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   const onlineSelected = selected?.status === "offline" ? null : selected
   const [sessionId, setSessionId] = useState(randomSession())
   const [tab, setTab] = useState<Tab>("overview")
-  const [automationTab, setAutomationTab] = useState<AutomationTab>("inspections")
   const [terminalPrefill, setTerminalPrefill] = useState<TerminalPrefill | null>(null)
   // 终端标签按需挂载；记录已消费的 nonce，避免重新进入终端时再次预填旧命令。
   const [consumedPrefillNonce, setConsumedPrefillNonce] = useState(0)
@@ -497,15 +496,25 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   }
 
   function openAssetPage(next: AssetPage) {
-    if (next.section !== "board" && next.section !== "scope") lastLedger.current = next
+    if (
+      next.section !== "board" &&
+      next.section !== "situation" &&
+      next.section !== "inspection" &&
+      next.section !== "skills" &&
+      next.section !== "scope"
+    ) {
+      lastLedger.current = next
+    }
     setAssetPage(next)
   }
 
-  // 平台监控 and 平台资产台账 are separate top-level entries; the ledger keeps the
-  // last section so switching between them does not reset the list state.
+  // 态势感知、智能巡检、Skill 管理、平台监控与台账各自独立；台账记忆上次打开的分节。
   function openAssetArea(area: AssetArea): void {
     openView("assets")
-    if (area === "machines") return openAssetPage({section:"machines"})
+    if (area === "situation") return openAssetPage({ section: "situation" })
+    if (area === "inspection") return openAssetPage({ section: "inspection" })
+    if (area === "skills") return openAssetPage({ section: "skills" })
+    if (area === "machines") return openAssetPage({ section: "machines" })
     if (area === "board") return openAssetPage({ section: "board" })
     if (area === "scope") return openAssetPage({ section: "scope" })
     if (lastLedger.current.section === area) return openAssetPage(lastLedger.current)
@@ -532,9 +541,6 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       if (blockTerminalSwitch()) return
       setCatalogKind(destination.kind)
       return openView("catalog")
-    }
-    if (destination.tab === "tasks") {
-      setAutomationTab("inspections")
     }
     openView("console")
     if (selected) {
@@ -846,7 +852,6 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           onOpenMonitorTarget={(target, nextTab, origin, operationId) => {
             if (target.key !== selected?.key && !selectTarget(target)) return
             setAssetNamespace("")
-            if (nextTab === "tasks") setAutomationTab("background")
             openView("console")
             setAssetOrigin({ page: origin, targetKey: target.key, scope: consoleScopeKey(session) })
             selectTab(nextTab)
@@ -868,8 +873,8 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 session={session}
                 targets={directory}
                 selectedTarget={selected}
-                initialTab={automationTab}
                 onSelectTarget={(t) => { selectTarget(t) }}
+                onOpenInspection={() => openAssetArea("inspection")}
               />
             </section>
           ) : !selected ? (
