@@ -2,7 +2,15 @@
 set -eu
 
 if ! command -v python3 >/dev/null 2>&1; then
-  printf '```json\n{"status":"warning","summary":"缺少 python3","metrics":[],"checks":[{"id":"pkg.python3","name":"采集依赖","category":"runtime","status":"warning","value":"missing","detail":"节点缺少 python3"}]}\n```\n'
+  cat <<'MD'
+## 主机软件包与补丁基线巡检
+
+- **综合结论**：warning — 缺少 python3，未能采集
+
+```json
+{"status":"warning","summary":"缺少 python3，未采集软件包与补丁基线","metrics":[],"checks":[{"id":"pkg.python3","name":"采集依赖","category":"runtime","status":"warning","value":"missing","detail":"未检测到 python3，包清单与补丁基线均未采集"}]}
+```
+MD
   exit 0
 fi
 
@@ -13,6 +21,49 @@ import platform
 import shutil
 import subprocess
 from datetime import datetime, timezone
+
+MAX_PAYLOAD_BYTES = 200 * 1024  # spec L28 单条产物硬上限 256 KiB，预留保护余量
+TRIM_LIST_KEYS = ("packages", "checks")
+
+def _nbytes(obj):
+    return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+def finish(payload):
+    """保证单条产物 <= MAX_PAYLOAD_BYTES；发生裁剪时追加 output.size 检查项（真实反映）。"""
+    for c in payload.get("checks") or []:
+        if isinstance(c.get("detail"), str) and len(c["detail"]) > 600:
+            c["detail"] = c["detail"][:600] + "...(已截断)"
+    original = _nbytes(payload)
+    if original <= MAX_PAYLOAD_BYTES:
+        payload["output_bytes"] = _nbytes(payload)
+        return payload
+    for limit in (50, 10, 5):
+        for k in TRIM_LIST_KEYS:
+            v = payload.get(k)
+            if isinstance(v, list) and len(v) > limit:
+                payload[k] = v[:limit]
+        if _nbytes(payload) <= MAX_PAYLOAD_BYTES:
+            break
+    if _nbytes(payload) > MAX_PAYLOAD_BYTES:
+        for k in TRIM_LIST_KEYS:
+            if isinstance(payload.get(k), list) and k != "charts":
+                payload[k] = []
+        if _nbytes(payload) > MAX_PAYLOAD_BYTES:
+            payload["charts"] = []
+            payload["checks"] = (payload.get("checks") or [])[:20]
+            for c in payload["checks"]:
+                c["detail"] = (c.get("detail") or "")[:120]
+            payload["metrics"] = (payload.get("metrics") or [])[:20]
+    payload.setdefault("checks", []).append({
+        "id": "output.size",
+        "name": "输出体积保护",
+        "category": "runtime",
+        "status": "warning",
+        "value": "%dB" % original,
+        "detail": "载荷超过 %d 字节保护阈值，非必需列表已裁剪；原始 %d 字节" % (MAX_PAYLOAD_BYTES, original),
+    })
+    payload["output_bytes"] = _nbytes(payload)
+    return payload
 
 KEY_PKGS = ("openssl", "openssh-server", "openssh-client", "curl", "sudo", "nginx", "ca-certificates", "bash")
 
@@ -56,19 +107,21 @@ elif shutil.which("apk"):
 
 reboot_required = os.path.exists("/var/run/reboot-required")
 up_st = "warning" if (upgradable is not None and upgradable > 0) else "pass"
+up_avail_st = "pass" if upgradable is not None else "warning"
+inv_st = "pass" if pkg_mgr != "unknown" else "warning"
 rb_st = "warning" if reboot_required else "pass"
-overall = "warning" if "warning" in (up_st, rb_st) else "pass"
+overall = "warning" if "warning" in (inv_st, up_avail_st, up_st, rb_st) else "pass"
 summary = f"包管理器 {pkg_mgr}，已盘点 {len(packages)} 个核心组件" + (f"，本地待升级包 {upgradable} 个" if upgradable is not None else "") + ("，需要重启以生效补丁" if reboot_required else "")
 
 metrics = [
-    {"key": "key_packages_tracked", "label": "已盘点核心组件", "value": len(packages), "unit": "", "status": "pass"},
+    {"key": "key_packages_tracked", "label": "已盘点核心组件", "value": len(packages), "unit": "", "status": inv_st},
 ]
 if upgradable is not None:
     metrics.append({"key": "upgradable_packages", "label": "本地待升级包数", "value": upgradable, "unit": "", "status": up_st})
 
 checks = [
-    {"id": "pkg.inventory", "name": "核心组件版本盘点", "category": "security", "status": "pass", "value": f"{len(packages)} 个组件", "detail": f"内核 {platform.system()} {platform.release()} · 包管理器 {pkg_mgr}"},
-    {"id": "pkg.upgradable", "name": "本地缓存待升级补丁", "category": "security", "status": up_st if upgradable is not None else "skipped", "value": f"{upgradable} 个" if upgradable is not None else "未缓存", "detail": "仅读取本地缓存索引，未联网更新"},
+    {"id": "pkg.inventory", "name": "核心组件版本盘点", "category": "security", "status": inv_st, "value": f"{len(packages)} 个组件" if inv_st == "pass" else "不可得", "detail": (f"内核 {platform.system()} {platform.release()} · 包管理器 {pkg_mgr} · 已盘点 {len(packages)} 个核心组件") if inv_st == "pass" else "未找到 dpkg-query / rpm / apk，无法盘点软件包"},
+    {"id": "pkg.upgradable", "name": "本地缓存待升级补丁", "category": "security", "status": up_st if upgradable is not None else "warning", "value": f"{upgradable} 个" if upgradable is not None else "不可得", "detail": "口径：仅统计本地包索引中标记为可升级的条目，未联网刷新索引、未做 CVE 漏洞比对；" + ("可升级 %d 个" % upgradable if upgradable is not None else "本机包管理器未提供可升级查询，需人工核查")},
     {"id": "pkg.reboot", "name": "补丁重启需求", "category": "security", "status": rb_st, "value": "需要重启" if reboot_required else "无需重启", "detail": "/var/run/reboot-required " + ("存在" if reboot_required else "不存在")},
 ]
 
@@ -83,5 +136,6 @@ payload = {
     "checks": checks,
     "packages": packages,
 }
+finish(payload)
 print(f"## 主机软件包与补丁基线巡检\n\n- {summary}\n\n```json\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```")
 PY
