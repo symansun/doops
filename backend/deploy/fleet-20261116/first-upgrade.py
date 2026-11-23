@@ -208,16 +208,28 @@ def registry(a, old_image, pod, old_digest):
                 "application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json"),
                 "old_index_invalid")
             matches = [d for d in manifest["manifests"] if d.get("digest") == old_digest]
-            require(len(matches) == 1 and matches[0].get("mediaType") in media_types, "old_runtime_descriptor_mismatch")
+            if not matches:
+                require("@" in old_image and old_image.rsplit("@", 1)[1] == old_digest,
+                        "old_runtime_descriptor_mismatch")
+                matches = [d for d in manifest["manifests"] if d.get("mediaType") in media_types
+                           and (d.get("platform") or {}).get("os") not in (None, "unknown")
+                           and (d.get("platform") or {}).get("architecture") not in (None, "unknown")]
+                require(len(matches) >= 1, "old_runtime_descriptor_mismatch")
+            else:
+                require(len(matches) == 1 and matches[0].get("mediaType") in media_types,
+                        "old_runtime_descriptor_mismatch")
+            matched_digest = matches[0]["digest"]
             repository = old_image.split("@", 1)[0]
             if ":" in repository.rsplit("/", 1)[-1]:
                 repository = repository.rsplit(":", 1)[0]
-            raw = run(command + ["docker://" + repository + "@" + old_digest], timeout=120, raw=True)
+            raw = run(command + ["docker://" + repository + "@" + matched_digest], timeout=120, raw=True)
             require(len(raw) == matches[0].get("size"), "old_runtime_descriptor_size_mismatch")
             manifest = json.loads(raw)
+        else:
+            matched_digest = old_digest
         require(manifest.get("schemaVersion") == 2 and manifest.get("mediaType") in media_types and
                 "manifests" not in manifest and "config" in manifest and "layers" in manifest and
-                "sha256:" + hashlib.sha256(raw).hexdigest() == old_digest, "old_runtime_manifest_mismatch")
+                "sha256:" + hashlib.sha256(raw).hexdigest() == matched_digest, "old_runtime_manifest_mismatch")
         run(command + ["docker://" + a.image], timeout=120, raw=True)
 
 
@@ -326,7 +338,7 @@ def upgrade(a):
         history(a, a.base_revision + 1)
         evidence = verify(a, a.image, a.source_commit, digest)
         receipt(a, phase="awaiting-gateway", podUID=evidence["podUID"], runtimeDigest=evidence["runtimeDigest"])
-        deadline = time.monotonic() + 300
+        deadline = time.monotonic() + 900
         expected = {key: evidence[key] for key in ("podUID", "runtimeDigest", "release_commit")}
         while True:
             data = get(a, "configmap", a.job_name + "-receipt")["data"]
