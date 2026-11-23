@@ -112,3 +112,9 @@
 - **D8（新决策待定，入 pending-decisions）**：ssh_host 能力缺的是"平台 AI 可见的受管 SSH 通道"——`StructuredSSH` 不在 AI 可见白名单（`tool_registry.go:45`），属安全边界，不能顺手放宽。留给用户拍板：是保持"AI 永不直连 SSH、只能走 Skill 包 + 平台已授权通道"，还是新开受管通道面向 AI 开放（需单独威胁建模）。
 - 并发 5：SF-05、QA-02、INT-06、SF-14、INT-07。
 
+
+## 02:06 INT-08 探针实测：18 列丢默认值、10 张表整体缺失
+
+- integrator-ars 探针（干净树 bcc8e72a，61 张导出表 vs `gateway_mysql_schema.sql`）：列名漂移 **0 张**（此前的 9 张差异是它探针解析伪影：`--` 注释行、CHECK 续行 OR、类型后逗号）；**18 列/10 张表**"NOT NULL 无默认 + 被真实 INSERT 省略"，这 18 列在 SQLite 导出里**都有默认值** → MySQL 侧丢默认 = 真机 1364（审计 audit_events 4 列、platform_mcp_servers 4、platform_skills 2、agent_enrollments 2、inspection_items 1，tokens/credentials/credential_grants/credential_versions/edge_enrollments 各 1 的 revoked_at）。决定：当轮修，且**逐列照 SQLite 导出抄默认值**（`revoked_at` 填 `''` 与填 `NULL` 语义不同，不统一填 `''`）；守卫跳过项必须 `t.Logf` 打印 + 具名常量 `gatewayMySQLUnmigratedTables`，"可见欠账"而非注释里埋。
+- **更严重的缺口**：10 张表被运行时 INSERT 引用，但 MySQL DDL 与**冻结导出都没有**：`agent_resource_state`/`agent_observations`/`agent_resource_audit`（INT-02 分支的 `docs/migrations/agent_resource_sync.sql`）、`credential_bundle_items_v2`/`credential_verifications_v2`/`grants_v2`、`inventory_agent_assets`/`inventory_machine_tags`/`inventory_resource_catalog`、`personal_asset_records` —— 它们由 `backend/docs/migrations/*.sql` 在 SQLite 侧建表。**根因**：INT-04 的 `TestGatewayMySQLSchemaCoversRuntimeDDL` 只扫包内非测试 .go 的 `CREATE TABLE`，迁移脚本建的表在扫描范围外，所以守卫一直绿。→ 新任务 **INT-09**：先把守卫扩到扫 `backend/docs/migrations/*.sql` 让它**先红**，再补 10 张 DDL + 导出 + 真机写入回读。
+- 未派 INT-09：等 INT-08 收官（同改 `gateway_mysql_*_test.go` 与 schema/导出，R75）。

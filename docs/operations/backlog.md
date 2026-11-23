@@ -20,6 +20,7 @@
 | 编号 | 任务 | 依赖 | 备注 |
 |---|---|---|---|
 | SF-11 | 真实 Gateway↔Agent 隧道端到端验收（SF-06 §5 红线5「未覆盖」） | 需要可用 target 与凭据 | 未派：需先确认有可连的 agent 与允许的 canary 凭据，不能编造证据 |
+| INT-09 | 补 10 张"被 INSERT 引用但 MySQL DDL 与冻结导出都没有"的表（`agent_resource_state`/`agent_observations`/`agent_resource_audit`、`credential_*_v2`、`grants_v2`、`inventory_agent_assets`/`inventory_machine_tags`/`inventory_resource_catalog`、`personal_asset_records`）；**先扩守卫到扫 `backend/docs/migrations/*.sql` 让它先红**，再补 DDL/导出，真机写入回读 | INT-08（同改 `gateway_mysql_*_test.go` 与 schema/导出） | 根因：`TestGatewayMySQLSchemaCoversRuntimeDDL` 只扫包内 .go 的 CREATE TABLE，迁移建的表在范围外；不补则 MySQL 迁移后这些能力无表 |
 | SB-02 | 补回 SF-09 删采集器后**真丢的两项能力**：`host.disk_io`（磁盘 I/O 与延迟）进 `inspect-vm-host`、`k8s.metrics`（metrics-server 用量）进 `inspect-k8s-cluster`；先在 spec §2.4.1 核对旧字段（`git show 0226da5a^:backend/agent/internal/server/monitor_engine_agent.go`）再实现，验收进 `verify.sh` | SF-14（同占 `testdata/skills_builtin_verify/**`） | 能力真实丢失，不是文档问题；owner 只能是 skill-dev-01（脚本归属） |
 | INT-06 | Console 侧展示 agent_resource 同步状态（`components/target-manifest-card.tsx` 已随 INT-05 入库） | INT-05 | 无 TS 校验与浏览器实测，属 SF-05 之后的下一刀 |
 | — | `CHANGELOG.md` [Unreleased] 统一补写（SF-04/SF-05/SF-09/INT-05 的用户可见变化） | SF-05/SF-09 完成 | 该文件被前端会话占用，由我或前端会话统一写，避免共享索引互扫 |
