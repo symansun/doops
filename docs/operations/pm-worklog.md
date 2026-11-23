@@ -146,3 +146,14 @@
 - **SF-05 完成**（dev-artifact-01，`3e1e6d8a` 8 文件 +775/−241，已推 `b733e6fd` 之上）：viewer 新增「与上次对比」「历史趋势」两块（纯 SVG 无新依赖，四态齐备）；skill-registry 试跑面板补 `fetchMonitorRunDetail`（因为 POST 创建响应**不含** diff，diff 只在 `GET /v1/monitor/runs/<id>`、由 `monitor_engine_store.go:577 attachMonitorRunItemDiffs` 挂载）；删 driver_mode/strategy_id 死开关；前端停发 `strategies`/`ssh_hosts` 并把 400 翻成中文提示。证据：tsc 绿、13/13、`test:console` 699/699、`pnpm build` exit 0、反向实验（demo 加回 strategies → `lib/monitor-engine.test.mjs:121` 红）、ego-browser 四张截图（未入库）。
 - **三处纠正我**：①**`actions` 字段后端不存在**（全仓无 `json:"actions"`），后端只收 `skills[]`，action 由 frontmatter 经 `resolveSkillEntrypoint`/`resolveSkillExecMode` 派生——我此前派活要求"改发 `skill`+`actions`"是错的；②SF-10 两条性能项已由 `eb920009` 与 `monitor_metric_store.go:374-384` 覆盖；③CSV 保留 strategy 列（后端仍返回非空）。
 - **遗留缺口（已授权补丁）**：`components/inspection-center-panel.tsx:609-615` 未把 `diff`/`session`/趋势上下文传给 viewer → 真实详情页看不到 Diff/Trends，能力做了但没接线。要求：改该调用点 + `lib/monitor-engine.ts` 的 `MonitorRunItemRecord` 加 `diff?: MonitorRunDiff | null`，并**新增自动化测试**（此链路当前零覆盖、只靠截图），优先 demo 渲染断言「与上次对比」，否则把 props 映射抽成纯函数 `toViewerProps` 单测；反向实验去掉 `diff={it.diff}` 必须红。
+
+## 02:18 代写 CHANGELOG 未发布条目 + 第 10 轮巡检
+
+- `CHANGELOG.md` 自 `460ecee3`（01:34 切 v0.3.28）后 40 分钟无人改动、`[Unreleased]` 只剩一条"AI 助手横幅"修复，而 SF-03/04/05/09 与内置 8 包全是用户可见变化 → 我按闭环标准第 ④ 条代为补写并单独提交 `98bcc77e`（`git commit -o CHANGELOG.md`，未碰其他文件）：
+  - `### Added`：8 个内置巡检 Skill 包（真实目录 embed + 落盘 `<dbDir>/skills/` + 控制台可看脚本/试跑）；「巡检详情」新增「与上次对比」「历史趋势」+ `/v1/monitor/metrics` 时序与 `inspection_metric_points`；产物 File-First 落盘（`<dbDir>/artifacts/<date>/<run>/<item>/`，库内只存路径/sha256/字节数/截断标记，单文件 >256 KiB 截断并注明原始字节数）。
+  - `### Changed`：手动巡检只接受 `skills`，`strategies`/`ssh_hosts` 已移除并返回明确错误，前端同步停发。
+  - `### Removed`：内置六个原生策略采集器与 `doops_monitor_inspect` 工具退役，改由 Skill 包提供，并**如实注明**磁盘 I/O 与 K8s 资源用量两项指标"正在补齐"（即 SB-02 未落地，不写成已完成）。
+  - `### Fixed`：追加 Gateway MySQL 迁移真机 `Error 1364`/`Error 1048` 修复（INT-05 的 `archived_at`/`kubernetes_available`）。
+- 若仓库外那条前端会话稍后又要写 `CHANGELOG.md`，以其为准合并，不重复回改已推条目。
+- 第 10 轮巡检结论（02:15→02:18）：6 个子会话全在跑（SF-14 / SF-05 补丁 / QA-02 / INT-07 / INT-08 / SF-15），已达并发上限 6，无后台 job；origin/main=`98bcc77e`，ahead=0；工作区 25 项在改（两条后端 + 两条前端 + 一条集成）。本轮不派新活（无空位、无空闲文件域）。
+- 观察项：QA-02 自 01:52 起已跑约 26 分钟，正在做全包 `go test ./... -count=1`（仓库规模下 20–30 分钟属正常）；若超过 45 分钟仍无回报，联系它先用 `-short`/分组建模收口，避免长时间占住"回归基线"这个位置。
