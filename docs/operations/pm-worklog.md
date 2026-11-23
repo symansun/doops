@@ -194,3 +194,10 @@
 - **SF-17 派 dev-viewer-01**：`grep -rn 'artifact_state' components/ lib/` 零命中 → 后端字段还没有任何前端消费。要求：类型补 `artifact_state?: "present"|"missing"`；viewer 在 missing 时替换正文区为中文明示（指标/diff 照常渲染）；present 与字段缺省行为不变；把「状态 → 展示模型」抽成纯函数并用 `node --test` 覆盖三态；补**源码接线锁**断言（防止删 props 测试还绿）；反向实验两组；ego-browser 截两态图（demo 造 missing 数据必须回滚）。边界含禁止去修 `lib/shell-blocks.ts`/`lib/server/agent-session.ts` 那两个不属于它的失败。
 - 顺带发现他人提交 `1446b965 fix(audit): compare retention cutoffs on started_at_ms, not text`（审计保留策略按毫秒整数比较而非文本）——不在我的任务链里，未审。
 - 当前在跑 5：skill-dev-01（SF-14 收尾，`e2e4afdf` 已报送 CI 在 main 上跑绿）、qa-skill-01、integrator-ars（INT-09）、integrator-e2e-01（INT-10）、dev-viewer-01（SF-17）。origin/main = e2e4afdf，ahead=0。
+## 02:38 第 13 轮巡检：QA-03 对抗性复核立项，INT-06 判阻塞
+
+- 在跑 5（skill-dev-01 / qa-skill-01 / integrator-ars / integrator-e2e-01 / dev-viewer-01），无后台 job，origin/main = f52a7888，ahead=0，dirty=18（全部是上游前端会话未提交文件）。
+- **INT-06（Console 侧展示 agent_resource 同步状态）判定阻塞、不派**：`components/target-manifest-card.tsx` 已经有完整同步展示——`manifestStatus()` 分「Agent 离线 / 不支持同步 / 等待同步 / 已同步」四态，`resourceStates` 五态徽章（已核验/已发现未登记/已登记未核验/失联/冲突），`resourceKinds` 八类，且由 `components/console-shell.tsx:64/:936` 渲染。剩余所谓「无 TS 校验与浏览器实测」需要**真实 target** 才能取证，与 SF-11/D8 同一阻塞条件 → 记进 backlog 阻塞列，不用空活占住并发位。
+- **QA-03 派 qa-recheck-01（对抗性复核，只读 + 一份报告）**：今天多个会话都声称「做了反向实验、破坏后测试会红」，但没有任何第三方复核。挑 5 条最关键的重新做：SF-08 DEFECT-1（删 `errors="replace"` 后非 UTF-8 数据必须丢）、DEFECT-2（去掉 256 KiB 裁剪后产物必须超限）、INT-08 列默认值守卫（删 `platform_skills.driver_mode` 默认值必须红且指名表.列）、SF-16（`missing` 恒 `present` 必须红）、SF-15（删文件/删行顺序对调必须红）。要求在 `git archive origin/main` 干净树做、破坏只发生在 /tmp、docker/MySQL 缺失时降级并**明确标注**、报告逐项给「声称 vs 实测」对照，不一致必须贴原始输出。报告 `docs/reviews/2026-11-24-adversarial-recheck.md` 只提交该文件。
+- 动机：这类「自我声称的红」是整个队列里最容易虚的一环（此前我自己就把 `retention|prune` 的 grep 写错过一次，SF-15 性质判反）。用独立会话重跑，比在台账上互相引用更可信。
+- QA-02 硬截止 02:48 前必须交部分结果，仍未回话；若超时不交，我按「未完成」拆小重派，不重复原任务。
