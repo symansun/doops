@@ -40,6 +40,8 @@
 - 修复「AI 助手」回合在其他标签页无法中断的问题：回合在后台运行时，控制台顶部常驻「AI 助手正在执行任务」提示条，可直接「停止 AI 任务」或「查看」，不再需要在被锁住的切换操作上先切回「AI 助手」才能找到停止按钮。
 - 修复 Gateway MySQL 迁移中 `agent_status` 等表在真机导入时报 `Error 1364` / `Error 1048` 的问题：补齐缺失列与默认值，并对 TEXT 列按运行时方言显式赋值。
 - MySQL 后端下重复写入的冲突处理此前完全不可执行（SQLite 的 `ON CONFLICT` 语法在 MySQL 上直接报错）：31 处全部改为按原语义生成 `ON DUPLICATE KEY UPDATE`，冲突键沿用原语句目标，`DO NOTHING`、条件更新与 `max()/min()` 各自保持等价语义；SQLite 路径行为不变。
+- 修复 MySQL 后端下两处会**静默改坏数据**的写法：审计错误拼接 `error || '; ' || ?` 在 MySQL 默认 `sql_mode` 下是逻辑 OR，会把错误文本记成 0/1，现由方言层按后端生成 `CONCAT()`（NULL 语义与 `||` 一致，不用会跳过 NULL 的 `CONCAT_WS`）；四处 `INSERT OR IGNORE` 改为自赋值 `ON DUPLICATE KEY UPDATE col = col`，已存在的行不再被覆盖（SQLite 路径行为不变）。
+
 
 ## [0.3.29] — 2026-11-24
 
