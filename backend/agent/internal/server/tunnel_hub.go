@@ -174,6 +174,8 @@ type GatewayAgent struct {
 	Generation             uint64    `json:"generation"`
 	RuntimeID              string    `json:"runtime_id,omitempty"`
 	ReleaseCommit          string    `json:"release_commit,omitempty"`
+	Mode                   string    `json:"mode,omitempty"`
+	KubernetesAvailable    *bool     `json:"kubernetes_available,omitempty"`
 	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
 	StructuredSSH          bool      `json:"structured_ssh,omitempty"`
 	ExecutionLifecycle     bool      `json:"execution_lifecycle,omitempty"`
@@ -181,6 +183,7 @@ type GatewayAgent struct {
 	RegistryAuthfile       bool      `json:"registry_authfile,omitempty"`
 	COSSnapshotExecutable  bool      `json:"cos_snapshot_executable,omitempty"`
 	ToolDeadline           bool      `json:"tool_deadline,omitempty"`
+	AgentResourceSync      bool      `json:"target_manifest_supported,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
 	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
@@ -212,6 +215,7 @@ type GatewayAgent struct {
 	closed           chan struct{}
 	reqID            int64
 	modelVersionID   string
+	resourceSync     gatewayAgentResourceSync
 }
 
 type agentResourceSlot struct {
@@ -236,9 +240,12 @@ type GatewayTarget struct {
 	QueuedOps     int       `json:"queued_ops"`
 	// Enrolled reports whether the live session authenticated with a target
 	// enrollment token. The token and its ID never leave the Gateway.
-	Enrolled  bool     `json:"enrolled"`
-	Resources []string `json:"resources,omitempty"`
-	Sessions  []string `json:"sessions,omitempty"`
+	Enrolled            bool     `json:"enrolled"`
+	Resources           []string `json:"resources,omitempty"`
+	Sessions            []string `json:"sessions,omitempty"`
+	Mode                string   `json:"mode,omitempty"`
+	KubernetesAvailable *bool    `json:"kubernetes_available,omitempty"`
+	ManifestRevision    uint64   `json:"manifest_revision,omitempty"`
 }
 
 type gatewayWSMessage struct {
@@ -423,28 +430,30 @@ type auditResponse struct {
 }
 
 type auditRecord struct {
-	ID              int64                 `json:"id"`
-	UserID          string                `json:"user_id"`
-	TokenID         string                `json:"token_id"`
-	Cluster         string                `json:"cluster"`
-	Instance        string                `json:"instance"`
-	CredentialID    string                `json:"credential_id,omitempty"`
-	VersionID       string                `json:"credential_version_id,omitempty"`
-	GrantID         string                `json:"credential_grant_id,omitempty"`
-	Scope           *CredentialGrantScope `json:"scope,omitempty"`
-	ResourceVersion string                `json:"resource_version,omitempty"`
-	Digest          string                `json:"digest,omitempty"`
-	CorrelationID   string                `json:"correlation_id,omitempty"`
-	Action          string                `json:"action"`
-	Session         string                `json:"session"`
-	CommandSummary  string                `json:"command_summary"`
-	Status          string                `json:"status"`
-	Error           string                `json:"error,omitempty"`
-	Tail            string                `json:"tail,omitempty"`
-	BytesIn         int64                 `json:"bytes_in"`
-	BytesOut        int64                 `json:"bytes_out"`
-	StartedAt       string                `json:"started_at"`
-	EndedAt         string                `json:"ended_at,omitempty"`
+	ManifestRevision uint64                `json:"manifest_revision,omitempty"`
+	ResourceRefs     []string              `json:"resource_refs,omitempty"`
+	ID               int64                 `json:"id"`
+	UserID           string                `json:"user_id"`
+	TokenID          string                `json:"token_id"`
+	Cluster          string                `json:"cluster"`
+	Instance         string                `json:"instance"`
+	CredentialID     string                `json:"credential_id,omitempty"`
+	VersionID        string                `json:"credential_version_id,omitempty"`
+	GrantID          string                `json:"credential_grant_id,omitempty"`
+	Scope            *CredentialGrantScope `json:"scope,omitempty"`
+	ResourceVersion  string                `json:"resource_version,omitempty"`
+	Digest           string                `json:"digest,omitempty"`
+	CorrelationID    string                `json:"correlation_id,omitempty"`
+	Action           string                `json:"action"`
+	Session          string                `json:"session"`
+	CommandSummary   string                `json:"command_summary"`
+	Status           string                `json:"status"`
+	Error            string                `json:"error,omitempty"`
+	Tail             string                `json:"tail,omitempty"`
+	BytesIn          int64                 `json:"bytes_in"`
+	BytesOut         int64                 `json:"bytes_out"`
+	StartedAt        string                `json:"started_at"`
+	EndedAt          string                `json:"ended_at,omitempty"`
 }
 
 type auditPurgeResponse struct {
@@ -535,7 +544,10 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	)
 	hub.client = NewClientService(store, registry, opts)
 	hub.client.hub = hub
-	hub.registration.onRegistered = hub.deliverAgentCredentials
+	hub.registration.onRegistered = func(agent *GatewayAgent) {
+		go hub.deliverAgentCredentials(agent)
+		hub.runAgentResourceSync(agent)
+	}
 	edge, err := NewEdgeRegistry(store)
 	if err != nil {
 		panic(err)
@@ -588,25 +600,26 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.HandlePublicProxy)
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
 	mux.HandleFunc("/v1/assets/records", h.HandlePersonalAssetRecords)
-	mux.HandleFunc("/v1/assets/catalog", h.HandleResourceCatalog)
+	mux.HandleFunc("/v1/assets/catalog", h.resourceCatalogHandler(h.HandleResourceCatalog))
 	mux.HandleFunc("/v1/assets/cluster-profiles", h.HandleClusterProfiles)
-	mux.HandleFunc("/v1/assets/workspace", h.HandleAgentAssetScope)
-	mux.HandleFunc("/v1/assets/machines", h.HandleMachineInventory)
-	mux.HandleFunc("/v1/assets/clusters", h.HandleClusterInventory)
+	mux.HandleFunc("/v1/assets/workspace", h.resourceCatalogHandler(h.HandleAgentAssetScope))
+	mux.HandleFunc("/v1/assets/machines", h.resourceCatalogHandler(h.HandleMachineInventory))
+	mux.HandleFunc("/v1/assets/clusters", h.resourceCatalogHandler(h.HandleClusterInventory))
 	mux.HandleFunc("/v1/assets/node-links", h.HandleAssetNodeLinks)
 	mux.HandleFunc("/v1/assets/dashboard", h.HandleAssetDashboard)
-	mux.HandleFunc("/v1/assets/machine-diagnostics", h.HandleMachineDiagnostics)
-	mux.HandleFunc("/v1/assets/systems", h.HandleBusinessInventory)
+	mux.HandleFunc("/v1/assets/machine-diagnostics", h.resourceCatalogHandler(h.HandleMachineDiagnostics))
+	mux.HandleFunc("/v1/assets/systems", h.resourceCatalogHandler(h.HandleBusinessInventory))
 	mux.HandleFunc("/v1/assets/topology", h.HandleAssetTopology)
 	mux.HandleFunc("/v1/assets/coverage", h.HandleAssetCoverage)
 	mux.HandleFunc("/v1/assets/monitor", h.HandleAssetMonitor)
 	mux.HandleFunc("/v1/assets/inspections", h.HandleAssetInspection)
+	mux.HandleFunc("/v1/assets/target-manifest", h.HandleTargetManifest)
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
 	mux.HandleFunc("/v1/background-tasks", h.HandleBackgroundTasks)
 	mux.HandleFunc("/v1/background-tasks/", h.HandleBackgroundTask)
-	mux.HandleFunc("/v1/credential-bundles", h.HandleCredentialBundles)
-	mux.HandleFunc("/v1/credentials", h.HandleCredentials)
-	mux.HandleFunc("/v1/credentials/", h.HandleCredential)
+	mux.HandleFunc("/v1/credential-bundles", h.resourceCatalogHandler(h.HandleCredentialBundles))
+	mux.HandleFunc("/v1/credentials", h.resourceCatalogHandler(h.HandleCredentials))
+	mux.HandleFunc("/v1/credentials/", h.resourceCatalogHandler(h.HandleCredential))
 	admin := func(path string, handler http.HandlerFunc) {
 		mux.HandleFunc(path, h.auditAdminMutation(path, handler))
 	}
@@ -855,6 +868,7 @@ func newGatewayAgentSession(
 		messageBudget:   messageBudget,
 		closed:          make(chan struct{}),
 		stateChanged:    make(chan struct{}),
+		resourceSync:    gatewayAgentResourceSync{changed: make(chan struct{}, 1)},
 	}
 	return agent
 }
@@ -899,6 +913,7 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 		records := make([]auditRecord, 0, len(events))
 		for _, event := range events {
 			record := auditRecord{
+				ManifestRevision: event.ManifestRevision, ResourceRefs: event.ResourceRefs,
 				ID:              event.ID,
 				UserID:          event.UserID,
 				TokenID:         event.TokenID,
@@ -1191,6 +1206,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
 		return nil
 	}
+	if len(params.TargetManifest) != 0 {
+		writeJSON(buildErrorResponse(req.ID, -32602, "target_manifest_is_gateway_managed"))
+		return nil
+	}
 	if internalCredentialTool(params.Name) {
 		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
 		return nil
@@ -1481,6 +1500,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			finishAudit("canceled", "operation_canceled", "", 0)
 			writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))
 		}
+		return nil
+	}
+	if err := h.hub.pinExecutionManifest(opCtx, agent, auditID, &params); err != nil {
+		finishAudit("blocked", err.Error(), "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32603, err.Error()))
 		return nil
 	}
 	guarded := requiresExecutionOutcomeGuard(action, params.Name, params.Arguments, resourceKey)
@@ -2070,6 +2094,16 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 		releaseCommit = ""
 	}
 	a.ReleaseCommit = releaseCommit
+	if mode, ok := result["targetMode"].(string); ok && validAgentResourceMode(mode) {
+		a.Mode = mode
+	} else {
+		a.Mode = ""
+	}
+	if available, ok := result["kubernetesAvailable"].(bool); ok {
+		a.KubernetesAvailable = &available
+	} else {
+		a.KubernetesAvailable = nil
+	}
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, ok := capabilities["protocols"].(map[string]interface{})
 	a.ExecutionLifecycle = executionLifecycleCapabilityCompatible(protocols[executionLifecycleProtocol])
@@ -2081,6 +2115,7 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 	// Only an Agent that declares this understands a timeout_ms tools/call
 	// field and replies with agent_tool_timeout when its own deadline fires.
 	a.ToolDeadline = toolDeadlineCapabilityCompatible(protocols[toolDeadlineProtocol])
+	a.AgentResourceSync, _ = protocols[agentResourceSyncProtocol].(bool)
 	if !ok {
 		return
 	}
@@ -2295,6 +2330,9 @@ func toolCallParamsFor(a *GatewayAgent, params api.ToolCallParams, timeout time.
 	callParams := map[string]interface{}{
 		"name":      params.Name,
 		"arguments": params.Arguments,
+	}
+	if len(params.TargetManifest) != 0 {
+		callParams["target_manifest"] = params.TargetManifest
 	}
 	if a != nil && a.ToolDeadline && timeout > 0 {
 		callParams["timeout_ms"] = timeout.Milliseconds()
@@ -2988,15 +3026,20 @@ func (a *GatewayAgent) runtimeState() targetRuntimeState {
 func (a *GatewayAgent) snapshot() GatewayTarget {
 	a.stateMu.RLock()
 	target := GatewayTarget{
-		Cluster:       a.Cluster,
-		Instance:      a.Instance,
-		Key:           a.Key,
-		Remote:        a.Remote,
-		TokenID:       a.TokenID,
-		Enrolled:      a.TokenID != "",
-		ReleaseCommit: a.ReleaseCommit,
-		ConnectedAt:   a.ConnectedAt,
-		LastSeen:      a.LastSeen,
+		Cluster:             a.Cluster,
+		Instance:            a.Instance,
+		Key:                 a.Key,
+		Remote:              a.Remote,
+		TokenID:             a.TokenID,
+		Enrolled:            a.TokenID != "",
+		ReleaseCommit:       a.ReleaseCommit,
+		Mode:                a.Mode,
+		KubernetesAvailable: a.KubernetesAvailable,
+		ConnectedAt:         a.ConnectedAt,
+		LastSeen:            a.LastSeen,
+	}
+	if manifest := a.resourceSync.manifest; manifest.Revision != 0 {
+		target.ManifestRevision = manifest.Revision
 	}
 	a.stateMu.RUnlock()
 	state := a.runtimeState()

@@ -50,6 +50,8 @@ type adminInstanceInfo struct {
 	QueuedOps   int       `json:"queued_ops"`
 	ConnectedAt time.Time `json:"connected_at,omitempty"`
 	LastSeen    time.Time `json:"last_seen,omitempty"`
+	Mode        string    `json:"mode,omitempty"`
+	KubernetesAvailable *bool `json:"kubernetes_available,omitempty"`
 	Archived    bool      `json:"archived"`
 	ArchivedAt  time.Time `json:"archived_at,omitempty"`
 	ArchivedBy  string    `json:"archived_by,omitempty"`
@@ -58,7 +60,7 @@ type adminInstanceInfo struct {
 func adminInstanceStatus(st AgentStatus) adminInstanceInfo {
 	return adminInstanceInfo{
 		Cluster: st.Cluster, Instance: st.Instance, Status: "offline", Remote: st.Remote,
-		ConnectedAt: st.ConnectedAt, LastSeen: st.LastSeen,
+		ConnectedAt: st.ConnectedAt, LastSeen: st.LastSeen, Mode: st.Mode, KubernetesAvailable: st.KubernetesAvailable,
 		Archived: !st.ArchivedAt.IsZero(), ArchivedAt: st.ArchivedAt, ArchivedBy: st.ArchivedBy,
 	}
 }

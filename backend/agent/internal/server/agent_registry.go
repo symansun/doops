@@ -101,13 +101,15 @@ func (r *AgentRegistry) Register(agent *GatewayAgent) error {
 	generation := r.generations[key] + 1
 	agent.Generation = generation
 	if err := r.store.MarkAgentOnline(AgentStatus{
-		Cluster:     agent.Cluster,
-		Instance:    agent.Instance,
-		TokenID:     agent.TokenID,
-		Remote:      agent.Remote,
-		Generation:  agent.Generation,
-		ConnectedAt: agent.ConnectedAt,
-		LastSeen:    agent.LastSeen,
+		Cluster:             agent.Cluster,
+		Instance:            agent.Instance,
+		TokenID:             agent.TokenID,
+		Remote:              agent.Remote,
+		Generation:          agent.Generation,
+		Mode:                agent.Mode,
+		KubernetesAvailable: agent.KubernetesAvailable,
+		ConnectedAt:         agent.ConnectedAt,
+		LastSeen:            agent.LastSeen,
 	}); err != nil {
 		r.mu.Unlock()
 		return fmt.Errorf("persist agent online: %w", err)
@@ -252,4 +254,16 @@ func (r *AgentRegistry) notifyLocked(key string) {
 		close(ch)
 	}
 	r.changed[key] = make(chan struct{})
+}
+
+func (r *AgentRegistry) resourceSyncAgents() []*GatewayAgent {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agents := make([]*GatewayAgent, 0, len(r.sessions))
+	for _, agent := range r.sessions {
+		if agent.AgentResourceSync {
+			agents = append(agents, agent)
+		}
+	}
+	return agents
 }

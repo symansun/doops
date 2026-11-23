@@ -141,7 +141,7 @@ export function ClusterAssetsPanel({ session, targets, selectedTarget, initialPa
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div><h1 className="text-xl font-semibold">Kubernetes 集群台账</h1><p className="text-sm text-muted-foreground">登记待接入的集群，或从 Agent 验证并纳管。命名空间来自实际发现。</p></div>
       <div className="flex flex-wrap gap-2">
-        {selectedTarget && selectedTarget.status !== "offline" && onOpenTargetK8s && (
+        {selectedTarget && selectedTarget.status !== "offline" && selectedTarget.kubernetes_available !== false && onOpenTargetK8s && (
           <Button size="sm" disabled={busy} onClick={() => onOpenTargetK8s(selectedTarget)} title={`直接浏览 ${selectedTarget.cluster}/${selectedTarget.instance} 的实时 Pod、Deployment 与节点`}>
             直接查看当前目标（{selectedTarget.instance}）
           </Button>
@@ -207,7 +207,7 @@ export function ClusterAssetsPanel({ session, targets, selectedTarget, initialPa
               {admin && <Button size="sm" disabled={!target || busy} onClick={() => start(row)}>更新纳管范围</Button>}
               {admin && <Button size="sm" disabled={busy} onClick={()=>{setOpen(false);setEditor(null);setConfirm({profile:byId.get(id)??{...emptyProfile,id,name:row.name},source:row})}}>解除来源关联</Button>}
               {renderTargetAction({ target, origin, tab: "credentials", label: "查看目标凭据" })}
-              {renderTargetAction({ target, origin, tab: "k8s", label: "进入 K8s 实时资源" })}
+              {target?.kubernetes_available !== false && renderTargetAction({ target, origin, tab: "k8s", label: "进入 K8s 实时资源" })}
             </div>
           </div>
           <details open={expanded.has(namespacesKey)} className="mt-3 border-t pt-2 text-sm">
@@ -218,7 +218,7 @@ export function ClusterAssetsPanel({ session, targets, selectedTarget, initialPa
             {expanded.has(namespacesKey) && <ul className="mt-2 max-h-60 space-y-1 overflow-auto">{row.namespaces.map((ns) => <li key={ns.name} className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-mono">{ns.name}</span>
               <span className="ml-auto text-xs text-muted-foreground">{ns.scope === "list_pods" ? "已验证 Pod 列举" : "已读取命名空间对象"} · {observedTime(ns.verified_at)}</span>
-              {renderTargetAction({ target, tab: "k8s", label: `查看 ${ns.name} 工作负载`,
+              {target?.kubernetes_available !== false && renderTargetAction({ target, tab: "k8s", label: `查看 ${ns.name} 工作负载`,
                 origin: { ...origin, source: { ...origin.source, namespace: ns.name } } })}
             </li>)}</ul>}
           </details>

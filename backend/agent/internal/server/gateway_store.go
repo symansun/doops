@@ -142,42 +142,46 @@ type ScopeGrant struct {
 }
 
 type AuditEvent struct {
-	ID              int64
-	UserID          string
-	TokenID         string
-	Cluster         string
-	Instance        string
-	CredentialID    string
-	VersionID       string
-	GrantID         string
-	Scope           *CredentialGrantScope
-	ResourceVersion string
-	Digest          string
-	CorrelationID   string
-	Action          GatewayAction
-	Session         string
-	CommandSummary  string
-	Status          string
-	Error           string
-	Tail            string
-	BytesIn         int64
-	BytesOut        int64
-	StartedAt       time.Time
-	EndedAt         time.Time
+	ManifestRevision uint64
+	ResourceRefs     []string
+	ID               int64
+	UserID           string
+	TokenID          string
+	Cluster          string
+	Instance         string
+	CredentialID     string
+	VersionID        string
+	GrantID          string
+	Scope            *CredentialGrantScope
+	ResourceVersion  string
+	Digest           string
+	CorrelationID    string
+	Action           GatewayAction
+	Session          string
+	CommandSummary   string
+	Status           string
+	Error            string
+	Tail             string
+	BytesIn          int64
+	BytesOut         int64
+	StartedAt        time.Time
+	EndedAt          time.Time
 }
 
 type AgentStatus struct {
-	Cluster     string
-	Instance    string
-	TokenID     string
-	Remote      string
-	Status      string
-	Generation  uint64
-	ConnectedAt time.Time
-	LastSeen    time.Time
-	UpdatedAt   time.Time
-	ArchivedAt  time.Time
-	ArchivedBy  string
+	Cluster             string
+	Instance            string
+	TokenID             string
+	Remote              string
+	Status              string
+	Generation          uint64
+	Mode                string
+	KubernetesAvailable *bool
+	ConnectedAt         time.Time
+	LastSeen            time.Time
+	UpdatedAt           time.Time
+	ArchivedAt          time.Time
+	ArchivedBy          string
 }
 
 type AuditFinish struct {
@@ -527,6 +531,12 @@ func (s *GatewayStore) migrate() error {
 	if err := s.ensureColumn("agent_status", "archived_by", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("agent_status", "mode", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("agent_status", "kubernetes_available", "INTEGER"); err != nil {
+		return err
+	}
 	for _, column := range []struct {
 		name       string
 		definition string
@@ -808,20 +818,26 @@ func (s *GatewayStore) MarkAgentOnline(agent AgentStatus) error {
 	if agent.LastSeen.IsZero() {
 		agent.LastSeen = now
 	}
+	var kubernetesAvailable any
+	if agent.KubernetesAvailable != nil {
+		kubernetesAvailable = *agent.KubernetesAvailable
+	}
 	_, err := s.db.Exec(`INSERT INTO agent_status
-		(cluster, instance, token_id, remote, status, generation, connected_at, last_seen, updated_at)
-		VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?)
+		(cluster, instance, token_id, remote, status, generation, mode, kubernetes_available, connected_at, last_seen, updated_at)
+		VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(cluster, instance) DO UPDATE SET
 			token_id = excluded.token_id,
 			remote = excluded.remote,
 			status = 'online',
 			generation = excluded.generation,
+			mode = excluded.mode,
+			kubernetes_available = excluded.kubernetes_available,
 			connected_at = excluded.connected_at,
 			last_seen = excluded.last_seen,
 			updated_at = excluded.updated_at,
 			archived_at = '',
 			archived_by = ''`,
-		agent.Cluster, agent.Instance, agent.TokenID, agent.Remote, agent.Generation,
+		agent.Cluster, agent.Instance, agent.TokenID, agent.Remote, agent.Generation, agent.Mode, kubernetesAvailable,
 		formatTime(agent.ConnectedAt.UTC()), formatTime(agent.LastSeen.UTC()), formatTime(now))
 	return err
 }
@@ -869,15 +885,21 @@ func (s *GatewayStore) TouchAgentContext(
 	return err
 }
 
-const agentStatusColumns = `cluster, instance, token_id, remote, status, generation, connected_at, last_seen, updated_at,
+const agentStatusColumns = `cluster, instance, token_id, remote, status, generation, mode, kubernetes_available, connected_at, last_seen, updated_at,
 	archived_at, archived_by`
 
 func scanAgentStatus(row interface{ Scan(dest ...any) error }) (AgentStatus, error) {
 	var agent AgentStatus
-	var connected, lastSeen, updated, archived string
+	var connected, lastSeen, updated, archived, mode string
+	var kubernetesAvailable sql.NullBool
 	if err := row.Scan(&agent.Cluster, &agent.Instance, &agent.TokenID, &agent.Remote,
-		&agent.Status, &agent.Generation, &connected, &lastSeen, &updated, &archived, &agent.ArchivedBy); err != nil {
+		&agent.Status, &agent.Generation, &mode, &kubernetesAvailable, &connected, &lastSeen, &updated, &archived, &agent.ArchivedBy); err != nil {
 		return AgentStatus{}, err
+	}
+	agent.Mode = mode
+	if kubernetesAvailable.Valid {
+		value := kubernetesAvailable.Bool
+		agent.KubernetesAvailable = &value
 	}
 	if connected != "" {
 		agent.ConnectedAt, _ = parseTime(connected)

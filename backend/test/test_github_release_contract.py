@@ -212,7 +212,7 @@ def test_package_skill_release_script_builds_installer_layout(tmp_path):
 
     migrations = {
         f"docs/migrations/{name}.sql"
-        for name in ("machine_inventory", "cluster_inventory", "inventory_node_links")
+        for name in ("machine_inventory", "cluster_inventory", "inventory_node_links", "agent_resource_sync")
     }
     assert {name for name in names if name.endswith(".sql")} == migrations
     unpacked = tmp_path / "unpacked"

@@ -38,6 +38,7 @@ func NewAgentRegistrationHandler(
 			return session.writeJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"method":  "gateway/registered",
+				"params":  targetManifestTarget{Cluster: session.Cluster, Instance: session.Instance},
 			})
 		},
 	}

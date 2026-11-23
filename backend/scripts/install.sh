@@ -181,6 +181,9 @@ stage_skill_destinations() {
     if [[ -d "${RELEASE_SOURCE_DIR}/backend/docs/migrations" ]]; then
       mkdir "${stage}/docs/migrations"
       cp "${RELEASE_SOURCE_DIR}/backend/docs/migrations/"{machine_inventory,cluster_inventory,inventory_node_links}.sql "${stage}/docs/migrations/"
+      if [[ -f "${RELEASE_SOURCE_DIR}/backend/docs/migrations/agent_resource_sync.sql" ]]; then
+        cp "${RELEASE_SOURCE_DIR}/backend/docs/migrations/agent_resource_sync.sql" "${stage}/docs/migrations/"
+      fi
     fi
     for item in SKILL.md docs; do
       if [[ -e "${destination}/${item}" || -L "${destination}/${item}" ]]; then

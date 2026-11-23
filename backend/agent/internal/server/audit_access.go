@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -70,5 +71,9 @@ func (h *GatewayHub) visibleAuditEvents(auth TokenAuth, query url.Values) ([]Aud
 	if !isAdmin {
 		filter.VisibleToUser = auth.UserID
 	}
-	return h.store.ListAuditFiltered(filter)
+	events, err := h.store.ListAuditFiltered(filter)
+	if err != nil {
+		return nil, err
+	}
+	return events, loadManifestAudit(context.Background(), h.store.db, events)
 }

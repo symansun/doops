@@ -50,9 +50,10 @@ type SSHParams struct {
 // TimeoutMS 只在 Agent 声明 toolDeadline 能力时由 Gateway 填写：它表示 Gateway
 // 愿意等待本次调用的上限，Agent 必须早于该时刻给出终态回复。
 type ToolCallParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
-	TimeoutMS int64           `json:"timeout_ms,omitempty"`
+	Name           string          `json:"name"`
+	Arguments      json.RawMessage `json:"arguments"`
+	TimeoutMS      int64           `json:"timeout_ms,omitempty"`
+	TargetManifest json.RawMessage `json:"target_manifest,omitempty"`
 }
 
 // FileWriteParams 用于 doops_file_write 远程文件写入。

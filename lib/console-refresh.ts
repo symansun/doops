@@ -17,6 +17,9 @@ const TARGET_FIELDS = [
   "active_ops",
   "queued_ops",
   "busy_reason",
+  "mode",
+  "kubernetes_available",
+  "manifest_revision",
 ] as const
 
 function sameList(left: readonly string[] = [], right: readonly string[] = []): boolean {
@@ -61,7 +64,7 @@ export function targetIdentity(target: Pick<Target, "cluster" | "instance">): st
   return `${target.cluster}/${target.instance}`
 }
 
-export type TargetRef = Pick<Target, "cluster" | "instance">
+export type TargetRef = Pick<Target, "cluster" | "instance" | "mode" | "kubernetes_available" | "manifest_revision">
 
 export function workspaceTargets(online: Target[], registered: readonly TargetRef[]): Target[] {
   const connected = new Set(online.map(targetIdentity))

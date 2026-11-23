@@ -187,6 +187,10 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	if err := opCtx.Err(); err != nil {
 		return "", err
 	}
+	params := api.ToolCallParams{Name: tool, Arguments: rawArgs}
+	if err := h.hub.pinExecutionManifest(opCtx, agent, auditID, &params); err != nil {
+		return "", err
+	}
 	guarded := requiresExecutionOutcomeGuard(action, tool, rawArgs, resourceKey)
 	h.markOperationRunning(opID)
 	opCtx = h.withExecutionOwner(opCtx, agent, resourceKey, opID)
@@ -198,7 +202,7 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	dispatched = true
 
 	var out strings.Builder
-	relayErr := agent.relayToolCall(opCtx, api.ToolCallParams{Name: tool, Arguments: rawArgs}, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
+	relayErr := agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
 			if tool == "doops_credential_import" {
 				return nil

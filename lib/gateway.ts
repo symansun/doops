@@ -14,6 +14,15 @@ export interface Target {
   busy_reason?: string
   resources?: string[]
   sessions?: string[]
+  mode?: "kubernetes" | "docker" | "linux"
+  kubernetes_available?: boolean
+  manifest_revision?: number
+}
+
+const targetModeLabels = { kubernetes: "K8s", docker: "Docker", linux: "Linux" }
+
+export function targetModeLabel(mode?: Target["mode"]): string {
+  return (mode && targetModeLabels[mode]) || "未上报"
 }
 
 export interface AuditEvent {

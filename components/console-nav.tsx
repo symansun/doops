@@ -49,7 +49,7 @@ const groups = [
   ["home", "导航"], ["console", "目标运维"], ["catalog", "资产"], ["assets", "台账与监控"], ["deploy", "发布部署"], ["admin", "平台管理"],
 ] as const
 
-export function ConsoleNav({ view, tab, assetArea, deploySection, catalogKind, isAdmin, hasTarget, onNavigate, mobileOpen, onDismiss }: {
+export function ConsoleNav({ view, tab, assetArea, deploySection, catalogKind, isAdmin, hasTarget, kubernetesAvailable, onNavigate, mobileOpen, onDismiss }: {
   view: ConsoleView
   tab: TargetTab
   assetArea: AssetArea
@@ -57,11 +57,12 @@ export function ConsoleNav({ view, tab, assetArea, deploySection, catalogKind, i
   catalogKind: CatalogKind
   isAdmin: boolean
   hasTarget: boolean
+  kubernetesAvailable?: boolean
   onNavigate: (entry: ConsoleNavEntry) => void
   mobileOpen: boolean
   onDismiss: () => void
 }) {
-  const entries = consoleNavEntries(isAdmin)
+  const entries = consoleNavEntries(isAdmin, kubernetesAvailable)
   const drawer = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     const dialog = drawer.current

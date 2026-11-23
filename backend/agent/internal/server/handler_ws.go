@@ -296,6 +296,8 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	defer conn.Close()
 	conn.SetReadLimit(maxWebSocketMessageBytes())
 	connectionCtx, cancelConnection := context.WithCancel(context.Background())
+	manifestDir, _ := agentManifestDirectory()
+	var resourceSession *agentResourceSession
 
 	// per-connection 写互斥锁（gorilla/websocket 不允许并发写）
 	var connMu sync.Mutex
@@ -415,6 +417,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 
 		if req.Method == "initialize" {
 			// 处理初始化握手
+			runtime := currentTargetRuntime(connectionCtx)
 			writeJSON(api.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
@@ -425,7 +428,9 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 						"version":       release.Version,
 						"releaseCommit": release.Commit,
 					},
-					"runtimeId": agentProcessRuntimeID,
+					"runtimeId":           agentProcessRuntimeID,
+					"targetMode":          runtime.mode(),
+					"kubernetesAvailable": runtime.Kubernetes,
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
 						"protocols": map[string]interface{}{
@@ -436,6 +441,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 							registryAuthfileProtocol:      registryAuthfileCapability(),
 							cosSnapshotExecutableProtocol: cosSnapshotExecutableCapability(),
 							toolDeadlineProtocol:          toolDeadlineCapability(),
+							agentResourceSyncProtocol:     onReady != nil && manifestDir != "",
 						},
 					},
 				},
@@ -444,8 +450,23 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 		}
 		if req.Method == "gateway/registered" {
 			if onReady != nil {
-				readyOnce.Do(onReady)
+				readyOnce.Do(func() {
+					var target targetManifestTarget
+					if json.Unmarshal(req.Params, &target) == nil && target.Cluster != "" && target.Instance != "" {
+						resourceSession = &agentResourceSession{target: target, dir: manifestDir}
+					}
+					onReady()
+				})
 			}
+			continue
+		}
+		if req.Method == agentResourceObserveMethod || req.Method == agentResourceApplyMethod {
+			if resourceSession == nil {
+				writeJSON(buildErrorResponse(req.ID, -32601, "target_resource_sync_requires_gateway"))
+				continue
+			}
+			session := resourceSession
+			go session.handle(connectionCtx, req, writeJSON)
 			continue
 		}
 
@@ -651,6 +672,22 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 				continue
 			}
 
+			session := resourceSession
+			run := func(ctx context.Context) {
+				if len(params.TargetManifest) != 0 {
+					if session == nil {
+						writeJSON(buildErrorResponse(req.ID, -32602, "target_resource_sync_requires_gateway"))
+						return
+					}
+					pinned, err := session.pinExecution(ctx, params)
+					if err != nil {
+						writeJSON(buildErrorResponse(req.ID, -32603, err.Error()))
+						return
+					}
+					ctx = pinned
+				}
+				gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.TimeoutMS, writeJSON)
+			}
 			// 异步处理实际的 tool 执行
 			ctx, cancel := context.WithCancel(connectionCtx)
 			if id, ok := numericID(req.ID); ok {
@@ -670,7 +707,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 						activeToolMu.Unlock()
 						cancel()
 					}()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.TimeoutMS, writeJSON)
+					run(ctx)
 				}()
 			} else {
 				inFlightToolCalls.Add(1)
@@ -679,7 +716,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					defer executionWG.Done()
 					defer inFlightToolCalls.Add(-1)
 					defer cancel()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.TimeoutMS, writeJSON)
+					run(ctx)
 				}()
 			}
 		}
@@ -885,22 +922,31 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		entry.lastUsed = time.Now()
 		gw.sessionMapMu.Unlock()
 	}
+	var systemPrompt string
+	sysPromptPaths := []string{"/app/skills/system_prompt.md", "/app/self-docs/agent/skills/system_prompt.md"}
+	for _, sp := range sysPromptPaths {
+		if data, err := os.ReadFile(sp); err == nil {
+			systemPrompt = string(data)
+			log.Printf("📋 首次会话，已注入系统提示词: %s (%d bytes)", sp, len(data))
+			break
+		}
+	}
+	var kubernetes bool
+	if execution, ok := ctx.Value(executionTargetManifestKey{}).(executionTargetManifest); ok {
+		systemPrompt += execution.promptFacts(time.Now())
+		kubernetes = execution.Manifest.Target.KubernetesAvailable != nil && *execution.Manifest.Target.KubernetesAvailable
+	} else {
+		runtime := currentTargetRuntime(ctx)
+		systemPrompt += runtime.promptFacts()
+		kubernetes = runtime.Kubernetes
+	}
+
 	// 首次会话：创建 doagent session 并注入系统提示词
 	if targetSessionID == "" {
 		requestedSessionID := doopsSessionID
 		if responseFormat == "json" {
 			requestedSessionID = fmt.Sprintf("%s-json-%d-%d", doopsSessionID, time.Now().UnixNano(), doagentPromptSessionSequence.Add(1))
 		}
-		var systemPrompt string
-		sysPromptPaths := []string{"/app/skills/system_prompt.md", "/app/self-docs/agent/skills/system_prompt.md"}
-		for _, sp := range sysPromptPaths {
-			if data, err := os.ReadFile(sp); err == nil {
-				systemPrompt = string(data)
-				log.Printf("📋 首次会话，已注入系统提示词: %s (%d bytes)", sp, len(data))
-				break
-			}
-		}
-		systemPrompt += currentTargetRuntime(ctx).promptFacts()
 
 		createResp, err := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
 			"jsonrpc": "2.0",
@@ -947,6 +993,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"method":  "session/new",
 			"params": map[string]interface{}{
 				"sessionId":      targetSessionID,
+				"systemPrompt":   systemPrompt,
 				"permissionMode": "auto",
 			},
 		}); err != nil {
@@ -1069,7 +1116,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	if deadline, ok := ctx.Deadline(); ok {
 		promptParams["wallClockTimeoutSecs"] = max(1, int64(time.Until(deadline)/time.Second))
 	}
-	allowedTools := doagentAllowedTools(execution.RequireToolEvidence, execution.Skill, currentTargetRuntime(ctx).Kubernetes)
+	allowedTools := doagentAllowedTools(execution.RequireToolEvidence, execution.Skill, kubernetes)
 	promptParams["allowedTools"] = allowedTools
 	promptParams["mutationAuthorized"] = execution.RequireToolEvidence
 	if execution.RequireToolEvidence {
