@@ -42,10 +42,13 @@ type platformSkillRecord struct {
 	Name        string              `json:"name"`
 	Description string              `json:"description"`
 	Scope       string              `json:"scope"`       // system | custom
-	Category    string              `json:"category"`    // inspection | security | ops
-	DriverMode  string              `json:"driver_mode"` // builtin_strategy | agent_prompt
-	StrategyID  string              `json:"strategy_id,omitempty"`
-	Enabled     bool                `json:"enabled"`
+	Category    string              `json:"category"` // inspection | security | ops
+	// Entrypoint and ExecMode are derived from the Skill package itself
+	// (SKILL.md frontmatter plus files); there is no builtin_strategy /
+	// strategy_id side channel (SKILL_FIRST_INSPECTION_SPEC.md 2.3, defect D9).
+	Entrypoint string `json:"entrypoint,omitempty"`
+	ExecMode   string `json:"exec_mode,omitempty"` // auto | script | agent
+	Enabled    bool   `json:"enabled"`
 	SkillMD     string              `json:"skill_md,omitempty"`
 	Files       []platformSkillFile `json:"files,omitempty"`
 	FileCount   int                 `json:"file_count"`
@@ -143,6 +146,85 @@ func sanitizeSkillFiles(files []platformSkillFile) ([]platformSkillFile, int, er
 	return out, totalBytes, nil
 }
 
+// Deterministic vs AI-driven execution is a property of the Skill package, not
+// of a parallel builtin_strategy / strategy_id channel (SKILL_FIRST_INSPECTION_SPEC.md
+// 2.3, defect D9).
+const (
+	skillExecModeAuto   = "auto"
+	skillExecModeScript = "script"
+	skillExecModeAgent  = "agent"
+)
+
+func skillFilesContain(files []platformSkillFile, p string) bool {
+	for _, f := range files {
+		if f.Path == p {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveSkillEntrypoint returns the deterministic entry script declared by the
+// package: an explicit SKILL.md frontmatter entrypoint wins, otherwise
+// scripts/inspect.sh is auto-detected. The declared path must exist in the
+// package; an empty result means the Skill has no deterministic script.
+func resolveSkillEntrypoint(skillMD string, files []platformSkillFile) string {
+	if declared := strings.TrimSpace(skillFrontmatterValue(skillMD, "entrypoint")); declared != "" {
+		if norm, err := validateSkillRelPath(declared); err == nil && skillFilesContain(files, norm) {
+			return norm
+		}
+	}
+	if skillFilesContain(files, "scripts/inspect.sh") {
+		return "scripts/inspect.sh"
+	}
+	return ""
+}
+
+// resolveSkillExecMode resolves the declared exec_mode of a Skill package.
+// Unknown or absent values are auto; script without a resolvable entrypoint
+// degrades to agent so a run never fails on a missing script.
+func resolveSkillExecMode(skillMD, entrypoint string) string {
+	switch strings.ToLower(strings.TrimSpace(skillFrontmatterValue(skillMD, "exec_mode"))) {
+	case skillExecModeScript:
+		if entrypoint == "" {
+			return skillExecModeAgent
+		}
+		return skillExecModeScript
+	case skillExecModeAgent:
+		return skillExecModeAgent
+	default:
+		return skillExecModeAuto
+	}
+}
+
+// resolveSkillDispatchMode is the single dispatch decision for a Skill run.
+// A Skill with a deterministic entrypoint runs as a script; auto mode defers to
+// the AI-driven path when the caller supplied a custom prompt or command.
+func resolveSkillDispatchMode(sk platformSkillRecord, hasCustomAction bool) string {
+	entrypoint := strings.TrimSpace(sk.Entrypoint)
+	if entrypoint == "" {
+		entrypoint = findSkillExecutableScript(sk)
+	}
+	if entrypoint == "" {
+		return skillExecModeAgent
+	}
+	switch sk.ExecMode {
+	case skillExecModeAgent:
+		return skillExecModeAgent
+	case skillExecModeScript:
+		return skillExecModeScript
+	default:
+		if hasCustomAction {
+			return skillExecModeAgent
+		}
+		return skillExecModeScript
+	}
+}
+
+// shellSingleQuote renders s as a single POSIX shell word.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
 // SeedBuiltinSystemSkills indexes every builtin Skill package and materializes
 // its real directory under <dbDir>/skills/<slug>/. An existing package on disk
 // is authoritative and is never overwritten here, so an admin edit survives a
@@ -170,11 +252,11 @@ func (s *GatewayStore) SeedBuiltinSystemSkills(ctx context.Context) error {
 			dbFilesJSON = string(raw)
 		}
 		_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO platform_skills (
-			slug, name, description, scope, category, driver_mode, strategy_id,
+			slug, name, description, scope, category,
 			enabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,
 			created_at_ms, updated_at_ms, last_run_at_ms, run_count
-		) VALUES (?, ?, ?, 'system', ?, ?, ?, 1, ?, ?, ?, ?, ?, 'system', 'DoOps 系统内置', ?, ?, 0, 0)`,
-			spec.Slug, spec.Name, spec.Description, spec.Category, spec.DriverMode, spec.StrategyID,
+		) VALUES (?, ?, ?, 'system', ?, 1, ?, ?, ?, ?, ?, 'system', 'DoOps 系统内置', ?, ?, 0, 0)`,
+			spec.Slug, spec.Name, spec.Description, spec.Category,
 			dbSkillMD, dbFilesJSON, fileCount, storageDir, sha, nowMs, nowMs)
 		if err != nil {
 			return err
@@ -337,7 +419,7 @@ func (s *GatewayStore) ListPlatformSkills(ctx context.Context, auth TokenAuth, s
 		where = append(where, "(scope='system' OR enabled=1 OR owner_id=?)")
 		args = append(args, auth.UserID)
 	}
-	query := `SELECT slug, name, description, scope, category, driver_mode, strategy_id,
+	query := `SELECT slug, name, description, scope, category,
 		enabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,
 		created_at_ms, updated_at_ms, last_run_at_ms, run_count
 		FROM platform_skills WHERE ` + strings.Join(where, " AND ") + `
@@ -361,7 +443,7 @@ func (s *GatewayStore) ListPlatformSkills(ctx context.Context, auth TokenAuth, s
 
 func (s *GatewayStore) GetPlatformSkill(ctx context.Context, auth TokenAuth, slug string) (platformSkillRecord, error) {
 	isAdmin := auth.UserID == "system" || (auth.UserID != "" && s.UserIsPlatformAdmin(auth.UserID))
-	row := s.readDB().QueryRowContext(ctx, `SELECT slug, name, description, scope, category, driver_mode, strategy_id,
+	row := s.readDB().QueryRowContext(ctx, `SELECT slug, name, description, scope, category,
 		enabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,
 		created_at_ms, updated_at_ms, last_run_at_ms, run_count
 		FROM platform_skills WHERE slug=?`, slug)
@@ -389,7 +471,7 @@ func (s *GatewayStore) scanPlatformSkillRow(sc skillRowScanner, userID string, i
 		storageDir string
 	)
 	if err := sc.Scan(
-		&rec.Slug, &rec.Name, &rec.Description, &rec.Scope, &rec.Category, &rec.DriverMode, &rec.StrategyID,
+		&rec.Slug, &rec.Name, &rec.Description, &rec.Scope, &rec.Category,
 		&enabled, &skillMD, &filesJSON, &fileCount, &storageDir, &rec.SHA256, &rec.OwnerID, &rec.OwnerName,
 		&rec.CreatedAtMs, &rec.UpdatedAtMs, &rec.LastRunAtMs, &rec.RunCount,
 	); err != nil {
@@ -415,6 +497,10 @@ func (s *GatewayStore) scanPlatformSkillRow(sc skillRowScanner, userID string, i
 			rec.Files = legacyFiles
 		}
 	}
+	// The execution contract is part of the package: resolve it from the effective
+	// SKILL.md + files so an on-disk edit takes effect on the very next read.
+	rec.Entrypoint = resolveSkillEntrypoint(rec.SkillMD, rec.Files)
+	rec.ExecMode = resolveSkillExecMode(rec.SkillMD, rec.Entrypoint)
 	if rec.Scope == "system" {
 		rec.CanEdit = isAdmin
 		rec.CanDelete = false
@@ -433,6 +519,8 @@ func (s *GatewayStore) UpsertPlatformSkill(ctx context.Context, rec platformSkil
 	rec.UpdatedAtMs = nowMs
 	rec.SHA256 = computeSkillSHA256(rec.SkillMD, rec.Files)
 	rec.FileCount = len(rec.Files)
+	rec.Entrypoint = resolveSkillEntrypoint(rec.SkillMD, rec.Files)
+	rec.ExecMode = resolveSkillExecMode(rec.SkillMD, rec.Entrypoint)
 
 	storageDir, diskErr := s.writeSkillFilesToDisk(rec.Slug, rec.SkillMD, rec.Files)
 	dbSkillMD := rec.SkillMD
@@ -451,16 +539,14 @@ func (s *GatewayStore) UpsertPlatformSkill(ctx context.Context, rec platformSkil
 		enabledInt = 1
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO platform_skills (
-		slug, name, description, scope, category, driver_mode, strategy_id,
+		slug, name, description, scope, category,
 		enabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,
 		created_at_ms, updated_at_ms, last_run_at_ms, run_count
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(slug) DO UPDATE SET
 		name=excluded.name,
 		description=excluded.description,
 		category=excluded.category,
-		driver_mode=excluded.driver_mode,
-		strategy_id=excluded.strategy_id,
 		enabled=excluded.enabled,
 		skill_md=excluded.skill_md,
 		files_json=excluded.files_json,
@@ -468,7 +554,7 @@ func (s *GatewayStore) UpsertPlatformSkill(ctx context.Context, rec platformSkil
 		storage_dir=excluded.storage_dir,
 		sha256=excluded.sha256,
 		updated_at_ms=excluded.updated_at_ms`,
-		rec.Slug, rec.Name, rec.Description, rec.Scope, rec.Category, rec.DriverMode, rec.StrategyID,
+		rec.Slug, rec.Name, rec.Description, rec.Scope, rec.Category,
 		enabledInt, dbSkillMD, dbFilesJSON, rec.FileCount, storageDir, rec.SHA256, rec.OwnerID, rec.OwnerName,
 		rec.CreatedAtMs, rec.UpdatedAtMs, rec.LastRunAtMs, rec.RunCount,
 	)
@@ -523,8 +609,6 @@ type skillMutationRequest struct {
 	Description string              `json:"description,omitempty"`
 	Scope       string              `json:"scope,omitempty"`
 	Category    string              `json:"category,omitempty"`
-	DriverMode  string              `json:"driver_mode,omitempty"`
-	StrategyID  string              `json:"strategy_id,omitempty"`
 	Enabled     *bool               `json:"enabled,omitempty"`
 	SkillMD     string              `json:"skill_md,omitempty"`
 	Files       []platformSkillFile `json:"files,omitempty"`
@@ -689,20 +773,23 @@ func (h *GatewayHub) HandlePlatformSkills(w http.ResponseWriter, r *http.Request
 				}
 			}
 
-			driverMode := strings.TrimSpace(req.DriverMode)
-			strategyID := strings.TrimSpace(req.StrategyID)
-			if exists && existing.DriverMode == "builtin_strategy" && driverMode == "" {
-				driverMode = "builtin_strategy"
-				strategyID = existing.StrategyID
+			// Execution dispatch lives in the package: validate the declared
+			// exec_mode / entrypoint pair so a saved Skill is always runnable.
+			declaredExecMode := strings.ToLower(strings.TrimSpace(skillFrontmatterValue(req.SkillMD, "exec_mode")))
+			if declaredExecMode != "" && declaredExecMode != skillExecModeAuto && declaredExecMode != skillExecModeScript && declaredExecMode != skillExecModeAgent {
+				writeSkillHTTPError(w, 400, "invalid_skill_exec_mode", "exec_mode 仅支持 auto、script 或 agent")
+				return
 			}
-			if driverMode == "builtin_strategy" {
-				if !validMonitorStrategies[strategyID] {
-					writeSkillHTTPError(w, 400, "invalid_strategy_id", "内置策略 Skill 必须绑定有效的监控巡检策略")
+			declaredEntry := strings.TrimSpace(skillFrontmatterValue(req.SkillMD, "entrypoint"))
+			if declaredEntry != "" {
+				if norm, err := validateSkillRelPath(declaredEntry); err != nil || !skillFilesContain(cleanFiles, norm) {
+					writeSkillHTTPError(w, 400, "skill_entrypoint_missing", "SKILL.md 声明的 entrypoint 必须在 files 中真实存在")
 					return
 				}
-			} else {
-				driverMode = "agent_prompt"
-				strategyID = ""
+			}
+			if declaredExecMode == skillExecModeScript && resolveSkillEntrypoint(req.SkillMD, cleanFiles) == "" {
+				writeSkillHTTPError(w, 400, "skill_entrypoint_missing", "exec_mode 为 script 时必须声明可用的 entrypoint 脚本")
+				return
 			}
 
 			enabled := true
@@ -729,8 +816,6 @@ func (h *GatewayHub) HandlePlatformSkills(w http.ResponseWriter, r *http.Request
 				Description: desc,
 				Scope:       scope,
 				Category:    category,
-				DriverMode:  driverMode,
-				StrategyID:  strategyID,
 				Enabled:     enabled,
 				SkillMD:     req.SkillMD,
 				Files:       cleanFiles,
@@ -827,8 +912,6 @@ func (h *GatewayHub) HandlePlatformSkills(w http.ResponseWriter, r *http.Request
 				Description: found.Description,
 				Scope:       "system",
 				Category:    found.Category,
-				DriverMode:  found.DriverMode,
-				StrategyID:  found.StrategyID,
 				Enabled:     true,
 				SkillMD:     builtinMD,
 				Files:       builtinFiles,

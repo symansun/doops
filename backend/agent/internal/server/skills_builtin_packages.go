@@ -27,13 +27,15 @@ const builtinSkillPackagesRoot = "skills_builtin"
 // Entrypoint names the deterministic script entry declared by the package; an
 // empty Entrypoint means "auto-detect", matching the SKILL.md frontmatter
 // contract (frontmatter entrypoint wins, otherwise scripts/inspect.sh).
+//
+// There is deliberately no driver mode / strategy id here: execution is
+// dispatched purely by the Skill package (entrypoint + exec_mode), per
+// SKILL_FIRST_INSPECTION_SPEC.md 2.3 (defect D9).
 type defaultSystemSkillSpec struct {
 	Slug        string
 	Name        string
 	Description string
 	Category    string
-	DriverMode  string
-	StrategyID  string
 	Entrypoint  string
 }
 
@@ -46,8 +48,6 @@ var builtinSystemSkills = []defaultSystemSkillSpec{
 		Name:        "虚机与物理机系统巡检 Skill",
 		Description: "通过 Agent 本机只读探测 CPU、内存、内核、磁盘容量与 I/O、网卡流量、NVIDIA GPU 及 M1–M5 主机安全基线。",
 		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategyVMHost,
 		Entrypoint:  "scripts/inspect.sh",
 	},
 	{
@@ -55,16 +55,12 @@ var builtinSystemSkills = []defaultSystemSkillSpec{
 		Name:        "无 Agent 远程主机 SSH 巡检 Skill",
 		Description: "由在线 Agent 通过结构化只读 BatchMode SSH 远程采集无 Agent 主机的资源水位与系统安全基线。",
 		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategySSHHost,
 	},
 	{
 		Slug:        "inspect-k8s-cluster",
 		Name:        "Kubernetes 容器集群巡检 Skill",
 		Description: "通过 Agent 内置只读 kubectl 巡检 K8s 节点健康压力、异常/高重启 Pod、控制器副本、PVC 绑定、Warning 事件及资源水位。",
 		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategyK8sCluster,
 		Entrypoint:  "scripts/inspect.sh",
 	},
 	{
@@ -72,8 +68,6 @@ var builtinSystemSkills = []defaultSystemSkillSpec{
 		Name:        "容器运行时巡检 Skill",
 		Description: "自动识别 Docker / nerdctl / Podman，采集运行中容器 CPU、内存与内存上限（memory_limit）占比。",
 		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategyContainerRuntime,
 		Entrypoint:  "scripts/inspect.sh",
 	},
 	{
@@ -81,8 +75,6 @@ var builtinSystemSkills = []defaultSystemSkillSpec{
 		Name:        "应用服务与 Web 安全巡检 Skill",
 		Description: "探测已登记站点 HTTP/HTTPS 可用性、响应延迟、错误率、TLS 证书剩余天数、安全响应头及本机 Nginx 并发请求速率。",
 		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategyAppService,
 		Entrypoint:  "scripts/inspect.sh",
 	},
 	{
@@ -90,15 +82,12 @@ var builtinSystemSkills = []defaultSystemSkillSpec{
 		Name:        "数据库运行与连通性巡检 Skill",
 		Description: "探测已登记数据库实例（PostgreSQL / MySQL / Redis 等）的 TCP 连通性与建连延迟，识别实例不可达或高延迟风险。",
 		Category:    "inspection",
-		DriverMode:  "builtin_strategy",
-		StrategyID:  monitorStrategyDatabaseService,
 	},
 	{
 		Slug:        "inspect-proxy-evasion",
 		Name:        "主机违规代理与内网穿透巡检 Skill",
 		Description: "由系统驱动 Agent Skill 检查主机是否存在未备案代理/翻墙/穿透进程（clash、v2ray、xray、frpc、trojan 等）及异常监听端口。",
 		Category:    "security",
-		DriverMode:  "agent_prompt",
 		Entrypoint:  "scripts/inspect.sh",
 	},
 	{
@@ -106,7 +95,6 @@ var builtinSystemSkills = []defaultSystemSkillSpec{
 		Name:        "主机软件包与补丁基线巡检 Skill",
 		Description: "由系统驱动 Agent Skill 只读盘点本机已安装关键软件包版本（OpenSSL、OpenSSH、Nginx、内核等）与待更新安全补丁概况。",
 		Category:    "security",
-		DriverMode:  "agent_prompt",
 		Entrypoint:  "scripts/inspect.sh",
 	},
 }

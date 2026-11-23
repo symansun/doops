@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -134,6 +135,103 @@ func TestBuiltinSkillPackagesEmbedDiskIndexAndReset(t *testing.T) {
 		}
 		if string(resetScript) != entryContent {
 			t.Fatalf("expected reset to restore builtin script content")
+		}
+	}
+}
+// TestBuiltinSkillDispatchIsPackageDriven locks the SF-02 / D9 contract: neither
+// the builtin spec nor the platform skill record may carry a builtin_strategy /
+// strategy_id side channel. Dispatch is derived purely from the Skill package
+// (entrypoint + exec_mode), and all eight builtin capabilities stay executable:
+// the six script-backed packages dispatch to their entrypoint script, the two
+// AI-driven packages dispatch to the agent prompt path.
+func TestBuiltinSkillDispatchIsPackageDriven(t *testing.T) {
+	requireNoStrategySideChannel(t, reflect.TypeOf(defaultSystemSkillSpec{}))
+	requireNoStrategySideChannel(t, reflect.TypeOf(platformSkillRecord{}))
+
+	specType := reflect.TypeOf(defaultSystemSkillSpec{})
+	if _, ok := specType.FieldByName("Entrypoint"); !ok {
+		t.Fatal("defaultSystemSkillSpec must declare the package Entrypoint")
+	}
+	recType := reflect.TypeOf(platformSkillRecord{})
+	for _, name := range []string{"Entrypoint", "ExecMode"} {
+		if _, ok := recType.FieldByName(name); !ok {
+			t.Fatalf("platformSkillRecord must declare %s", name)
+		}
+	}
+
+	if len(builtinSystemSkills) != 8 {
+		t.Fatalf("expected 8 builtin capabilities, got %d", len(builtinSystemSkills))
+	}
+	var scriptSeen, agentSeen, autoSeen int
+	for i := range builtinSystemSkills {
+		spec := builtinSystemSkills[i]
+		md, files, err := loadBuiltinSkillPackage(spec)
+		if err != nil {
+			t.Fatalf("load builtin package %s: %v", spec.Slug, err)
+		}
+		rec := platformSkillRecord{Slug: spec.Slug, Name: spec.Name, Category: spec.Category, SkillMD: md, Files: files}
+		rec.Entrypoint = resolveSkillEntrypoint(rec.SkillMD, rec.Files)
+		rec.ExecMode = resolveSkillExecMode(rec.SkillMD, rec.Entrypoint)
+		if rec.ExecMode == skillExecModeAuto {
+			autoSeen++
+		}
+		if rec.Entrypoint != spec.Entrypoint {
+			t.Fatalf("%s entrypoint = %q, want declared %q", spec.Slug, rec.Entrypoint, spec.Entrypoint)
+		}
+		mode := resolveSkillDispatchMode(rec, false)
+		if spec.Entrypoint != "" {
+			scriptSeen++
+			if mode != skillExecModeScript {
+				t.Fatalf("%s must dispatch to script, got %q", spec.Slug, mode)
+			}
+			if got := findSkillExecutableScript(rec); got != spec.Entrypoint {
+				t.Fatalf("%s runnable script = %q, want %q", spec.Slug, got, spec.Entrypoint)
+			}
+			if mode := resolveSkillDispatchMode(rec, true); mode != skillExecModeAgent {
+				t.Fatalf("%s with a custom action must defer to the agent path, got %q", spec.Slug, mode)
+			}
+		} else {
+			agentSeen++
+			if mode != skillExecModeAgent {
+				t.Fatalf("%s without entrypoint must dispatch to agent, got %q", spec.Slug, mode)
+			}
+			if got := findSkillExecutableScript(rec); got != "" {
+				t.Fatalf("%s must not advertise a runnable script, got %q", spec.Slug, got)
+			}
+		}
+	}
+	if scriptSeen != 6 || agentSeen != 2 || autoSeen != 8 {
+		t.Fatalf("unexpected dispatch split: script=%d agent=%d auto=%d", scriptSeen, agentSeen, autoSeen)
+	}
+
+	// exec_mode: script without a real entrypoint must degrade to the agent path.
+	degraded := platformSkillRecord{Slug: "degraded", SkillMD: "---\nname: x\ndescription: y\nexec_mode: script\n---\n", ExecMode: skillExecModeScript}
+	if mode := resolveSkillDispatchMode(degraded, false); mode != skillExecModeAgent {
+		t.Fatalf("script without entrypoint must degrade to agent, got %q", mode)
+	}
+
+	// An explicit exec_mode: agent keeps an entrypoint-bearing Skill on the AI path.
+	agentDeclared := platformSkillRecord{Slug: "inspect-vm-host", Entrypoint: "scripts/inspect.sh", ExecMode: skillExecModeAgent}
+	if mode := resolveSkillDispatchMode(agentDeclared, false); mode != skillExecModeAgent {
+		t.Fatalf("explicit exec_mode agent must stay agent, got %q", mode)
+	}
+
+	// shellSingleQuote must keep hostile slugs inert.
+	if got := shellSingleQuote("a'b"); got != `'a'\''b'` {
+		t.Fatalf("unexpected shellSingleQuote: %s", got)
+	}
+}
+
+func requireNoStrategySideChannel(t *testing.T, typ reflect.Type) {
+	t.Helper()
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if f.Name == "DriverMode" || f.Name == "StrategyID" {
+			t.Fatalf("%s still declares the removed strategy field %s", typ.Name(), f.Name)
+		}
+		tag := strings.ToLower(f.Tag.Get("json"))
+		if strings.Contains(tag, "driver_mode") || strings.Contains(tag, "strategy_id") {
+			t.Fatalf("%s field %s still exposes dead json tag %q", typ.Name(), f.Name, tag)
 		}
 	}
 }

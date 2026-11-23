@@ -28,7 +28,7 @@ func TestPlatformSkillsCRUDPermissionsSyncAndInspectionDriver(t *testing.T) {
 	}
 	var foundVM bool
 	for _, sk := range listResp.Skills {
-		if sk.Slug == "inspect-vm-host" && sk.Scope == "system" && sk.DriverMode == "builtin_strategy" && sk.StrategyID == "vm_host" {
+		if sk.Slug == "inspect-vm-host" && sk.Scope == "system" {
 			foundVM = true
 			if sk.CanEdit || sk.CanDelete {
 				t.Fatalf("non-admin should not have edit/delete permission on system skill: %+v", sk)
@@ -37,6 +37,22 @@ func TestPlatformSkillsCRUDPermissionsSyncAndInspectionDriver(t *testing.T) {
 	}
 	if !foundVM {
 		t.Fatalf("missing seeded inspect-vm-host system skill")
+	}
+
+	// System Skill detail is package-driven: it exposes the derived entrypoint /
+	// exec_mode and never a builtin_strategy / strategy_id side channel (D9).
+	vmDetailRaw := f.http(t, operator, "GET", "/v1/skills/inspect-vm-host", "", 200)
+	if strings.Contains(string(vmDetailRaw), "driver_mode") || strings.Contains(string(vmDetailRaw), "strategy_id") {
+		t.Fatalf("system skill detail still exposes dead strategy fields: %s", string(vmDetailRaw))
+	}
+	var vmDetail struct {
+		Skill platformSkillRecord `json:"skill"`
+	}
+	if err := json.Unmarshal(vmDetailRaw, &vmDetail); err != nil {
+		t.Fatalf("decode vm-host detail: %v", err)
+	}
+	if vmDetail.Skill.Entrypoint != "scripts/inspect.sh" || vmDetail.Skill.ExecMode != skillExecModeAuto {
+		t.Fatalf("expected package-derived entrypoint/exec_mode, got %+v", vmDetail.Skill)
 	}
 
 	// 2. Non-admin cannot modify or toggle a system skill (403).
@@ -48,7 +64,7 @@ func TestPlatformSkillsCRUDPermissionsSyncAndInspectionDriver(t *testing.T) {
 		"action": "upsert",
 		"slug": "custom-nginx-audit",
 		"category": "inspection",
-		"skill_md": "---\nname: Nginx 专项巡检\ndescription: 检查 Nginx 配置文件与 worker 进程\n---\n\n# Nginx Audit\n只读检查配置。",
+		"skill_md": "---\nname: Nginx 专项巡检\ndescription: 检查 Nginx 配置文件与 worker 进程\nentrypoint: scripts/check.sh\n---\n\n# Nginx Audit\n只读检查配置。",
 		"files": [{"path": "scripts/check.sh", "content": "#!/bin/sh\necho ok\n"}]
 	}`
 	upRaw := f.http(t, operator, "POST", "/v1/skills", customPayload, 200)
@@ -58,7 +74,7 @@ func TestPlatformSkillsCRUDPermissionsSyncAndInspectionDriver(t *testing.T) {
 	if err := json.Unmarshal(upRaw, &upResp); err != nil {
 		t.Fatalf("decode upsert: %v", err)
 	}
-	if upResp.Skill.Scope != "custom" || upResp.Skill.Name != "Nginx 专项巡检" || upResp.Skill.FileCount != 1 {
+	if upResp.Skill.Scope != "custom" || upResp.Skill.Name != "Nginx 专项巡检" || upResp.Skill.FileCount != 1 || upResp.Skill.Entrypoint != "scripts/check.sh" {
 		t.Fatalf("unexpected custom skill saved: %+v", upResp.Skill)
 	}
 
@@ -103,7 +119,8 @@ func TestPlatformSkillsCRUDPermissionsSyncAndInspectionDriver(t *testing.T) {
 		t.Fatalf("expected attached script materialized on agent, err=%v", err)
 	}
 
-	// 5. Trigger Skill-driven inspection combining a system builtin_strategy skill AND the custom skill!
+	// 5. Skill-driven inspection dispatches purely by the package contract: both
+	// the builtin script Skill and the custom script Skill run their entrypoint.
 	runRaw := f.http(t, operator, "POST", "/v1/monitor/runs", `{
 		"targets": [{"cluster": "dev", "instance": "local"}],
 		"skills": ["inspect-vm-host", "custom-nginx-audit"]
@@ -120,16 +137,16 @@ func TestPlatformSkillsCRUDPermissionsSyncAndInspectionDriver(t *testing.T) {
 	}
 	var sawVM, sawCustom bool
 	for _, it := range runResp.Items {
-		if it.Strategy == "vm_host" {
+		switch it.Strategy {
+		case "skill:inspect-vm-host":
 			sawVM = true
-			if it.Evidence["skill_slug"] != "inspect-vm-host" {
-				t.Fatalf("expected vm_host evidence skill_slug=inspect-vm-host, got %+v", it.Evidence)
+			if it.CollectorMethod != "skill_script" || it.Evidence["entrypoint"] != "scripts/inspect.sh" || it.Evidence["synced"] != true {
+				t.Fatalf("expected vm-host script dispatch, got method=%s evidence=%+v", it.CollectorMethod, it.Evidence)
 			}
-		}
-		if it.Strategy == "skill:custom-nginx-audit" && it.CollectorMethod == "agent_skill" {
+		case "skill:custom-nginx-audit":
 			sawCustom = true
-			if it.Evidence["synced"] != true {
-				t.Fatalf("expected custom skill synced=true, got %+v", it.Evidence)
+			if it.CollectorMethod != "skill_script" || it.Evidence["entrypoint"] != "scripts/check.sh" || it.Evidence["synced"] != true {
+				t.Fatalf("expected custom skill script dispatch, got method=%s evidence=%+v", it.CollectorMethod, it.Evidence)
 			}
 		}
 	}

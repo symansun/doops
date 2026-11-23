@@ -358,14 +358,12 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 	plan.Command = strings.TrimSpace(plan.Command)
 	plan.Thresholds = normalizeMonitorThresholds(plan.Thresholds)
 
-	// Resolve Skill-driven inspection plan: builtin_strategy skills map to native
-	// Agent strategies, while agent_prompt skills sync to /root/.agent/skills/<slug>/
-	// and execute via doops_agent_prompt (or bundled scripts / direct command via doops_shell).
+	// Resolve the selected Skills. Execution is dispatched purely by each Skill
+	// package (entrypoint + exec_mode); builtin_strategy / strategy_id no longer
+	// influences the run (SKILL_FIRST_INSPECTION_SPEC.md 1.1 / 2.3, defect D9).
 	var (
-		agentDrivenSkills []platformSkillRecord
-		drivenSkillSlugs  []string
-		skillDerivedStrat []string
-		skillByStrategy   = map[string]string{}
+		selectedSkills   []platformSkillRecord
+		drivenSkillSlugs []string
 	)
 	hasCustomAction := plan.Prompt != "" || plan.Command != ""
 	if len(plan.Skills) > 0 && plan.RetestItems == nil {
@@ -373,32 +371,19 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 		if lookupAuth.UserID == "" {
 			lookupAuth.UserID = "system"
 		}
-		stratSeen := map[string]bool{}
 		for _, slug := range plan.Skills {
 			sk, err := h.store.GetPlatformSkill(ctx, lookupAuth, slug)
 			if err != nil || !sk.Enabled {
 				continue
 			}
 			drivenSkillSlugs = append(drivenSkillSlugs, sk.Slug)
-			if sk.DriverMode == "builtin_strategy" && validMonitorStrategies[sk.StrategyID] {
-				if !stratSeen[sk.StrategyID] {
-					stratSeen[sk.StrategyID] = true
-					skillDerivedStrat = append(skillDerivedStrat, sk.StrategyID)
-				}
-				skillByStrategy[sk.StrategyID] = sk.Slug
-			} else {
-				agentDrivenSkills = append(agentDrivenSkills, sk)
-			}
+			selectedSkills = append(selectedSkills, sk)
 		}
-		if len(skillDerivedStrat) > 0 {
-			plan.Strategies = skillDerivedStrat
-		} else if len(agentDrivenSkills) > 0 || hasCustomAction {
-			plan.Strategies = normalizeMonitorStrategiesOptional(plan.Strategies)
-		} else {
-			plan.Strategies = normalizeMonitorStrategies(plan.Strategies)
-		}
-	} else if plan.RetestItems == nil {
-		if hasCustomAction {
+	}
+	if plan.RetestItems == nil {
+		// A Skill-driven or custom run must not silently pull in the six default
+		// native strategies; an explicit strategy list is still honored.
+		if len(selectedSkills) > 0 || hasCustomAction {
 			plan.Strategies = normalizeMonitorStrategiesOptional(plan.Strategies)
 		} else {
 			plan.Strategies = normalizeMonitorStrategies(plan.Strategies)
@@ -451,7 +436,7 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 	)
 
 	hasCommand := plan.Command != ""
-	hasPromptOnly := !hasCommand && plan.Prompt != "" && len(agentDrivenSkills) == 0
+	hasPromptOnly := !hasCommand && plan.Prompt != "" && len(selectedSkills) == 0
 
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
@@ -469,7 +454,7 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 			} else if len(plan.Strategies) > 0 {
 				assets = h.buildAgentInspectAssets(ctx, t.Cluster, t.Instance, plan.Strategies, plan.ExplicitSSH)
 			}
-			if len(assets) == 0 && len(agentDrivenSkills) == 0 && !hasCommand && !hasPromptOnly {
+			if len(assets) == 0 && len(selectedSkills) == 0 && !hasCommand && !hasPromptOnly {
 				return
 			}
 
@@ -481,8 +466,8 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 					aid, aname, akind, astrat = assets[0].AssetID, assets[0].AssetName, assets[0].AssetKind, assets[0].Strategy
 				} else if hasCommand {
 					aid, aname, akind, astrat = "shell-command", "自定义命令巡检", "command", "command"
-				} else if len(agentDrivenSkills) > 0 {
-					aid, aname, akind, astrat = agentDrivenSkills[0].Slug, agentDrivenSkills[0].Name, "skill", "skill:"+agentDrivenSkills[0].Slug
+				} else if len(selectedSkills) > 0 {
+					aid, aname, akind, astrat = selectedSkills[0].Slug, selectedSkills[0].Name, "skill", "skill:"+selectedSkills[0].Slug
 				} else if hasPromptOnly {
 					aid, aname, akind, astrat = "custom-prompt", "提示词巡检", "prompt", "custom_prompt"
 				}
@@ -550,9 +535,6 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 					for _, r := range results {
 						if r.Evidence == nil {
 							r.Evidence = map[string]any{}
-						}
-						if slug := skillByStrategy[r.Strategy]; slug != "" {
-							r.Evidence["skill_slug"] = slug
 						}
 						artFmt, artMd, artJSON := buildBuiltinStrategyArtifact(r)
 						item := monitorRunItemRecord{
@@ -630,14 +612,20 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 			}
 
 			if hasCommand {
-				item := h.runCommandInspection(ctx, plan.Auth, t, runID, plan.Command, plan.Prompt, agentDrivenSkills)
+				item := h.runCommandInspection(ctx, plan.Auth, t, runID, plan.Command, plan.Prompt, selectedSkills)
 				mu.Lock()
 				allItems = append(allItems, item)
 				mu.Unlock()
 			} else {
-				// Execute agent-driven custom & system AI Skills sequentially per target.
-				for _, sk := range agentDrivenSkills {
-					item := h.runAgentDrivenSkillInspection(ctx, plan.Auth, t, runID, sk, plan.Prompt)
+				// Dispatch each selected Skill by its package contract: a declared
+				// entrypoint runs its deterministic script, otherwise the AI drives it.
+				for _, sk := range selectedSkills {
+					var item monitorRunItemRecord
+					if resolveSkillDispatchMode(sk, hasCustomAction) == skillExecModeScript {
+						item = h.runSkillScriptInspection(ctx, plan.Auth, t, runID, sk)
+					} else {
+						item = h.runAgentDrivenSkillInspection(ctx, plan.Auth, t, runID, sk, plan.Prompt)
+					}
 					mu.Lock()
 					allItems = append(allItems, item)
 					mu.Unlock()
@@ -906,6 +894,112 @@ func (h *GatewayHub) runCommandInspection(
 
 // runAgentDrivenSkillInspection syncs a Skill to the target Agent's /root/.agent/skills/<slug>/
 // directory and drives it through doops_agent_prompt (or falls back to a bundled Skill script).
+// newSkillRunItem seeds the shared fields of one Skill execution item.
+func newSkillRunItem(runID string, target monitorTargetRef, sk platformSkillRecord, collectorMethod string, started time.Time) monitorRunItemRecord {
+	return monitorRunItemRecord{
+		RunID:           runID,
+		Cluster:         target.Cluster,
+		Instance:        target.Instance,
+		AssetID:         sk.Slug,
+		AssetName:       sk.Name,
+		AssetKind:       "skill",
+		Strategy:        "skill:" + sk.Slug,
+		CollectorMethod: collectorMethod,
+		StartedAtMs:     started.UnixMilli(),
+		Evidence: map[string]any{
+			"skill_slug":  sk.Slug,
+			"skill_scope": sk.Scope,
+			"skill_sha":   sk.SHA256,
+		},
+	}
+}
+
+// markSkillSyncFailure records a fatal Skill-to-Agent sync error on the item.
+func markSkillSyncFailure(item monitorRunItemRecord, target monitorTargetRef, sk platformSkillRecord, started time.Time, err error) monitorRunItemRecord {
+	item.Status = "error"
+	item.Reason = "skill_sync_failed"
+	item.FinishedAtMs = time.Now().UnixMilli()
+	item.DurationMs = time.Since(started).Milliseconds()
+	cleanErr := sanitizeSecretText(err.Error())
+	item.ArtifactFormat = "markdown"
+	item.ArtifactMarkdown = fmt.Sprintf("### Skill 同步失败 (`%s`)\n\n无法将 Skill 同步至目标 `%s/%s`：%s", sk.Slug, target.Cluster, target.Instance, cleanErr)
+	item.Checks = []api.MonitorInspectCheck{{
+		ID: "skill.sync", Name: sk.Name + " · 同步下发", Category: sk.Category,
+		Status: "critical", Value: "同步失败",
+		Detail: "无法将 Skill 同步至目标 Agent：" + cleanErr,
+	}}
+	return item
+}
+
+// skillScriptCommand builds the audited-shell command that runs one Skill
+// entrypoint. The Skill root is resolved at execution time from
+// DOOPS_AGENT_SKILLS_ROOT (default /root/.agent/skills), so tests and non-root
+// deployments share the production code path.
+func skillScriptCommand(slug, entrypoint string, target monitorTargetRef, runID string) string {
+	return strings.Join([]string{
+		`root="${DOOPS_AGENT_SKILLS_ROOT:-/root/.agent/skills}"`,
+		`dir="$root"/` + slug,
+		`export DOOPS_SKILL_DIR="$dir"`,
+		`export DOOPS_SKILL_SLUG=` + shellSingleQuote(slug),
+		`export DOOPS_TARGET_CLUSTER=` + shellSingleQuote(target.Cluster),
+		`export DOOPS_TARGET_INSTANCE=` + shellSingleQuote(target.Instance),
+		`export DOOPS_RUN_ID=` + shellSingleQuote(runID),
+		`cd "$dir"`,
+		`exec sh "$dir"/` + entrypoint,
+	}, " && ")
+}
+
+// runSkillScriptInspection runs a Skill's deterministic entrypoint through the
+// audited doops_shell tool after syncing the package to the target Agent.
+func (h *GatewayHub) runSkillScriptInspection(
+	ctx context.Context,
+	auth TokenAuth,
+	target monitorTargetRef,
+	runID string,
+	sk platformSkillRecord,
+) monitorRunItemRecord {
+	started := time.Now()
+	item := newSkillRunItem(runID, target, sk, "skill_script", started)
+	entrypoint := sk.Entrypoint
+	if entrypoint == "" {
+		entrypoint = findSkillExecutableScript(sk)
+	}
+	item.Evidence["entrypoint"] = entrypoint
+	item.Evidence["exec_mode"] = resolveSkillExecMode(sk.SkillMD, entrypoint)
+
+	if err := h.syncOneSkillToAgent(ctx, auth, target, sk); err != nil {
+		return markSkillSyncFailure(item, target, sk, started, err)
+	}
+	item.Evidence["synced"] = true
+
+	callCtx, cancel := context.WithTimeout(contextWithInternalAuditAuth(ctx, auth), 90*time.Second)
+	defer cancel()
+	rawOut, err := h.RunInternalToolCall(callCtx, target.Cluster, target.Instance, "doops_shell", map[string]any{
+		"session_id": "skill-script-" + runID + "-" + sk.Slug,
+		"command":    skillScriptCommand(sk.Slug, entrypoint, target, runID),
+	})
+	item.FinishedAtMs = time.Now().UnixMilli()
+	item.DurationMs = time.Since(started).Milliseconds()
+	cleaned := stripShellCompletionSuffix(rawOut)
+	parsed := extractInspectionArtifact(cleaned, sk.Name, sk.Category)
+	item.ArtifactFormat = parsed.Format
+	item.ArtifactMarkdown = parsed.Markdown
+	item.ArtifactJSON = parsed.JSON
+	item.RawOutput = parsed.Raw
+	item.Checks = parsed.Checks
+	item.Status = parsed.Status
+	if err != nil {
+		item.Status = "critical"
+		item.Reason = "skill_script_failed"
+		item.Checks = []api.MonitorInspectCheck{{
+			ID: "skill.script", Name: sk.Name, Category: sk.Category,
+			Status: "critical", Value: "脚本执行失败",
+			Detail: trimTail(sanitizeSecretText(err.Error()), 240),
+		}}
+	}
+	return item
+}
+
 func (h *GatewayHub) runAgentDrivenSkillInspection(
 	ctx context.Context,
 	auth TokenAuth,
@@ -915,40 +1009,13 @@ func (h *GatewayHub) runAgentDrivenSkillInspection(
 	userPrompt string,
 ) monitorRunItemRecord {
 	started := time.Now()
-	item := monitorRunItemRecord{
-		RunID:           runID,
-		Cluster:         target.Cluster,
-		Instance:        target.Instance,
-		AssetID:         sk.Slug,
-		AssetName:       sk.Name,
-		AssetKind:       "skill",
-		Strategy:        "skill:" + sk.Slug,
-		CollectorMethod: "agent_skill",
-		StartedAtMs:     started.UnixMilli(),
-		Evidence: map[string]any{
-			"skill_slug":  sk.Slug,
-			"skill_scope": sk.Scope,
-			"skill_sha":   sk.SHA256,
-		},
-	}
+	item := newSkillRunItem(runID, target, sk, "agent_skill", started)
 	if userPrompt != "" {
 		item.Evidence["prompt"] = trimTail(sanitizeSecretText(userPrompt), 1024)
 	}
 
 	if err := h.syncOneSkillToAgent(ctx, auth, target, sk); err != nil {
-		item.Status = "error"
-		item.Reason = "skill_sync_failed"
-		item.FinishedAtMs = time.Now().UnixMilli()
-		item.DurationMs = time.Since(started).Milliseconds()
-		cleanErr := sanitizeSecretText(err.Error())
-		item.ArtifactFormat = "markdown"
-		item.ArtifactMarkdown = fmt.Sprintf("### Skill 同步失败 (`%s`)\n\n无法将 Skill 同步至目标 `%s/%s`：%s", sk.Slug, target.Cluster, target.Instance, cleanErr)
-		item.Checks = []api.MonitorInspectCheck{{
-			ID: "skill.sync", Name: sk.Name + " · 同步下发", Category: sk.Category,
-			Status: "critical", Value: "同步失败",
-			Detail: "无法将 Skill 同步至目标 Agent：" + cleanErr,
-		}}
-		return item
+		return markSkillSyncFailure(item, target, sk, started, err)
 	}
 	item.Evidence["synced"] = true
 
@@ -966,7 +1033,7 @@ func (h *GatewayHub) runAgentDrivenSkillInspection(
 		// If the Skill ships an executable script (scripts/inspect.sh or scripts/run.sh),
 		// run it directly through audited doops_shell so script-backed Skills work even without an LLM key.
 		if scriptRel := findSkillExecutableScript(sk); scriptRel != "" {
-			scriptCmd := fmt.Sprintf("sh /root/.agent/skills/%s/%s", sk.Slug, scriptRel)
+			scriptCmd := skillScriptCommand(sk.Slug, scriptRel, target, runID)
 			shCtx, shCancel := context.WithTimeout(contextWithInternalAuditAuth(ctx, auth), 90*time.Second)
 			shOut, shErr := h.RunInternalToolCall(shCtx, target.Cluster, target.Instance, "doops_shell", map[string]any{
 				"session_id": "skill-script-" + runID + "-" + sk.Slug,
