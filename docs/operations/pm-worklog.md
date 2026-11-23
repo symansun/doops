@@ -103,3 +103,12 @@
 - **O-1（open item，未决）**：主工作区存在未跟踪 `backend/agent/internal/server/dbg_test.go`（47 行，`TestDebugPurgeCutoff` + `openCredentialTestStore`，凭证审计清理的调试残留），非本轮任何会话声明所有；不删、不提交，待确认归属后清理，已记此处避免被误当成品入库。
 - 并发：SF-13、SF-05、QA-02、INT-06、SF-14 = 5 个在跑，integrator-gm 空闲。
 
+
+## 02:04 SF-13 闭环 · 派 INT-07（真执行链路）· 记能力缺口 SB-02 与安全决策 D8
+
+- **SF-13 完成**（dev-sf-01，`3e66d588` 8 文件 +41/−112，`0fdab05f` 台账）。删死码不留 stub：`monitor_artifact.go:246-336` `buildBuiltinStrategyArtifact`（SF-09 后无调用者）、`backend/agent/api/mcp.go` 的 `MonitorInspectParams/MonitorInspectResponse`（`doops_monitor_inspect` 已随 `monitor_engine_agent.go` 下线）。`strategies_json` 只加注释不删列（删列会连带改 `gateway_store_schema.go` SQL 本体与 testdata，越界），并在 `GATEWAY_MYSQL_MIGRATION_PLAN.md` 新增「遗留列清单」。反向实验：映射表塞假 slug → `FAIL monitor_engine_test.go:256: unexpected legacy mapping` / `:278 ... not a builtin Skill package`。测试 `ok 78.063s`（共享树）/ `ok 80.020s`（干净树）。披露越界：另改了 `backend/docs/DOOPS_API_GUIDE.md`（:1235/:1240 仍描述已下线 `doops_monitor_inspect`），判为同批文档修复，保留。
+- **能力缺口（已入 spec §2.4.1，owner skill-dev-01）→ backlog 新任务 SB-02**：旧采集器有、现 Skill 包没有的两项能力——`host.disk_io`（磁盘 I/O 与延迟）、`k8s.metrics`（metrics-server 用量）。SF-09 删了 24 个采集函数后这两项**能力真的丢了**，不是文档问题。SB-02 必须补进对应包（`inspect-vm-host`、`inspect-k8s-cluster`）而不是改文档；补之前先按 spec §2.4.1 核实旧实现字段（`git show 0226da5a^:backend/agent/internal/server/monitor_engine_agent.go` 的 check ID：vm_host 7、ssh_host 5、k8s_cluster 6、container_runtime 2、app_service 5、database_service 2）。**SB-02 等 SF-14 让出 `testdata/skills_builtin_verify/**` 后开工**（R75 同片文件）。
+- **INT-07 派 integrator-gm**：`monitor_engine_test.go` 的 `monitorEngineFixture` 已有真 e2e 骨架（hub 路由 + `inventoryTestAgent` + `f.http`），但内置 Skill 包的 `scripts/inspect.sh` **从未被后端流水线执行过**——脚本正确性由 verify.sh 单独验、产物落盘与指标桥接由 Go 单测用构造 payload 验，两段之间无接口证明。任务：新增 `skills_builtin_e2e_test.go`，从 `SKILL.md` frontmatter 取 entrypoint（不硬编码），docker（debian:12）与本机 sh 双路径且打印所用路径，断言 `artifact_dir`/`artifact_sha256`/`artifact_bytes` 与实测一致、`metrics[]` 落 `inspection_metric_points` 并能从 `/v1/monitor/metrics` 读回、连跑两次 `previous_run_id`+`metric_deltas`；反向实验两组（entrypoint 改不存在必须非 pass、脚本输出非法 JSON 必须被拒）。禁碰 `skills_builtin/**` 与 `ci.yml`（SF-14 占用）。
+- **D8（新决策待定，入 pending-decisions）**：ssh_host 能力缺的是"平台 AI 可见的受管 SSH 通道"——`StructuredSSH` 不在 AI 可见白名单（`tool_registry.go:45`），属安全边界，不能顺手放宽。留给用户拍板：是保持"AI 永不直连 SSH、只能走 Skill 包 + 平台已授权通道"，还是新开受管通道面向 AI 开放（需单独威胁建模）。
+- 并发 5：SF-05、QA-02、INT-06、SF-14、INT-07。
+
