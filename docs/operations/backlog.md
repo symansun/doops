@@ -13,7 +13,6 @@
 | INT-04 | MySQL 迁移覆盖率补齐：`platform_skills`/`platform_mcp_servers` 纳入导出与原生 DDL，parity 改全等断言 | integrator-gm | `testdata/gateway-sqlite-schema.sql`、`gateway_mysql_schema*.go`、`gateway_mysql_copy*.go`、`GATEWAY_MYSQL_MIGRATION_PLAN.md` | 2026-11-24 01:10 | 运行中 |
 | INT-02 | Agent 资源同步移植（**隔离 /tmp 目录**解冲突，产出 `rescue/agent-resource-sync-v2`） | integrator-ars | 隔离目录，不动主工作区 | 2026-11-24 00:49 | 运行中 |
 | SF-02 | 移除 `builtin_strategy`/`strategy_id` 双轨（含 QA 缺陷 D9） | dev-sf-01 | `monitor_engine_*.go`、`skills_registry.go`、`skills_builtin_packages.go` | 2026-11-24 00:50 | 运行中 |
-| SF-07 | 修 QA-01 缺陷 D1/D2/D3/D4/D5/D7/D8/D10（skills_builtin 内） | skill-dev-01 | `backend/agent/internal/server/skills_builtin/**`（fixtures 需移出嵌入目录） | 2026-11-24 00:57 | 随 SB-01 一并做 |
 
 ## 待办（排队，等前置合入）
 
@@ -39,6 +38,7 @@
 | QA-01 | 内置巡检 Skill 包基线缺陷实测（D1–D10，含 D4/D9 高危） | `7beb4679` | `docs/reviews/2026-11-24-skill-package-baseline.md` |
 | INT-01 | Gateway MySQL 迁移合入 main（合并 801a73e6 + golden 断言按真实值收紧 + docker 真迁移演练） | `801a73e6` / 证据 `8cf75d87` | 31 子用例全绿；遗留 2 缺口转 INT-04 |
 | SF-03 | 巡检产物 File-First 落盘（4 索引列 + 透明回读 + 清理删盘） | `daada95c` | 5 测试绿；256 KiB 按每文件口径（见 D4） |
+| SF-07 | 修 QA-01 缺陷 D1/D2/D3/D4/D5/D7/D8/D10（skills_builtin + verify 静态契约） | `f00e01bf` / `adb1286c` / `fe65de7c` / `cf20d2bb` / `9a91baff` / 本批 | SB-01 报告（模板 A）；D9 归 SF-02 |
 
 ## 不派
 
