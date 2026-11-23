@@ -329,3 +329,409 @@ var (
 	gatewayMySQLNotNull       = regexp.MustCompile("(?i)\\bNOT\\s+NULL\\b")
 	gatewayMySQLHasDefault    = regexp.MustCompile("(?i)\\bDEFAULT\\b")
 )
+
+// --- INT-14: unique key parity between the frozen export and the native DDL ---
+
+// TestGatewayMySQLUniqueKeysMatchExport pins every unique key of the frozen
+// SQLite export to the native MySQL DDL, and pins the three translations MySQL
+// needs to stay faithful: the TEXT scope_json key becomes SHA2(scope_json, 256)
+// rather than a prefix, the two partial indexes become IF(..., col, NULL) parts,
+// and the catalog identity gains LENGTH-prefixed parts so the concatenation is
+// injective. A missing key makes ON DUPLICATE KEY UPDATE never fire; a key that
+// is close but not equal (a prefix, a plain column instead of IF(...)) merges
+// rows SQLite keeps apart. Both failures name the table and the key.
+func TestGatewayMySQLUniqueKeysMatchExport(t *testing.T) {
+	tables, exported := gatewayMySQLTestExportUniqueKeys(t)
+	declared := gatewayMySQLTestDDLUniqueKeys(t, tables)
+	if len(exported) == 0 {
+		t.Fatal("the frozen export declares no unique key, so this guard would be vacuous")
+	}
+	used := make([]bool, len(declared))
+	seen := make(map[string]bool, len(exported))
+	excluded := 0
+	for _, key := range exported {
+		identity := key.table + "|" + key.identity()
+		seen[identity] = true
+		if reason, ok := gatewayMySQLTestUniqueKeyExclusions[identity]; ok {
+			excluded++
+			t.Logf("%s is enforced by a trigger instead of an index: %s", key.describe(), reason)
+			continue
+		}
+		wanted, translated := gatewayMySQLTestUniqueKeyTranslations[identity]
+		matched := -1
+		for i, candidate := range declared {
+			if used[i] || candidate.table != key.table {
+				continue
+			}
+			if translated {
+				if candidate.hasExpression && gatewayMySQLTestNormalizeSQLPart(candidate.partsText()) == gatewayMySQLTestNormalizeSQLPart(wanted) {
+					matched = i
+					break
+				}
+				continue
+			}
+			if !candidate.hasExpression && gatewayMySQLTestColumnsEqualOrdered(candidate.parts, key.parts) {
+				matched = i
+				break
+			}
+		}
+		if matched < 0 {
+			if translated {
+				t.Fatalf("%s: the native MySQL DDL must declare a unique key over (%s), and the translation says exactly (%s); %s declares %v", identity, key.partsText(), wanted, key.table, gatewayMySQLTestDDLKeyNames(declared, key.table))
+			}
+			t.Fatalf("%s: the native MySQL DDL declares no unique key over (%s); add it to backend/agent/internal/server/gateway_mysql_schema.sql, or to gatewayMySQLTestUniqueKeyTranslations when MySQL cannot express it literally", identity, key.partsText())
+		}
+		used[matched] = true
+	}
+	for i, key := range declared {
+		if used[i] {
+			continue
+		}
+		t.Fatalf("%s: the native MySQL DDL declares a unique key the frozen SQLite export does not; mirror it in backend/agent/internal/server/testdata/gateway-sqlite-schema.sql or drop it from the DDL", key.describe())
+	}
+	if len(declared) != len(exported)-excluded {
+		t.Fatalf("the DDL declares %d unique keys and the export declares %d minus %d trigger-enforced key(s); the two sides drifted apart", len(declared), len(exported), excluded)
+	}
+	for identity := range gatewayMySQLTestUniqueKeyTranslations {
+		if !seen[identity] {
+			t.Fatalf("gatewayMySQLTestUniqueKeyTranslations names %s, which the frozen export no longer declares; drop the stale translation", identity)
+		}
+	}
+	for identity := range gatewayMySQLTestUniqueKeyExclusions {
+		if !seen[identity] {
+			t.Fatalf("gatewayMySQLTestUniqueKeyExclusions names %s, which the frozen export no longer declares; drop the stale exclusion", identity)
+		}
+	}
+	t.Logf("matched %d of %d exported unique keys, %d enforced by triggers", len(declared), len(exported), excluded)
+}
+
+// gatewayMySQLTestUniqueKeyTranslations maps the SQLite unique keys that MySQL
+// cannot declare literally to the exact index parts the native DDL uses. Both
+// sides are normalized with gatewayMySQLTestNormalizeSQLPart, so whitespace and
+// identifier quoting do not matter while the expression itself must match:
+// swapping SHA2(scope_json, 256) for a 191-character prefix, or IF(state='open',
+// series_id, NULL) for a bare series_id, changes the key's meaning and fails.
+var gatewayMySQLTestUniqueKeyTranslations = map[string]string{
+	"credential_grants|(credential_id,grantee_id,scope_json)": "credential_id, grantee_id, (SHA2(scope_json, 256))",
+	"asset_monitor_alerts|asset_monitor_one_open":             "(IF(state='open', series_id, NULL))",
+	"credential_versions|idx_credential_versions_one_active":  "(IF(state='active', credential_id, NULL))",
+	"inventory_resource_catalog|catalog_bound_identity":       "(IF(cluster<>'', CONCAT(LENGTH(kind), ':', kind, LENGTH(cluster), ':', cluster, LENGTH(instance), ':', instance, identity_key), NULL))",
+	"inventory_resource_catalog|catalog_pending_identity":     "(IF(cluster='', CONCAT(LENGTH(kind), ':', kind, LENGTH(created_by), ':', created_by, identity_key), NULL))",
+}
+
+// gatewayMySQLTestUniqueKeyExclusions lists the SQLite unique keys the DDL
+// deliberately does not declare, with the reason MySQL cannot express them as
+// an index without changing their meaning.
+var gatewayMySQLTestUniqueKeyExclusions = map[string]string{
+	"inspection_runs|inspection_cycle": "due is TEXT, so a MySQL unique key would need a prefix and a prefix would merge distinct due values; the native DDL enforces the key with the inspection_cycle_insert and inspection_cycle_update triggers",
+}
+
+type gatewayMySQLUniqueKey struct {
+	table         string
+	name          string
+	parts         []string
+	hasExpression bool
+	where         string
+}
+
+func (key gatewayMySQLUniqueKey) identity() string {
+	if key.name != "" {
+		return key.name
+	}
+	return "(" + strings.Join(key.parts, ",") + ")"
+}
+
+func (key gatewayMySQLUniqueKey) partsText() string {
+	return strings.Join(key.parts, ", ")
+}
+
+func (key gatewayMySQLUniqueKey) describe() string {
+	text := key.table + " " + key.identity() + " (" + key.partsText() + ")"
+	if key.where != "" {
+		text += " WHERE " + key.where
+	}
+	if key.hasExpression {
+		text += " [functional]"
+	}
+	return text
+}
+
+func gatewayMySQLTestDDLKeyNames(keys []gatewayMySQLUniqueKey, table string) []string {
+	var names []string
+	for _, key := range keys {
+		if key.table == table {
+			names = append(names, key.identity())
+		}
+	}
+	return names
+}
+
+// gatewayMySQLTestStripSQLComments drops the -- comment lines the frozen export
+// carries. Some of them sit in the same ';' segment as the CREATE statement that
+// follows, so a loader that only looks at the first statement of a segment
+// silently loses those indexes.
+func gatewayMySQLTestStripSQLComments(text string) string {
+	lines := strings.Split(text, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// gatewayMySQLTestExportUniqueKeys rebuilds the frozen export in memory and
+// returns its tables plus every UNIQUE index in declaration order. The export is
+// a statement list, not a schema dump, so tables and triggers are applied before
+// the indexes that may reference them.
+func gatewayMySQLTestExportUniqueKeys(t *testing.T) ([]string, []gatewayMySQLUniqueKey) {
+	t.Helper()
+	var tables, indexes []string
+	for _, statement := range strings.Split(gatewayMySQLTestStripSQLComments(gatewayMySQLTestExportText(t)), ";") {
+		statement = strings.TrimSpace(statement)
+		upper := strings.ToUpper(statement)
+		switch {
+		case strings.HasPrefix(upper, "CREATE TABLE"):
+			tables = append(tables, statement)
+		case strings.HasPrefix(upper, "CREATE UNIQUE INDEX"):
+			indexes = append(indexes, statement)
+		}
+	}
+	if len(tables) == 0 {
+		t.Fatal("the frozen export carries no CREATE TABLE statement")
+	}
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open the in-memory SQLite export: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	load := func(kind string, statements []string) {
+		pending := statements
+		for len(pending) > 0 {
+			var failed []string
+			var last error
+			for _, statement := range pending {
+				if _, err := db.Exec(statement); err != nil {
+					failed = append(failed, statement)
+					last = err
+					continue
+				}
+			}
+			if len(failed) == len(pending) {
+				t.Fatalf("load %d %s statement(s) from the frozen export: %v", len(pending), kind, last)
+			}
+			pending = failed
+		}
+	}
+	load("table", tables)
+	load("unique index", indexes)
+	names := gatewayMySQLExportTables(t, db)
+	var keys []gatewayMySQLUniqueKey
+	for _, table := range names {
+		keys = append(keys, gatewayMySQLTestSQLiteUniqueKeys(t, db, table)...)
+	}
+	return names, keys
+}
+
+func gatewayMySQLTestSQLiteUniqueKeys(t *testing.T, db *sql.DB, table string) []gatewayMySQLUniqueKey {
+	t.Helper()
+	rows, err := db.Query("PRAGMA index_list('" + strings.ReplaceAll(table, "'", "''") + "')")
+	if err != nil {
+		t.Fatalf("list the indexes of %s in the frozen export: %v", table, err)
+	}
+	headers, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("read the index_list columns of %s: %v", table, err)
+	}
+	if len(headers) < 4 {
+		t.Fatalf("PRAGMA index_list(%s) returned %d columns, expected at least 4", table, len(headers))
+	}
+	type listedIndex struct {
+		name   string
+		unique bool
+		origin string
+	}
+	var listed []listedIndex
+	for rows.Next() {
+		values := make([]sql.RawBytes, len(headers))
+		pointers := make([]any, len(headers))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			t.Fatalf("scan the index_list row of %s: %v", table, err)
+		}
+		// PRAGMA index_list: seq, name, unique, origin, partial.
+		listed = append(listed, listedIndex{name: string(values[1]), unique: string(values[2]) == "1", origin: strings.ToLower(string(values[3]))})
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("list the indexes of %s in the frozen export: %v", table, err)
+	}
+	rows.Close()
+	var keys []gatewayMySQLUniqueKey
+	for _, index := range listed {
+		if !index.unique || (index.origin != "c" && index.origin != "u") {
+			continue // not unique, or the primary key
+		}
+		key := gatewayMySQLUniqueKey{table: table, parts: gatewayMySQLTestSQLiteIndexColumns(t, db, index.name)}
+		if index.origin == "u" {
+			// An inline UNIQUE column constraint: the autoindex has no SQL of its own.
+			keys = append(keys, key)
+			continue
+		}
+		key.name = index.name
+		for _, part := range key.parts {
+			if !gatewayMySQLTestPlainColumn(part) {
+				key.hasExpression = true
+			}
+		}
+		key.where = gatewayMySQLTestSQLiteIndexWhere(t, db, index.name)
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func gatewayMySQLTestSQLiteIndexColumns(t *testing.T, db *sql.DB, index string) []string {
+	t.Helper()
+	rows, err := db.Query("PRAGMA index_info('" + strings.ReplaceAll(index, "'", "''") + "')")
+	if err != nil {
+		t.Fatalf("read the columns of index %s: %v", index, err)
+	}
+	defer rows.Close()
+	headers, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("read the index_info columns of %s: %v", index, err)
+	}
+	if len(headers) < 3 {
+		t.Fatalf("PRAGMA index_info(%s) returned %d columns, expected at least 3", index, len(headers))
+	}
+	var columns []string
+	for rows.Next() {
+		values := make([]sql.RawBytes, len(headers))
+		pointers := make([]any, len(headers))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			t.Fatalf("scan the index_info row of %s: %v", index, err)
+		}
+		if values[2] == nil {
+			// An expression part: SQLite reports cid -2 and a NULL name. Keep a
+			// placeholder so the key is still compared as functional, and let the
+			// translation or exclusion table decide what the DDL must declare.
+			columns = append(columns, "(expression)")
+			continue
+		}
+		columns = append(columns, string(values[2]))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read the columns of index %s: %v", index, err)
+	}
+	return columns
+}
+
+func gatewayMySQLTestSQLiteIndexWhere(t *testing.T, db *sql.DB, index string) string {
+	t.Helper()
+	var statement sql.NullString
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?", index).Scan(&statement); err != nil {
+		t.Fatalf("read the SQL of index %s: %v", index, err)
+	}
+	normalized := gatewayMySQLTestNormalizeSQLPart(statement.String)
+	cut := strings.Index(normalized, " WHERE ")
+	if cut < 0 {
+		return ""
+	}
+	return strings.TrimSpace(normalized[cut+len(" WHERE "):])
+}
+
+// gatewayMySQLTestDDLUniqueKeys parses the UNIQUE KEY items and the inline
+// UNIQUE column constraints of the native DDL.
+func gatewayMySQLTestDDLUniqueKeys(t *testing.T, tables []string) []gatewayMySQLUniqueKey {
+	t.Helper()
+	var keys []gatewayMySQLUniqueKey
+	for _, table := range tables {
+		for _, item := range gatewayMySQLTopLevelItems(gatewayMySQLDDLBody(t, gatewayMySQLSchemaSQL, table)) {
+			item = strings.TrimSpace(item)
+			upper := strings.ToUpper(item)
+			switch {
+			case strings.HasPrefix(upper, "UNIQUE KEY "):
+				rest := item[len("UNIQUE KEY "):]
+				open := strings.Index(rest, "(")
+				if open < 0 || !strings.HasSuffix(rest, ")") {
+					t.Fatalf("%s: cannot parse the unique key clause %q", table, item)
+				}
+				key := gatewayMySQLUniqueKey{table: table, name: strings.TrimSpace(rest[:open]), parts: gatewayMySQLTestDDLKeyParts(rest[open+1 : len(rest)-1])}
+				for _, part := range key.parts {
+					if !gatewayMySQLTestPlainColumn(part) {
+						key.hasExpression = true
+					}
+				}
+				keys = append(keys, key)
+			case strings.HasSuffix(upper, " UNIQUE") && !strings.HasPrefix(upper, "UNIQUE"):
+				fields := strings.Fields(item)
+				if len(fields) < 2 {
+					continue
+				}
+				keys = append(keys, gatewayMySQLUniqueKey{table: table, parts: []string{gatewayMySQLTestNormalizeSQLPart(fields[0])}})
+			}
+		}
+	}
+	return keys
+}
+
+func gatewayMySQLTestDDLKeyParts(inner string) []string {
+	var parts []string
+	for _, item := range gatewayMySQLTopLevelItems(inner) {
+		if normalized := gatewayMySQLTestNormalizeSQLPart(item); normalized != "" {
+			parts = append(parts, normalized)
+		}
+	}
+	return parts
+}
+
+// gatewayMySQLTestDDLUniqueKeyClause returns the raw UNIQUE KEY clause so a test
+// can re-add a key it dropped.
+func gatewayMySQLTestDDLUniqueKeyClause(t *testing.T, table, name string) (string, bool) {
+	t.Helper()
+	for _, item := range gatewayMySQLTopLevelItems(gatewayMySQLDDLBody(t, gatewayMySQLSchemaSQL, table)) {
+		item = strings.TrimSpace(item)
+		if strings.HasPrefix(item, "UNIQUE KEY "+name+" ") {
+			return item, true
+		}
+	}
+	return "", false
+}
+
+func gatewayMySQLTestNormalizeSQLPart(part string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(part, "\x60", "")), " ")
+}
+
+func gatewayMySQLTestPlainColumn(part string) bool {
+	if part == "" || strings.HasPrefix(part, "(") {
+		return false
+	}
+	for i, r := range part {
+		switch {
+		case r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+		case r >= '0' && r <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func gatewayMySQLTestColumnsEqualOrdered(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if gatewayMySQLTestNormalizeSQLPart(got[i]) != gatewayMySQLTestNormalizeSQLPart(want[i]) {
+			return false
+		}
+	}
+	return true
+}

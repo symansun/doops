@@ -259,7 +259,10 @@ func openGatewayMySQLRuntimeTestDB(t *testing.T) *sql.DB {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := admin.PingContext(ctx); err != nil {
-		t.Skipf("disposable MySQL 8.4 server is unavailable: %v", err)
+		// INT-14: a configured but unreachable server must fail, not skip. A skip
+		// here once let a half-installed container report green while no statement
+		// ever reached MySQL.
+		t.Fatalf("the disposable MySQL 8.4 server at %s is unavailable: %v (unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test)", addr, err)
 	}
 	database := "gateway_runtime_" + strings.ToLower(randomHex(8))
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE `"+database+"`"); err != nil {
@@ -807,58 +810,6 @@ func gatewayMySQLTestDropTriggers(t *testing.T, ctx context.Context, db *sql.DB)
 	return len(names)
 }
 
-// gatewayMySQLTestAddMissingUniqueKeys creates the unique keys the SQLite
-// runtime declares but the native DDL does not, so a conflicting insert can
-// actually reach ON DUPLICATE KEY UPDATE. Returns the statements it ran.
-func gatewayMySQLTestAddMissingUniqueKeys(t *testing.T, ctx context.Context, db *sql.DB, columns map[string]map[string]gatewayMySQLTestColumn) ([]string, []string) {
-	t.Helper()
-	wanted, _ := gatewayMySQLTestUniqueKeys(t)
-	present := gatewayMySQLTestTableUniqueKeys(t, ctx, db)
-	var created, skipped []string
-	for table, keys := range wanted {
-		if len(columns[table]) == 0 {
-			continue
-		}
-		for index, key := range keys {
-			matched := false
-			for _, existing := range present[table] {
-				if gatewayMySQLUpsertSameColumns(existing, key) {
-					matched = true
-				}
-			}
-			if matched {
-				continue
-			}
-			parts := make([]string, 0, len(key))
-			representable := true
-			for _, column := range key {
-				metadata, found := columns[table][column]
-				if !found {
-					representable = false
-					break
-				}
-				part := gatewayMySQLIdentifier(column)
-				switch metadata.dataType {
-				case "text", "tinytext", "mediumtext", "longtext", "blob", "tinyblob", "mediumblob", "longblob":
-					part += "(191)"
-				}
-				parts = append(parts, part)
-			}
-			if !representable {
-				skipped = append(skipped, table+"("+strings.Join(key, ",")+")")
-				continue
-			}
-			statement := "CREATE UNIQUE INDEX " + gatewayMySQLIdentifier("doops_rehearsal_"+table+"_"+strconv.Itoa(index)) +
-				" ON " + gatewayMySQLIdentifier(table) + " (" + strings.Join(parts, ", ") + ")"
-			if _, err := db.ExecContext(ctx, statement); err != nil {
-				t.Fatalf("create the missing unique key %v on %s: %v\n%s", key, table, err, statement)
-			}
-			created = append(created, table+"("+strings.Join(key, ",")+")")
-		}
-	}
-	return created, skipped
-}
-
 func gatewayMySQLTestTableColumns(t *testing.T, ctx context.Context, db *sql.DB) map[string]map[string]gatewayMySQLTestColumn {
 	t.Helper()
 	rows, err := db.QueryContext(ctx, "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()")
@@ -891,37 +842,70 @@ func gatewayMySQLTestTableColumns(t *testing.T, ctx context.Context, db *sql.DB)
 	return columns
 }
 
+// gatewayMySQLTestUniqueKeyConflictColumns declares the columns that the
+// functional unique keys actually compare. The native DDL translates the SQLite
+// partial indexes into IF(...) index parts and the TEXT scope_json key into a
+// SHA2(...) part; MySQL reports those parts with COLUMN_NAME NULL, so they
+// cannot be read back from information_schema. The fixtures pin exactly these
+// columns, which keeps the conflicting row reachable; a key the DDL loses now
+// fails the upsert test instead of being created by a test helper (INT-14).
+var gatewayMySQLTestUniqueKeyConflictColumns = map[string][]string{
+	"credential_grants_identity":           {"credential_id", "grantee_id", "scope_json"},
+	"credential_verifications_identity":    {"version_id", "grant_id", "use", "context_key"},
+	"credential_materializations_identity": {"version_id", "grant_id", "use", "context_key"},
+	"asset_monitor_one_open":               {"series_id", "state"},
+	"catalog_bound_identity":               {"kind", "cluster", "instance", "identity_key"},
+	"catalog_pending_identity":             {"kind", "cluster", "created_by", "identity_key"},
+	"idx_credential_versions_one_active":   {"credential_id", "state"},
+}
+
 func gatewayMySQLTestTableUniqueKeys(t *testing.T, ctx context.Context, db *sql.DB) map[string][][]string {
 	t.Helper()
-	rows, err := db.QueryContext(ctx, "SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND NON_UNIQUE = 0 ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX")
+	rows, err := db.QueryContext(ctx, "SELECT TABLE_NAME, INDEX_NAME, COALESCE(COLUMN_NAME, ''), COALESCE(EXPRESSION, '') FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND NON_UNIQUE = 0 ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	keys := make(map[string][][]string)
+	type uniqueKey struct {
+		table      string
+		index      string
+		columns    []string
+		expression string
+	}
+	var ordered []uniqueKey
 	for rows.Next() {
-		var table, index, column string
-		if err := rows.Scan(&table, &index, &column); err != nil {
+		var table, index, column, expression string
+		if err := rows.Scan(&table, &index, &column, &expression); err != nil {
 			t.Fatal(err)
 		}
-		keys[table] = append(keys[table], []string{index, column})
+		position := -1
+		for i := range ordered {
+			if ordered[i].table == table && ordered[i].index == index {
+				position = i
+				break
+			}
+		}
+		if position < 0 {
+			ordered = append(ordered, uniqueKey{table: table, index: index, expression: expression})
+			position = len(ordered) - 1
+		}
+		if column != "" {
+			ordered[position].columns = append(ordered[position].columns, column)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	grouped := make(map[string][][]string, len(keys))
-	for table, pairs := range keys {
-		byIndex := make(map[string][]string)
-		var names []string
-		for _, pair := range pairs {
-			if byIndex[pair[0]] == nil {
-				names = append(names, pair[0])
-			}
-			byIndex[pair[0]] = append(byIndex[pair[0]], pair[1])
+	grouped := make(map[string][][]string)
+	for _, key := range ordered {
+		if columns, ok := gatewayMySQLTestUniqueKeyConflictColumns[key.index]; ok {
+			grouped[key.table] = append(grouped[key.table], columns)
+			continue
 		}
-		for _, name := range names {
-			grouped[table] = append(grouped[table], byIndex[name])
+		if key.expression != "" {
+			t.Fatalf("%s.%s is a functional unique key and gatewayMySQLTestUniqueKeyConflictColumns does not describe the columns it compares (%s)", key.table, key.index, key.expression)
 		}
+		grouped[key.table] = append(grouped[key.table], key.columns)
 	}
 	return grouped
 }
@@ -1280,7 +1264,10 @@ func gatewayMySQLTestOpenEmpty(t *testing.T) *sql.DB {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := admin.PingContext(ctx); err != nil {
-		t.Skipf("disposable MySQL 8.4 server is unavailable: %v", err)
+		// INT-14: a configured but unreachable server must fail, not skip. A skip
+		// here once let a half-installed container report green while no statement
+		// ever reached MySQL.
+		t.Fatalf("the disposable MySQL 8.4 server at %s is unavailable: %v (unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test)", addr, err)
 	}
 	database := "gateway_upsert_" + strings.ToLower(randomHex(8))
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+gatewayMySQLIdentifier(database)); err != nil {
@@ -1323,15 +1310,10 @@ func TestGatewayMySQLUpsertsExecuteOnMySQL(t *testing.T) {
 		t.Logf("dropped %d triggers: they guard business invariants the generated fixtures cannot satisfy", triggers)
 	}
 	columns := gatewayMySQLTestTableColumns(t, ctx, db)
+	// INT-14: the native DDL now declares every unique key the upsert sites
+	// conflict on, so the rehearsal adds none. A key that goes missing shows up
+	// here as a conflict that never fires, never as a key created on the fly.
 	keys := gatewayMySQLTestTableUniqueKeys(t, ctx, db)
-	created, skipped := gatewayMySQLTestAddMissingUniqueKeys(t, ctx, db, columns)
-	if len(created) > 0 {
-		t.Logf("the native DDL omits %d unique keys the SQLite runtime declares; the rehearsal created them to reach the conflicting row: %v", len(created), created)
-	}
-	if len(skipped) > 0 {
-		t.Logf("the native DDL cannot express %d partial or expression unique keys, which MySQL enforces with triggers instead: %v", len(skipped), skipped)
-	}
-	keys = gatewayMySQLTestTableUniqueKeys(t, ctx, db)
 	sites := gatewayMySQLUpsertSites(t)
 	if len(sites) == 0 {
 		t.Fatal("no gatewayUpsert sites found")
@@ -1469,4 +1451,122 @@ func TestGatewayMySQLUpsertsExecuteOnMySQL(t *testing.T) {
 			t.Logf("verified %d assignments, including an untouched row when the predicate is false", checked)
 		})
 	}
+}
+
+// TestGatewayMySQLUniqueKeysEnforceConflicts proves the six unique keys INT-14
+// added to the native DDL actually reject the duplicates the SQLite runtime
+// relies on. It is the on-server counterpart to
+// TestGatewayMySQLUniqueKeysMatchExport: the parity guard reads declarations, this
+// test writes rows.
+func TestGatewayMySQLUniqueKeysEnforceConflicts(t *testing.T) {
+	db := gatewayMySQLTestOpenEmpty(t)
+	db.SetMaxOpenConns(1)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if _, err := db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0"); err != nil {
+		t.Fatalf("disable foreign key checks: %v", err)
+	}
+	if _, err := installGatewayMySQLSchema(ctx, db); err != nil {
+		t.Fatalf("install the native MySQL schema: %v", err)
+	}
+	// The DDL keeps the SQLite triggers for the invariants it cannot index. Drop
+	// them here so a duplicate reaches the unique key itself; otherwise a SIGNAL
+	// from a trigger would produce the error and the key would go untested.
+	if dropped := gatewayMySQLTestDropTriggers(t, ctx, db); dropped > 0 {
+		t.Logf("dropped %d triggers so the unique keys are what reject the duplicates", dropped)
+	}
+	guarded := [][2]string{
+		{"credential_grants", "credential_grants_identity"},
+		{"credential_verifications", "credential_verifications_identity"},
+		{"credential_materializations", "credential_materializations_identity"},
+		{"credential_versions", "idx_credential_versions_one_active"},
+		{"asset_monitor_alerts", "asset_monitor_one_open"},
+		{"inventory_resource_catalog", "catalog_bound_identity"},
+		{"inventory_resource_catalog", "catalog_pending_identity"},
+	}
+	for _, key := range guarded {
+		if !gatewayMySQLTestIndexExists(t, ctx, db, key[0], key[1]) {
+			t.Fatalf("the native DDL no longer declares unique key %s on %s; without it the ON DUPLICATE KEY UPDATE branch never fires", key[1], key[0])
+		}
+	}
+	t.Run("credential_grants_identity", func(t *testing.T) {
+		// credential_grants_identity is also the index MySQL uses for the
+		// credential_id foreign key, so it cannot be dropped to make room for a
+		// duplicate. Its SHA2(scope_json, 256) part is what the key compares, so
+		// rejecting the duplicate row is the evidence that matters here.
+		const insert = "INSERT INTO credential_grants (id, credential_id, grantee_id, scope_json, state, created_by, created_at, revoked_at) VALUES (?, 'cred-int14', 'user-int14', ?, 'active', 'admin-int14', '2026-11-24T00:00:00Z', '')"
+		if _, err := db.ExecContext(ctx, insert, "grant-a", "{\"target\":\"cluster-a\"}"); err != nil {
+			t.Fatalf("insert the first grant: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, insert, "grant-b", "{\"target\":\"cluster-a\"}"); err == nil || !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			t.Fatalf("a second grant with the same (credential_id, grantee_id, scope_json) must be rejected, got: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, insert, "grant-c", "{\"target\":\"cluster-b\"}"); err != nil {
+			t.Fatalf("a different scope_json must hash differently and be accepted: %v", err)
+		}
+		var rows int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM credential_grants").Scan(&rows); err != nil {
+			t.Fatalf("count the grants: %v", err)
+		}
+		if rows != 2 {
+			t.Fatalf("expected two distinct grants, found %d rows", rows)
+		}
+	})
+	t.Run("asset_monitor_one_open", func(t *testing.T) {
+		const insert = "INSERT INTO asset_monitor_alerts (series_id, opened_ms, threshold, duration_seconds, state) VALUES (1, ?, 90, 300, ?)"
+		if _, err := db.ExecContext(ctx, insert, 1000, "open"); err != nil {
+			t.Fatalf("insert the first open alert: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, insert, 2000, "open"); err == nil || !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			t.Fatalf("a second open alert for the same series must be rejected, got: %v", err)
+		}
+		for _, opened := range []int64{3000, 4000} {
+			if _, err := db.ExecContext(ctx, insert, opened, "recovered"); err != nil {
+				t.Fatalf("a closed alert must not collide with the open one: %v", err)
+			}
+		}
+		var rows int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM asset_monitor_alerts").Scan(&rows); err != nil {
+			t.Fatalf("count the alerts: %v", err)
+		}
+		if rows != 3 {
+			t.Fatalf("expected one open and two recovered alerts, found %d rows", rows)
+		}
+	})
+	t.Run("asset_monitor_one_open_add_fails_on_duplicates", func(t *testing.T) {
+		const insert = "INSERT INTO asset_monitor_alerts (series_id, opened_ms, threshold, duration_seconds, state) VALUES (2, ?, 90, 300, 'open')"
+		clause, ok := gatewayMySQLTestDDLUniqueKeyClause(t, "asset_monitor_alerts", "asset_monitor_one_open")
+		if !ok {
+			t.Fatal("the native DDL no longer declares asset_monitor_one_open")
+		}
+		if _, err := db.ExecContext(ctx, "DROP INDEX asset_monitor_one_open ON asset_monitor_alerts"); err != nil {
+			t.Fatalf("drop the key so the duplicate can be created: %v", err)
+		}
+		for _, opened := range []int64{1000, 2000} {
+			if _, err := db.ExecContext(ctx, insert, opened); err != nil {
+				t.Fatalf("insert an open alert at %d into the keyless table: %v", opened, err)
+			}
+		}
+		if _, err := db.ExecContext(ctx, "ALTER TABLE asset_monitor_alerts ADD "+clause); err == nil || !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			t.Fatalf("adding the key over two open alerts for one series must fail with a duplicate entry error, got: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, "DELETE FROM asset_monitor_alerts WHERE series_id = 2 AND opened_ms = 2000"); err != nil {
+			t.Fatalf("delete the duplicate alert: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, "ALTER TABLE asset_monitor_alerts ADD "+clause); err != nil {
+			t.Fatalf("adding the key after the duplicate is gone must succeed: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, insert, 3000); err == nil || !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			t.Fatalf("the re-added key must reject a second open alert for a series, got: %v", err)
+		}
+	})
+}
+
+func gatewayMySQLTestIndexExists(t *testing.T, ctx context.Context, db *sql.DB, table, index string) bool {
+	t.Helper()
+	var count int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ? AND NON_UNIQUE = 0", table, index).Scan(&count); err != nil {
+		t.Fatalf("read information_schema for %s.%s: %v", table, index, err)
+	}
+	return count > 0
 }

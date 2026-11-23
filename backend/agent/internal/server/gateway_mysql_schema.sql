@@ -805,6 +805,7 @@ CREATE TABLE asset_monitor_alerts (
     duration_seconds BIGINT NOT NULL,
     ended_ms BIGINT,
     state VARCHAR(32) NOT NULL CHECK (state IN ('open', 'recovered', 'interrupted', 'reconfigured')),
+    UNIQUE KEY asset_monitor_one_open ((IF(state='open', series_id, NULL))),
     PRIMARY KEY (series_id, opened_ms),
     FOREIGN KEY (series_id) REFERENCES asset_monitor_series(id)
 ) ENGINE=InnoDB;
@@ -867,7 +868,8 @@ CREATE TABLE credential_versions (
     revoked_at TEXT NOT NULL,
     FOREIGN KEY (credential_id) REFERENCES credentials(id),
     FOREIGN KEY (created_by) REFERENCES users(id),
-    KEY idx_credential_versions_resource (credential_id, created_at(191) DESC)
+    KEY idx_credential_versions_resource (credential_id, created_at(191) DESC),
+    UNIQUE KEY idx_credential_versions_one_active ((IF(state='active', credential_id, NULL)))
 ) ENGINE=InnoDB;
 
 CREATE TABLE credential_grants (
@@ -882,7 +884,8 @@ CREATE TABLE credential_grants (
     FOREIGN KEY (credential_id) REFERENCES credentials(id),
     FOREIGN KEY (grantee_id) REFERENCES users(id),
     FOREIGN KEY (created_by) REFERENCES users(id),
-    KEY idx_credential_grants_authorize (grantee_id, state, credential_id)
+    KEY idx_credential_grants_authorize (grantee_id, state, credential_id),
+    UNIQUE KEY credential_grants_identity (credential_id, grantee_id, (SHA2(scope_json, 256)))
 ) ENGINE=InnoDB;
 
 CREATE TABLE credential_bundles (
@@ -924,7 +927,8 @@ CREATE TABLE credential_materializations (
     FOREIGN KEY (credential_id) REFERENCES credentials(id),
     FOREIGN KEY (version_id) REFERENCES credential_versions(id),
     FOREIGN KEY (grant_id) REFERENCES credential_grants(id),
-    KEY idx_credential_materializations_resource (credential_id, version_id, grant_id, status)
+    KEY idx_credential_materializations_resource (credential_id, version_id, grant_id, status),
+    UNIQUE KEY credential_materializations_identity (version_id, grant_id, `use`, context_key)
 ) ENGINE=InnoDB;
 
 CREATE TABLE credential_verifications (
@@ -941,7 +945,8 @@ CREATE TABLE credential_verifications (
     FOREIGN KEY (credential_id) REFERENCES credentials(id),
     FOREIGN KEY (version_id) REFERENCES credential_versions(id),
     FOREIGN KEY (grant_id) REFERENCES credential_grants(id),
-    KEY idx_credential_verifications_resource (credential_id, version_id, status)
+    KEY idx_credential_verifications_resource (credential_id, version_id, status),
+    UNIQUE KEY credential_verifications_identity (version_id, grant_id, `use`, context_key)
 ) ENGINE=InnoDB;
 
 CREATE TABLE inventory_machine_login_accounts (
@@ -1036,7 +1041,9 @@ CREATE TABLE inventory_resource_catalog (
     environment VARCHAR(64) NOT NULL,
     details TEXT NOT NULL,
     identity_key VARCHAR(191) NOT NULL,
-    revision BIGINT NOT NULL
+    revision BIGINT NOT NULL,
+    UNIQUE KEY catalog_bound_identity ((IF(cluster<>'', CONCAT(LENGTH(kind), ':', kind, LENGTH(cluster), ':', cluster, LENGTH(instance), ':', instance, identity_key), NULL))),
+    UNIQUE KEY catalog_pending_identity ((IF(cluster='', CONCAT(LENGTH(kind), ':', kind, LENGTH(created_by), ':', created_by, identity_key), NULL)))
 ) ENGINE=InnoDB;
 
 CREATE TABLE inventory_agent_assets (
