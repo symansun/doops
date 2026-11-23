@@ -3,8 +3,22 @@
 import type { Session } from "./client"
 import { consoleFetch } from "./network-error.ts"
 import type { ProxyRoute, ProxyRouteBody } from "./proxy-routes"
+import type {
+  SensitiveFilterView,
+  SensitiveRule,
+  SensitiveRuleInput,
+  SensitiveWhitelistEntry,
+  SensitiveWhitelistInput,
+} from "./sensitive-filter"
 
 export type { ProxyRoute, ProxyRouteBody }
+export type {
+  SensitiveFilterView,
+  SensitiveRule,
+  SensitiveRuleInput,
+  SensitiveWhitelistEntry,
+  SensitiveWhitelistInput,
+}
 
 export interface AdminUser {
   id: string
@@ -63,7 +77,14 @@ function headers(s: Session): HeadersInit {
 async function req<T>(s: Session, path: string, init?: RequestInit, expectedStatus?: number): Promise<T> {
   const res = await consoleFetch(`/api/admin/${path}`, { ...init, headers: headers(s) })
   const text = await res.text()
-  const data = text ? JSON.parse(text) : {}
+  // Gateway 的管理接口多数返回 JSON；认证/权限错误和反向代理错误页是纯文本。
+  // 保留纯文本错误，页面才能按 status 给出 401/403 文案，而不是把它当成网络错误。
+  let data: { message?: string; error?: string } = {}
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    data = { error: text.trim().slice(0, 200) }
+  }
   // message 是给页面展示的中文说明；category 保留 Gateway 类别原文，给代理路由页等调用方解析。
   if (!res.ok) {
     throw Object.assign(new Error(data.message || data.error || `请求失败 (${res.status})`), {
@@ -167,6 +188,59 @@ export async function setProxyRoute(s: Session, body: ProxyRouteBody): Promise<P
 export async function deleteProxyRoute(s: Session, id: string): Promise<void> {
   if (s.demo) return (await import("./demo")).demoDeleteProxyRoute(id)
   await req(s, `proxy-routes?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// ---------- 敏感词 ----------
+export async function listSensitiveFilter(s: Session): Promise<SensitiveFilterView> {
+  if (s.demo) return (await import("./demo")).demoListSensitiveFilter()
+  const view = await req<SensitiveFilterView>(s, "sensitive-filter")
+  return { rules: view.rules || [], whitelist: view.whitelist || [] }
+}
+
+export async function addSensitiveRules(
+  s: Session,
+  rules: SensitiveRuleInput[],
+): Promise<{ rules: SensitiveRule[]; skipped: string[] }> {
+  if (s.demo) return (await import("./demo")).demoAddSensitiveRules(rules)
+  const data = await req<{ rules?: SensitiveRule[]; skipped?: string[] }>(s, "sensitive-filter/rules", {
+    method: "POST",
+    body: JSON.stringify({ rules }),
+  })
+  return { rules: data.rules || [], skipped: data.skipped || [] }
+}
+
+export async function setSensitiveRuleEnabled(s: Session, id: string, enabled: boolean): Promise<SensitiveRule> {
+  if (s.demo) return (await import("./demo")).demoSetSensitiveRuleEnabled(id, enabled)
+  return req<SensitiveRule>(s, "sensitive-filter/rules", {
+    method: "PATCH",
+    body: JSON.stringify({ id, enabled }),
+  })
+}
+
+export async function deleteSensitiveRule(s: Session, id: string): Promise<void> {
+  if (s.demo) return (await import("./demo")).demoDeleteSensitiveRule(id)
+  await req(s, `sensitive-filter/rules?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+export async function addSensitiveWhitelist(
+  s: Session,
+  input: SensitiveWhitelistInput,
+): Promise<SensitiveWhitelistEntry> {
+  if (s.demo) return (await import("./demo")).demoAddSensitiveWhitelist(input)
+  return req<SensitiveWhitelistEntry>(s, "sensitive-filter/whitelist", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+export async function deleteSensitiveWhitelist(s: Session, input: SensitiveWhitelistInput): Promise<void> {
+  if (s.demo) return (await import("./demo")).demoDeleteSensitiveWhitelist(input)
+  const query = new URLSearchParams()
+  query.set("kind", input.kind)
+  if (input.user_id) query.set("user_id", input.user_id)
+  if (input.cluster) query.set("cluster", input.cluster)
+  if (input.instance) query.set("instance", input.instance)
+  await req(s, `sensitive-filter/whitelist?${query.toString()}`, { method: "DELETE" })
 }
 
 // ---------- 实例 ----------

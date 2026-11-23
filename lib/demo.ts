@@ -9,6 +9,11 @@ import type {
   AdminInstance,
   ProxyRoute,
   ProxyRouteBody,
+  SensitiveFilterView,
+  SensitiveRule,
+  SensitiveRuleInput,
+  SensitiveWhitelistEntry,
+  SensitiveWhitelistInput,
 } from "./admin"
 
 // 演示模式：内置 mock 数据 + 模拟流式输出，无需连接真实 gateway
@@ -949,6 +954,84 @@ export function demoDeleteProxyRoute(id: string): void {
   const idx = demoProxyRoutes.findIndex((r) => r.id === id)
   if (idx < 0) throw new Error("proxy route not found")
   demoProxyRoutes.splice(idx, 1)
+}
+
+// 演示模式也要保留 Gateway 的错误类别，页面才能复用同一套中文错误文案。
+function demoSensitiveError(category: string, message: string): Error {
+  return Object.assign(new Error(message), { category })
+}
+
+const demoSensitiveRules: SensitiveRule[] = [
+  { id: "sw_demo0000000000000001", text: "rm -rf /", scope: "command", enabled: true, created_at: ago(120), updated_at: ago(120) },
+  { id: "sw_demo0000000000000002", text: "drop database", scope: "command", enabled: true, created_at: ago(96), updated_at: ago(96) },
+  { id: "sw_demo0000000000000003", text: "内部机密", scope: "prompt", enabled: true, created_at: ago(72), updated_at: ago(72) },
+  { id: "sw_demo0000000000000004", text: "canary_example", scope: "all", enabled: false, created_at: ago(48), updated_at: ago(24) },
+]
+const demoSensitiveWhitelist: SensitiveWhitelistEntry[] = [
+  { kind: "user", user_id: "usr_admin01", created_at: ago(72) },
+  { kind: "target", cluster: "prod-cn", instance: "web-02", created_at: ago(48) },
+  { kind: "target", cluster: "staging", created_at: ago(24) },
+]
+
+export function demoListSensitiveFilter(): SensitiveFilterView {
+  return {
+    rules: demoSensitiveRules.map((rule) => ({ ...rule })),
+    whitelist: demoSensitiveWhitelist.map((entry) => ({ ...entry })),
+  }
+}
+export function demoAddSensitiveRules(inputs: SensitiveRuleInput[]): { rules: SensitiveRule[]; skipped: string[] } {
+  const skipped: string[] = []
+  const created: SensitiveRule[] = []
+  for (const input of inputs) {
+    const key = `${input.text.trim().replace(/\s+/g, " ").toLowerCase()}\u0000${input.scope}`
+    const exists = demoSensitiveRules.some((rule) => `${rule.text.toLowerCase()}\u0000${rule.scope}` === key)
+    if (exists) {
+      skipped.push(input.text)
+      continue
+    }
+    const now = nowISO()
+    const rule: SensitiveRule = {
+      id: `sw_demo${randomToken(16)}`,
+      text: input.text.trim().replace(/\s+/g, " "),
+      scope: input.scope,
+      enabled: true,
+      created_at: now,
+      updated_at: now,
+    }
+    demoSensitiveRules.push(rule)
+    created.push({ ...rule })
+  }
+  return { rules: created, skipped }
+}
+export function demoSetSensitiveRuleEnabled(id: string, enabled: boolean): SensitiveRule {
+  const rule = demoSensitiveRules.find((item) => item.id === id)
+  if (!rule) throw demoSensitiveError("sensitive_rule_not_found", "敏感词规则不存在，可能已被其他管理员删除")
+  rule.enabled = enabled
+  rule.updated_at = nowISO()
+  return { ...rule }
+}
+export function demoDeleteSensitiveRule(id: string): void {
+  const idx = demoSensitiveRules.findIndex((rule) => rule.id === id)
+  if (idx < 0) throw new Error("sensitive rule not found")
+  demoSensitiveRules.splice(idx, 1)
+}
+export function demoAddSensitiveWhitelist(input: SensitiveWhitelistInput): SensitiveWhitelistEntry {
+  const key = [input.kind, input.user_id || "", input.cluster || "", input.instance || ""].join("\u0000")
+  const exists = demoSensitiveWhitelist.some((entry) =>
+    [entry.kind, entry.user_id || "", entry.cluster || "", entry.instance || ""].join("\u0000") === key,
+  )
+  if (exists) throw demoSensitiveError("sensitive_whitelist_exists", "该白名单条目已存在")
+  const entry: SensitiveWhitelistEntry = { ...input, created_at: nowISO() }
+  demoSensitiveWhitelist.push(entry)
+  return { ...entry }
+}
+export function demoDeleteSensitiveWhitelist(input: SensitiveWhitelistInput): void {
+  const key = [input.kind, input.user_id || "", input.cluster || "", input.instance || ""].join("\u0000")
+  const idx = demoSensitiveWhitelist.findIndex((entry) =>
+    [entry.kind, entry.user_id || "", entry.cluster || "", entry.instance || ""].join("\u0000") === key,
+  )
+  if (idx < 0) throw demoSensitiveError("sensitive_whitelist_not_found", "白名单条目不存在，可能已被其他管理员删除")
+  demoSensitiveWhitelist.splice(idx, 1)
 }
 function randomToken(n: number): string {
   const chars = "0123456789abcdef"

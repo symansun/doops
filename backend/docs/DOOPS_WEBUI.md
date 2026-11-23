@@ -23,7 +23,7 @@
 
 数据库按引擎、主机、端口、库名登记；网站按协议、域名、访问路径登记；镜像按仓库地址、镜像路径和 Tag 或 Digest 登记。未绑定目标时是个人待接入资料；显式选择目标后，获授权用户共同维护，操作入口绑定该条记录的 Agent。登记不是连通性验证。旧版个人登记单独只读展示，不自动公开。凭据沿用原管理和授权流程。
 
-「平台管理」跳转到独立页面 `/console/admin`，集中实例、配置中心、用户、权限、令牌、代理路由和 Agent管理。仅管理员可见，直接访问也会核对当前会话。
+「平台管理」跳转到独立页面 `/console/admin`，集中实例、配置中心、用户、权限、令牌、敏感词、代理路由和 Agent管理。仅管理员可见，直接访问也会核对当前会话。
 
 在「机器台账 → 编辑机器」维护标签（支持平面标签及 `key=value` 键值标签，如 `院系=计算机`），列表按标签键分组筛选并取交集。「机器台账」内设「机器清单」「探针覆盖率（目标 100%，支持缺口原因分类、批量隧道补采与 CSV 导出）」和「纳管覆盖率 (80%)」三个页签；全局拓扑位于「态势感知 → 业务→集群→机器拓扑」，即时与定时巡检位于独立入口「智能巡检」。标签是可见元数据，不要输入密码、密钥或连接串。
 
@@ -225,6 +225,24 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
 - Administrator mutations are audited with actor/token IDs, resource metadata,
   HTTP result and stable errors. Credential/configuration bodies are excluded.
   Unavailable audit storage blocks a mutation.
+- 平台管理的「敏感词」页签维护一 Gateway-side filter shared by prompts and raw
+  commands: one rule table applies to `doops_agent_prompt` instructions (including
+  the SQL body of a direct dosql prompt) and to `doops_shell` / `doops_bg` /
+  `doops_ssh` commands. Each rule targets all text,
+  prompts only, or commands only; matching ignores letter case and collapses
+  consecutive whitespace. A hit rejects the call with
+  `sensitive_prompt_blocked` or `sensitive_command_blocked` and records a
+  `blocked` audit entry without echoing the matched word to the terminal. A
+  whitelist entry exempts one user or one Agent target (cluster plus optional
+  instance; an empty instance means the whole cluster). Rules and whitelist
+  entries are stored in `<dbDir>/sensitive-filter.json` with an atomic 0600
+  write; each rule is at most 128 characters and each list holds at most 500
+  entries. The filter only sees text users submit directly. The Agent-side static
+  `commandDenyRules` still covers Bash and structured Kubernetes commands that
+  the AI starts itself, so the two layers complement each other; see
+  [design/COMMAND_FILTER.md](design/COMMAND_FILTER.md). A damaged filter file is
+  logged and treated as empty so a moderation setting cannot take the Gateway's
+  AI and terminal paths offline.
 - 管理员实例页将在线、近期离线、历史和已归档记录分开计数。历史和已归档记录默认折叠；
   只有离线记录可归档或恢复，点击对应操作直接提交。归档不会删除 target 授权、令牌、凭据绑定或审计历史，
   Agent 重新连接时会自动恢复该记录。离线超过 90 天的实例记录由 Gateway 自动删除，授权仍保留。

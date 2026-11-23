@@ -34,7 +34,7 @@ type adminAuditInput struct {
 	Enabled   *bool  `json:"enabled"`
 }
 
-var adminAuditIDPattern = regexp.MustCompile(`^(usr_[a-f0-9]{24}|tok_[a-f0-9]{24}|repo_[a-f0-9]{24}|route_[a-f0-9]{24}|job_[a-f0-9]{20}|op-[a-f0-9]{24}|audit-[1-9][0-9]*|[0-9]+)$`)
+var adminAuditIDPattern = regexp.MustCompile(`^(usr_[a-f0-9]{24}|tok_[a-f0-9]{24}|repo_[a-f0-9]{24}|route_[a-f0-9]{24}|job_[a-f0-9]{20}|sw_[a-f0-9]{20}|op-[a-f0-9]{24}|audit-[1-9][0-9]*|[0-9]+)$`)
 var adminAuditLabelPattern = regexp.MustCompile(`^[a-zA-Z0-9_.*-]{1,128}$`)
 
 func adminAuditID(value string) string {

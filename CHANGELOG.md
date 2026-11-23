@@ -73,6 +73,7 @@
 - 巡检引擎（Gateway `monitor_schedules` / `monitor_runs` / `monitor_run_items`）新增通用的 **Skill + 提示词（`prompt`） + 任意直接命令（`command`）** 执行与产物持久化能力：支持在目标 Agent 上通过 `doops_agent_prompt`、Skill 内置脚本或经审计的 `doops_shell` 执行任意巡检命令，并自动解析与持久化 `artifact_format`（`json` / `markdown+json` / `markdown` / `text`）、`artifact_markdown`、`artifact_json` 与脱敏 `raw_output`。
 - 控制台新增无硬编码字段的 **动态巡检产物可视化器**（`InspectionArtifactViewer`）：可对任意结构的 JSON 与 Markdown+JSON 巡检产物自动生成 KPI 指标卡、百分比水位条、状态徽章与动态推断列表格，支持在「可视化 / Markdown / JSON」间切换及一键复制下载。
 - 「部署包」页的 Markdown 文件支持 **编辑 / 预览** 切换：预览复用控制台同一套 Markdown 渲染（禁用图片），源文件仍按原文保存。
+- 平台管理新增 **「敏感词」** 页签与 Gateway 侧统一过滤器：同一规则表按「全部 / 提示词 / 命令」作用域过滤用户提交的提示词（含 dosql 直接执行的 SQL 正文）及 `doops_shell`、`doops_bg`、`doops_ssh` 原始命令，忽略大小写与连续空白；命中时以 `sensitive_prompt_blocked` / `sensitive_command_blocked` 拒绝并向审计写入 `blocked` 记录，不向终端回显命中词。支持按用户或 Agent 目标（集群 + 可选实例，空实例表示整个集群）配置白名单，规则与白名单持久化于 `<dbDir>/sensitive-filter.json`；Agent 侧静态 `commandDenyRules` 继续负责 AI 自发 Bash 与结构化 K8s 命令。
 
 ### Changed
 
