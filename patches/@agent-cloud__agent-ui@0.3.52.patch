@@ -1,5 +1,5 @@
 diff --git a/chunks/AgentWorkspace-BToyLHcA.js b/chunks/AgentWorkspace-BToyLHcA.js
-index c231431404acb3a9982bc81105bd22fbc272e6b0..7db0cd0afb791c2f856f8fa8dd20bd84784f6432 100644
+index c231431404acb3a9982bc81105bd22fbc272e6b0..4e9f07d1c846c1369c75f5266e621f1aca51d8fd 100644
 --- a/chunks/AgentWorkspace-BToyLHcA.js
 +++ b/chunks/AgentWorkspace-BToyLHcA.js
 @@ -391,9 +391,11 @@ function ToolActivityCard({
@@ -15,3 +15,19 @@ index c231431404acb3a9982bc81105bd22fbc272e6b0..7db0cd0afb791c2f856f8fa8dd20bd84
    ] });
    if (!expandable) return /* @__PURE__ */ jsx("article", { children: summary });
    return /* @__PURE__ */ jsxs("details", { className: "group/tool-item", children: [
+@@ -465,7 +467,14 @@ function CollapsibleToolRun({
+   const text = useAgentWorkspaceText();
+   const { active, failed, unconfirmed, unknown } = toolRunDisposition(items.map((item) => item.status));
+   const [userOpen, setUserOpen] = useState(null);
+-  const open = userOpen ?? active;
++  // DoOps patch: once a run has started, keep it expanded until the user toggles it.
++  // Upstream derived open from the live status only, so a long tool chain collapsed in
++  // the gap between two tool calls and re-expanded on the next one (visible flicker).
++  const [started, setStarted] = useState(active);
++  useEffect(() => {
++    if (active && !started) setStarted(true);
++  }, [active, started]);
++  const open = userOpen ?? (active || started);
+   const summary = useMemo(() => {
+     const counts = /* @__PURE__ */ new Map();
+     for (const item of items) {
