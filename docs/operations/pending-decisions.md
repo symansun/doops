@@ -28,3 +28,10 @@
   - 保全：`.worktrees/agent-resource-sync`（36 文件）→ 分支 `rescue/agent-resource-sync`（d5250a6d）；`.worktrees/gateway-mysql`（12 个未跟踪文件）→ 分支 `rescue/gateway-mysql`（d32abbfd）；游离 commit 也各留分支 `rescue/cnb-ci-split`（f616beee）、`rescue/dedupe-web-tests`（2cca31bf）。
   - 清理：19 个 worktree 全部移除，只剩主工作区；18 个已合入 main 的本地分支删除；`rescue/cnb-ci-split` 判为已废弃（其唯一改动 `.cnb.yml` 在 main 的 31115116 里被「publish from GitHub only」主动删除）。
   - 合入：`rescue/gateway-mysql` 干净合并，先在隔离 clone 验 build/test 再落 main；`rescue/agent-resource-sync` 4 处冲突（agent_registry.go、gateway_store.go、handler_ws.go、tunnel_hub.go）需人工移植，排 INT-02；`rescue/dedupe-web-tests` 见 D3。
+
+## D4 巡检产物 256 KiB 上限的口径（已决 2026-11-24 01:05）
+
+- 背景：SF-03 实现为「每个文件」≤256 KiB（artifact.md / artifact.json / raw.txt 各自计算，单条合计可达约 768 KiB），而 spec §3.2 原文「该条产物超过 256 KiB 上限」可被读成 per-item 合计。
+- 决定：维持**每文件**口径。理由：① spec 的截断规则本身逐表示实现（Markdown 按字节截断、JSON 改写信封、raw 保留原文），per-item 合计预算需要跨文件调度，收益不抵复杂度；② 常量 `maxInspectionArtifactBytes` 与 `sanitizeAndCapArtifact` 的语义就是单 blob 上限；③ 真实风险（无界增长）即使 768 KiB/条也已被封顶。
+- 收尾动作：由 dev-sf-01 在 spec §3.2 补一句「按单个文件各自 ≤256 KiB 执行」消除歧义；不回改 SF-03 代码（daada95c）。
+
