@@ -47,3 +47,5 @@
 - 已落 main：`801a73e6` 合入 `rescue/gateway-mysql`（INT-01 的 merge 段完成，golden 断言与新测试在改）；`7beb4679` QA-01 基线报告。
 - 阻塞：github 仍不可达（推送循环 `bash-6174c5a7a3054908` 每 40 s 重试），本地领先 origin 138 个提交；`rescue/cnb-ci-split` 已删（内容被 31115116 主动撤销）。
 - 01:05 巡检：5 会话在跑（dev-sf-01/SF-02、skill-dev-01/SB-01+SF-07、dev-artifact-01/SF-04、integrator-gm/INT-01、integrator-ars/INT-02），并发未满；SF-03 已入 main（daada95c），台账 b8e8bcce 已推，远端 ahead=0/behind=0；推送重试 job 全部结束（已恢复）；工作区 19 改 + 1 未跟踪目录为两条进行中会话的半成品，编译暂不可用，符合预期；未派新活（依赖未解锁）。
+- 01:10 INT-01 收尾（integrator-gm，证据提交 8cf75d87 已推）：MySQL 迁移 31 子用例全绿、docker 8.4 真迁移演练完成（58 表/带数据回读一致/规划器 exit 2→加 reviewed mappings 后 exit 0）、`production-schema.sqlite.sql` 移入 testdata。遗留 2 缺口（platform_skills、platform_mcp_servers 不在冻结导出与原生 DDL，parity 只比子集）→ 新派 **INT-04**（parity 改全等断言 + 未知源表 fail closed + 重抓导出 + 容器真回读）。
+- 01:10 教训（写入派活规则）：共享工作区共用一个 git index，任何会话 `git add` 后若未立刻提交，会被别的会话的提交"扫走"（INT-01 的 docs 改动被 patrol 连扫 3 次）。对策：一律 `git commit -o <自己的路径>` 或「暂存后立刻提交」；总控只 add 自己路径，永不用 `-a`/`-A`。
