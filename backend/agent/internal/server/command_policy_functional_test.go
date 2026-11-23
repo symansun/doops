@@ -68,6 +68,19 @@ printf '{}\n'
 			t.Fatalf("expected no process start; recorded %q, err=%v", data, err)
 		}
 	}
+	// A denial may append a bounded snippet of the matched command so the
+	// operator can see which rule fired. The stable prefix and a non-empty
+	// context are required; the exact snippet is not part of the contract.
+	isDenial := func(got string) bool {
+		if got == denial {
+			return true
+		}
+		rest, ok := strings.CutPrefix(got, denial+`; matched: "`)
+		if !ok || !strings.HasSuffix(rest, `"`) {
+			return false
+		}
+		return strings.TrimSuffix(rest, `"`) != ""
+	}
 	requireToolDenial := func(t *testing.T, response map[string]any) {
 		t.Helper()
 		result := requireK8SToolResult(t, response)
@@ -76,7 +89,7 @@ printf '{}\n'
 			t.Fatalf("expected a terminal policy denial: %#v", response)
 		}
 		entry, _ := content[0].(map[string]any)
-		if entry["text"] != denial {
+		if text, _ := entry["text"].(string); !isDenial(text) {
 			t.Fatalf("expected %q, got %#v", denial, entry)
 		}
 	}
@@ -92,7 +105,8 @@ printf '{}\n'
 				response := readK8SFunctionalResponse(t, client, id)
 				requireNoStart(t)
 				rpcError, _ := response["error"].(map[string]any)
-				if rpcError["code"] != float64(-32602) || rpcError["message"] != denial || response["result"] != nil {
+				message, _ := rpcError["message"].(string)
+				if rpcError["code"] != float64(-32602) || !isDenial(message) || response["result"] != nil {
 					t.Fatalf("expected known pre-start rejection %q: %#v", denial, response)
 				}
 			})

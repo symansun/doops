@@ -11,17 +11,29 @@ import (
 // diagnostic runs, so the test exercises the real script rather than a copy.
 func nodeInfoCapabilityLine(t *testing.T) string {
 	t.Helper()
-	source, err := os.ReadFile("handler_ws.go")
+	// The probe lives beside the other doops_node_info commands. Scan the
+	// package files so a file split does not make this test look for a stale
+	// path instead of the real script.
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(string(source), "\n") {
-		if strings.Contains(line, "'image-build: ") {
-			start, end := strings.Index(line, `"`), strings.LastIndex(line, `",`)
-			if start < 0 || end <= start {
-				t.Fatalf("malformed probe line: %s", line)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(source), "\n") {
+			if strings.Contains(line, "'image-build: ") {
+				start, end := strings.Index(line, `"`), strings.LastIndex(line, `",`)
+				if start < 0 || end <= start {
+					t.Fatalf("malformed probe line in %s: %s", entry.Name(), line)
+				}
+				return line[start+1 : end]
 			}
-			return line[start+1 : end]
 		}
 	}
 	t.Fatal("doops_node_info lost its image-build capability probe")
