@@ -113,3 +113,8 @@ The schema coverage guard scanned `CREATE TABLE` statements in the package sourc
   - Removing `inventory_agent_assets.kind` from the DDL fails the column guard with `only in export: [kind]`.
   - Extracting the `grants_v2` INSERT into a helper named `carryGrantV2Row` fails the defaults guard with `grants_v2 is a transient one-shot migration table, but gateway_store_grants.go:166 inserts into it from "carryGrantV2Row"; only a migrate* function may do that`, so the transient exemption cannot be reused as a blanket allowlist.
 - The export was extended by hand again rather than re-captured, for the same reason as above: a re-dump drops indexes the frozen export keeps.
+
+## 批次计划（第三批及以后）
+
+Third-batch classification of all 95 runtime-audit sites lives in
+[2026-11-24-mysql-dialect-batch-plan.md](../../docs/reviews/2026-11-24-mysql-dialect-batch-plan.md): 32 sites are on request/ticker hot paths, 1 is a one-shot data backfill, 14 are diagnostic (EXPLAIN/PRAGMA), 44 are startup DDL already owned by the frozen schema, and 4 are one-shot schema probes. Batch order is time functions first (authorization), then identifier quoting, then parameter reordering, then JSON; no site needs a change before MySQL storage mode is wired.
