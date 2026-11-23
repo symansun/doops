@@ -71,3 +71,12 @@
 - 判断：并发 5 < 上限 6；无新任务可派（SF-11 卡真实 target，INT-06 卡 SF-05），不再加派。
 - 提醒：`package.json` 出现改动，归属另一条前端会话（非 SF-05 范围，SF-05 已被明确禁改），无需干预。
 
+
+## 01:45 巡检（定时，第 7 轮）
+
+- 在跑 6：dev-sf-01/SF-09、skill-dev-01/SF-08、dev-artifact-01/SF-05、integrator-gm/SF-12、integrator-ars/INT-05（决策已下发）；qa-skill-01 空闲。无后台 job。
+- 主干大推进：INT-05 已合入（`15e75cf1`，B 方案成功，`console-shell.tsx` 三方写回未被抢写）、SF-12 已落（`eb920009`）、SF-09 已落（`0226da5a`）、SF-08 分批在落（`6616a0d3`）。
+- 推送前做了**独立编译验证**：`git archive eb920009` → /tmp 干净树 `go build ./...` rc=0、`go vet` rc=0，然后 push（`eb920009..0226da5a`），现 `ahead=0 behind=0`。
+- 质量亮点：SF-12 拒绝了我建议的"排序键换成 `i.started_at_ms`"——它核实写路径里 item 与 run 的 `started_at_ms` 不是同一值，两次运行重叠时会选出另一个前驱、改变 `previous_run_id`；改为在保持 `(run.started_at_ms DESC, item.id DESC)` 语义前提下重写查询走 `idx_monitor_runs_started`+`EXISTS` 探测，EXPLAIN 断言无 TEMP B-TREE，并做了反向实验。D2 判定"不改 schema"，把代价写进函数注释。这正是闭环标准要的行为。
+- INT-05 的 `archived_at` 缺默认值已修（`gateway_mysql_schema.sql:308` `DEFAULT ('')`），列级守卫与新增真实 INSERT 形状测试待其回报确认。
+
