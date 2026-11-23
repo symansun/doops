@@ -105,6 +105,42 @@ jobs:
         working-directory: backend
         run: python3 -m pytest test -q
 
+  skills-packages:
+    name: Skill packages (real-run)
+    # Runs the bundled inspection Skill packages inside containers (static contracts,
+    # artifact protocol, disk-dedup fixtures and the malformed-environment matrix).
+    # The test image is built here from a public base because the dedup/loop fixtures
+    # need mkfs.ext4 and util-linux; CI verifies script logic and the artifact
+    # protocol, while production image parity is owned by the release flow
+    # (backend/docs/BUILD_DEPLOY_SOP.md, sections 3-4). A failed build or a missing
+    # image fails this job - nothing is skipped silently.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install shellcheck
+
+      - name: Build inspection test image
+        run: |
+          docker build --quiet -t sb01-inspect-test:ci - <<'DOCKERFILE'
+          FROM python:3.12-slim
+          RUN apt-get update \
+              && apt-get install -y --no-install-recommends e2fsprogs util-linux \
+              && rm -rf /var/lib/apt/lists/*
+          DOCKERFILE
+
+      - name: Verify bundled inspection packages
+        env:
+          SB01_IMG_PYTHON: sb01-inspect-test:ci
+          SB01_IMG_SHELL: alpine:3
+        run: sh backend/agent/internal/server/testdata/skills_builtin_verify/verify.sh
+
   secret-scan:
     name: Secret scan
     # Branch pushes and pull requests carry the commit range gitleaks should scan.

@@ -590,6 +590,13 @@ K8S Agent 完全不可用时，通过另一个已授权且可访问同集群的 
    只用于指向镜像且只接受 https（回环地址用于测试），不会放宽 sha256、身份或 contract 校验。
 7. **契约测试**：`backend/test/test_github_release_contract.py` 锁定触发条件、CI 门禁、
    不可变发布、资产集合、builder 身份和复验步骤。
+8. **内置巡检包门禁**：`skills-packages` job 在容器里真跑
+   `backend/agent/internal/server/testdata/skills_builtin_verify/verify.sh`（8 包静态契约、
+   6 个脚本包的产物协议断言、红线 2 去重夹具、SF-08 鲁棒性矩阵）。该 job 现场从公开基础镜像
+   构建 `sb01-inspect-test:ci`（`python:3.12-slim` + `e2fsprogs` + `util-linux`，因为去重夹具
+   需要 `mkfs.ext4` 与 `mount -o loop`），并以 `SB01_IMG_SHELL=alpine:3` 覆盖无 python3 降级路径；
+   镜像构建失败或缺镜像都会让 job 变红，不静默跳过。**该 job 验的是脚本逻辑与产物协议，
+   巡检所用生产镜像的一致性由第三节、第四节的发布流程负责。**
 
 手工 dry-run（只构建与复验，不创建 Release）：
 

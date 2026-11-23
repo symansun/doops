@@ -22,14 +22,24 @@
 #   SB01_STATIC_ONLY=1 sh verify.sh   只跑 A0（不需要 docker/python/shellcheck）
 #   SB01_ROBUST_ONLY=1 sh verify.sh   只跑 E 鲁棒性矩阵
 #
+# CI（.github/workflows/ci.yml 的 skills-packages job）：
+#   SB01_IMG_PYTHON=sb01-inspect-test:ci SB01_IMG_SHELL=alpine:3 sh verify.sh
+#   该 job 先 docker build 一个公开基础镜像（python:3.12-slim + e2fsprogs + util-linux）
+#   作为 SB01_IMG_PYTHON，因为去重与 loop 夹具需要 mkfs.ext4 / mount -o loop。
+#   CI 验的是脚本逻辑与产物协议，生产镜像一致性由发布流程（BUILD_DEPLOY_SOP.md 第三/四节）保证；
+#   缺镜像一律显式 FAIL，绝不「没有镜像就跳过」。
+#
 # 环境变量：
-#   SB01_STATIC_ONLY  1 = 只跑 A0 静态契约层
-#   SB01_ROBUST_ONLY  1 = 只跑 E 鲁棒性矩阵
-#   SB01_IMG_PYTHON   含 python3 的镜像（默认 doops-t2-agent:v0.3.21）
-#   SB01_IMG_SHELL    无 python3 的镜像（默认 alpine:3）
+#   SB01_STATIC_ONLY   1 = 只跑 A0 静态契约层
+#   SB01_ROBUST_ONLY   1 = 只跑 E 鲁棒性矩阵
+#   SB01_IMG_PYTHON    含 python3 的镜像（默认 doops-t2-agent:v0.3.21）
+#   SB01_IMG_SHELL     无 python3 的镜像（默认 alpine:3）
+#   SB01_NO_PRIVILEGED 1 = 宿主 docker 无特权：4 个需 --privileged 的夹具/场景不执行，
+#                        在汇总表打 WARN（reason=no_privileged_docker）后继续，不算失败。
+#                        CI 走特权真跑；本分支只用于本地/受限环境。
 #   SB01_DOCKER / SB01_PYTHON / SB01_SHELLCHECK   工具路径覆盖
 #
-# 缺工具或镜像一律显式 FAIL，不静默跳过。退出码 0 = 全部通过。
+# 缺工具或镜像一律显式 FAIL，不静默跳过。退出码 0 = 全部通过（WARN 不改变退出码）。
 
 set -u
 
@@ -57,6 +67,7 @@ STATIC_ONLY=${SB01_STATIC_ONLY:-0}
 ROBUST_ONLY=${SB01_ROBUST_ONLY:-0}
 ROBUST_ALL_PKGS="inspect-vm-host;inspect-container-runtime;inspect-k8s-cluster;inspect-app-web;inspect-package-vuln;inspect-proxy-evasion"
 ROBUST_ALL_FALLBACK=$(printf '%s\n' "$ROBUST_ALL_PKGS" | tr ';' '\n' | sed 's/$/:status=warning,degraded=1/' | tr '\n' ';')
+NO_PRIV=${SB01_NO_PRIVILEGED:-0}
 if [ "$#" -gt 0 ]; then
   SLUGS="$*"
 else
@@ -70,6 +81,7 @@ ROWS="$TMP/rows"
 TOTAL=0
 PASSED=0
 FAILED=0
+WARNED=0
 
 now() { date +%s; }
 
@@ -82,6 +94,13 @@ record() { # status name seconds reason
   fi
   printf '%s|%s|%s|%s\n' "$2" "$1" "$3" "$4" >> "$ROWS"
   printf '  [%s] %s %s\n' "$1" "$2" "$4"
+}
+
+record_warn() { # name seconds reason
+  TOTAL=$((TOTAL + 1))
+  WARNED=$((WARNED + 1))
+  printf '%s|%s|%s|%s\n' "$1" WARN "$2" "$3" >> "$ROWS"
+  printf '  [WARN] %s %s\n' "$1" "$3"
 }
 
 fatal() {
@@ -379,7 +398,23 @@ check_robust() { # name file spec [docker-run-args...]
   record PASS "robust:$name" "$(($(now) - t0))" "$summary"
 }
 
-echo "SB-01 校验开始：python3 镜像=${IMG_PY}；无 python3 镜像=${IMG_SH}"
+check_fixture_or_warn() { # name file marker —— 需 --privileged，受限环境下显式 WARN
+  if [ "$NO_PRIV" = 1 ]; then
+    record_warn "fixture:$1" 0 "no_privileged_docker（SB01_NO_PRIVILEGED=1：需 --privileged 的夹具未执行，不静默跳过）"
+  else
+    check_fixture "$1" "$2" "$3" --privileged
+  fi
+}
+
+check_robust_or_warn() { # name file spec —— 需 --privileged，受限环境下显式 WARN
+  if [ "$NO_PRIV" = 1 ]; then
+    record_warn "robust:$1" 0 "no_privileged_docker（SB01_NO_PRIVILEGED=1：需 --privileged 的场景未执行，不静默跳过）"
+  else
+    check_robust "$1" "$2" "$3" --privileged
+  fi
+}
+
+echo "SB-01 校验开始：python3 镜像=${IMG_PY}；无 python3 镜像=${IMG_SH}；NO_PRIVILEGED=${NO_PRIV}"
 echo "工作区 W=$W"
 echo ""
 if [ "$ROBUST_ONLY" != 1 ]; then
@@ -404,9 +439,9 @@ else
 
     echo ""
     echo "-- 红线 2 去重夹具 --"
-    check_fixture dedup_mount dedup_vmhost.sh DEDUP_MOUNT_OK --privileged
+    check_fixture_or_warn dedup_mount dedup_vmhost.sh DEDUP_MOUNT_OK
     check_fixture dedup_overlay_shim dedup_overlay_shim.sh DEDUP_OVERLAY_OK
-    check_fixture dedup_overlay_lowerdir dedup_overlay_lowerdir.sh DEDUP_LOWERDIR_OK --privileged
+    check_fixture_or_warn dedup_overlay_lowerdir dedup_overlay_lowerdir.sh DEDUP_LOWERDIR_OK
     check_fixture dedup_virtual_approx dedup_virtual_approx_shim.sh DEDUP_APPROX_OK
 
     echo ""
@@ -426,8 +461,8 @@ else
   check_robust no_free case_no_free.sh "$ROBUST_ALL_PKGS"
   check_robust no_awk case_no_awk.sh "$ROBUST_ALL_PKGS"
   check_robust no_python3 case_no_python3.sh "$ROBUST_ALL_FALLBACK"
-  check_robust proc_meminfo case_proc_meminfo.sh 'inspect-vm-host:status=warning,degraded=1' --privileged
-  check_robust proc_loadavg case_proc_loadavg.sh 'inspect-vm-host:degraded=1' --privileged
+  check_robust_or_warn proc_meminfo case_proc_meminfo.sh 'inspect-vm-host:status=warning,degraded=1'
+  check_robust_or_warn proc_loadavg case_proc_loadavg.sh 'inspect-vm-host:degraded=1'
   check_robust mounts_symlink case_mounts_symlink.sh 'inspect-vm-host:mount=/tmp/lp/a'
   check_robust mounts_space case_mounts_space.sh 'inspect-vm-host:mount=/mnt/我的 数据'
   check_robust mounts_many case_mounts_many.sh 'inspect-vm-host:check=output.size'
@@ -440,8 +475,12 @@ while IFS='|' read -r name st secs reason; do
   printf '%-30s %-6s %-9s %s\n' "$name" "$st" "$secs" "$reason"
 done < "$ROWS"
 echo "------------------------------------------------"
-printf '合计 %d 项：通过 %d，失败 %d\n' "$TOTAL" "$PASSED" "$FAILED"
+printf '合计 %d 项：通过 %d，失败 %d，降级 %d\n' "$TOTAL" "$PASSED" "$FAILED" "$WARNED"
 if [ "$FAILED" -gt 0 ]; then
   exit 1
 fi
-echo "SB-01 VERIFY_ALL_PASS"
+if [ "$WARNED" -gt 0 ]; then
+  echo "SB-01 VERIFY_PASS_WITH_WARNINGS"
+else
+  echo "SB-01 VERIFY_ALL_PASS"
+fi
