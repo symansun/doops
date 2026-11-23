@@ -2,75 +2,89 @@ package server
 
 import (
 	"database/sql"
+	"fmt"
 	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 )
 
-// gatewayMySQLUnlistedInsertSites freezes every INSERT in the runtime that names
-// no column list, keyed by table with the number of sites. Those statements bind
-// values purely by position: SQLite rejects a wrong arity, but neither SQLite nor
-// MySQL complains when the physical column order drifts, so a reordered column
-// silently writes every value into the wrong column. The map is the escape hatch,
-// not a formality: adding an entry means accepting that risk for a table, and the
-// default is to name the columns instead.
-//
-// Site counts, not file:line, because line numbers move every time a neighbour
-// changes and a stale pin would fail for the wrong reason.
-var gatewayMySQLUnlistedInsertSites = map[string]int{
-	// inspection_receipts: 8 values (item, generation, actor, received, status,
-	// reason, evidence, digest); one write is an idempotent "received" row, one is
-	// the terminal verdict. Column order is identical on both sides, so the
-	// positional binding is currently correct.
-	"inspection_receipts": 2,
-	// inspection_scope: 6 values (plan, asset, cluster, instance, cluster_id,
-	// check); the site sits in a loop that attaches each authorized check.
-	"inspection_scope": 1,
-	// inventory_cluster_profiles: 6 values (asset, name, environment, contact,
-	// created_by, revision); one of the three writes passes two literal empty
-	// strings and the literal revision 1 instead of placeholders.
-	"inventory_cluster_profiles": 3,
+// gatewayMySQLUnlistedInsertSites must stay empty. Every statement that used to
+// rely on the physical column order now names its columns, and a new one is not
+// allowed to come back: positional values bind by position, so a reorder of the
+// table (a SQLite ALTER TABLE rebuild or a hand edit of the native DDL) writes
+// every value into the wrong column without any test noticing. Keeping the map
+// (instead of deleting the concept) documents that the answer to a failing
+// statement is a column list, not a new exemption.
+var gatewayMySQLUnlistedInsertSites = map[string]int{}
+
+// gatewayMySQLPositionalInsertSites freezes the six statements that were
+// rewritten from INSERT INTO t VALUES (...) into an explicit column list, keyed
+// by table with the number of sites. Their column list must equal the frozen
+// export's physical order: that is what makes the rewrite provably
+// behavior-preserving, because each value still lands in the column it landed in
+// before. Dropping or reordering a name now changes the binding and fails here.
+var gatewayMySQLPositionalInsertSites = map[string]int{
+	"inspection_receipts":        2, // 8 values: item, generation, actor, received, status, reason, evidence, digest
+	"inspection_scope":           1, // 6 values: plan, asset, cluster, instance, cluster_id, check
+	"inventory_cluster_profiles": 3, // 6 values: asset, name, environment, contact, created_by, revision
 }
 
-// TestGatewayMySQLInsertWithoutColumnListOrdersColumns guards INSERT INTO t
-// VALUES (...). The statement is only correct while three things hold, and this
-// test asserts all three per site:
+// TestGatewayMySQLInsertsNameColumns is the arity and column-order guard for the
+// runtime INSERTs. It enforces three things:
 //
-//  1. the frozen SQLite export and the MySQL DDL declare the table's columns in
-//     the same order, column by column — the one property the positional binding
-//     depends on and the one nobody else checks;
-//  2. the number of bound values equals the table's column count, so a missing or
-//     extra placeholder is a failure instead of a silently shifted row;
-//  3. the set of tables written this way equals gatewayMySQLUnlistedInsertSites,
-//     so a new unlisted INSERT cannot land without a deliberate decision.
+//  1. no runtime INSERT omits its column list — the suites fail with the file and
+//     line of any statement that tries, instead of skipping it;
+//  2. for the six statements converted from positional form, the named columns
+//     still equal the frozen export's physical column order and the MySQL DDL
+//     declares that same order, so the conversion did not move a value;
+//  3. the frozen site counts still match, so a second write to the same table
+//     cannot appear unnoticed.
 //
-// Without this test the previous guard merely logged these statements, which made
-// them the only place where a schema change could break the runtime with CI green.
-func TestGatewayMySQLInsertWithoutColumnListOrdersColumns(t *testing.T) {
+// The value count is compared with the column count as well, so a placeholder
+// added or dropped by hand fails here rather than at execution time. Question
+// marks inside quoted literals are not counted, and literal values (the two
+// empty strings and the literal 1 in cluster_profiles.go) count as values.
+func TestGatewayMySQLInsertsNameColumns(t *testing.T) {
 	export := gatewayMySQLTestSQLiteExport(t)
 	ddl := string(gatewayMySQLSchemaSQL)
-	seen := map[string]int{}
-	sites := 0
+	var unlisted []string
+	positional := map[string]int{}
 	for _, literal := range gatewayMySQLRuntimeSQLLiterals(t) {
-		table, ok := gatewayMySQLUnlistedInsertTable(literal.query)
+		if table, ok := gatewayMySQLUnlistedInsertTable(literal.query); ok {
+			unlisted = append(unlisted, fmt.Sprintf("%s:%d (INSERT INTO %s)", literal.file, literal.line, table))
+			continue
+		}
+		table, columns, ok := gatewayMySQLInsertColumns(literal.query)
 		if !ok {
 			continue
 		}
-		seen[table]++
-		sites++
+		if _, frozen := gatewayMySQLPositionalInsertSites[table]; !frozen {
+			continue
+		}
+		positional[table]++
 		exportColumns := gatewayMySQLSQLiteColumnOrder(t, export, table)
 		ddlColumns := gatewayMySQLDDLColumnOrder(t, ddl, table)
 		if len(exportColumns) != len(ddlColumns) {
-			t.Fatalf("%s: %s:%d inserts without a column list, but the table has %d columns in the frozen SQLite export and %d in the MySQL DDL:\n      export: %v\n       mysql: %v\nname the columns in the INSERT or fix the exported schema",
-				table, literal.file, literal.line, len(exportColumns), len(ddlColumns), exportColumns, ddlColumns)
+			t.Fatalf("%s: the frozen SQLite export and the MySQL DDL declare %d and %d columns:\n      export: %v\n       mysql: %v",
+				table, len(exportColumns), len(ddlColumns), exportColumns, ddlColumns)
 		}
 		for i := range exportColumns {
-			if exportColumns[i] == ddlColumns[i] {
+			if exportColumns[i] != ddlColumns[i] {
+				t.Fatalf("%s: column %d is %q in the frozen SQLite export and %q in the MySQL DDL; re-capture both from the same source",
+					table, i+1, exportColumns[i], ddlColumns[i])
+			}
+		}
+		if len(columns) != len(exportColumns) {
+			t.Fatalf("%s: %s:%d names %d columns, but the table has %d:\n      named: %v\n     export: %v",
+				table, literal.file, literal.line, len(columns), len(exportColumns), columns, exportColumns)
+		}
+		for i := range columns {
+			if columns[i] == exportColumns[i] {
 				continue
 			}
-			t.Fatalf("%s: %s:%d inserts without a column list, so every value is bound by position, but column %d is %q in the frozen SQLite export and %q in the MySQL DDL:\n      export: %v\n       mysql: %v\nre-capture the export and the native DDL from the same source, or name the columns in the INSERT",
-				table, literal.file, literal.line, i+1, exportColumns[i], ddlColumns[i], exportColumns, ddlColumns)
+			t.Fatalf("%s: %s:%d names %q as column %d, but the frozen export's column %d is %q; the positional statement this replaced bound the %d-th value to %q, so the column list must keep the export order (named: %v, export: %v)",
+				table, literal.file, literal.line, columns[i], i+1, i+1, exportColumns[i], i+1, exportColumns[i], columns, exportColumns)
 		}
 		values := gatewayMySQLInsertValues(t, literal)
 		placeholders := 0
@@ -80,26 +94,40 @@ func TestGatewayMySQLInsertWithoutColumnListOrdersColumns(t *testing.T) {
 				continue
 			}
 			if !gatewayMySQLValueLiteral.MatchString(value) {
-				t.Fatalf("%s:%d: cannot parse the value %q of an INSERT without a column list; only ?, quoted literals, numbers, NULL and booleans are supported",
+				t.Fatalf("%s:%d: cannot parse the value %q of a runtime INSERT; only ?, quoted literals, numbers, NULL and booleans are supported",
 					literal.file, literal.line, value)
 			}
 		}
-		if len(values) != len(ddlColumns) {
-			t.Fatalf("%s: %s:%d inserts %d values (%d placeholders) into %s, which has %d columns; SQLite only refuses the wrong arity at execution time and MySQL would accept it as positional data\nname the columns in the INSERT",
-				table, literal.file, literal.line, len(values), placeholders, table, len(ddlColumns))
+		if len(values) != len(columns) {
+			t.Fatalf("%s: %s:%d binds %d values (%d placeholders) but names %d columns; each placeholder and each literal value fills exactly one column",
+				table, literal.file, literal.line, len(values), placeholders, len(columns))
 		}
 	}
-	if !reflect.DeepEqual(seen, gatewayMySQLUnlistedInsertSites) {
-		t.Fatalf("the INSERT statements without a column list changed: measured %v, frozen %v.\nBefore adding a column-less INSERT, name the columns; to keep one, add the table to gatewayMySQLUnlistedInsertSites with the site count and say why in the comment",
-			seen, gatewayMySQLUnlistedInsertSites)
+	if len(unlisted) != 0 {
+		t.Fatalf("INSERT without a column list is forbidden; name the columns: %s", strings.Join(unlisted, ", "))
 	}
-	t.Logf("checked %d INSERT statements without a column list across %d tables against the export order, the DDL order and their arity", sites, len(seen))
+	if len(gatewayMySQLUnlistedInsertSites) != 0 {
+		t.Fatalf("gatewayMySQLUnlistedInsertSites must stay empty, found %v; a positional INSERT binds by physical column order and cannot be made safe by an exemption", gatewayMySQLUnlistedInsertSites)
+	}
+	if !reflect.DeepEqual(positional, gatewayMySQLPositionalInsertSites) {
+		t.Fatalf("the INSERT statements that must name every column in export order changed: measured %v, frozen %v.\nName the columns explicitly; if a new write is legitimate, add its table and site count to gatewayMySQLPositionalInsertSites and say why",
+			positional, gatewayMySQLPositionalInsertSites)
+	}
+	t.Logf("checked %d INSERT statements across %d tables for explicit column lists, export order, DDL order and arity", sumCounts(positional), len(positional))
+}
+
+func sumCounts(counts map[string]int) int {
+	total := 0
+	for _, count := range counts {
+		total += count
+	}
+	return total
 }
 
 // gatewayMySQLUnlistedInsertTable returns the target table when the statement is
 // an INSERT that goes straight from the table name to VALUES, i.e. names no
-// column list. INSERT INTO t (a, b) VALUES (...) returns ok=false and stays with
-// TestGatewayMySQLInsertDefaultsMatchSchema.
+// column list. Column-list statements return ok=false and are handled by
+// TestGatewayMySQLInsertDefaultsMatchSchema and the order check above.
 func gatewayMySQLUnlistedInsertTable(query string) (string, bool) {
 	match := gatewayMySQLUnlistedInsertPattern.FindStringSubmatch(query)
 	if match == nil {
@@ -115,7 +143,7 @@ func gatewayMySQLInsertValues(t *testing.T, literal gatewayMySQLRuntimeSQLLitera
 	t.Helper()
 	index := gatewayMySQLValuesKeyword.FindStringIndex(literal.query)
 	if index == nil {
-		t.Fatalf("%s:%d: the statement matched an INSERT without a column list but has no VALUES keyword: %s",
+		t.Fatalf("%s:%d: the statement matched an INSERT but has no VALUES keyword: %s",
 			literal.file, literal.line, literal.query)
 	}
 	rest := literal.query[index[1]:]
@@ -158,8 +186,7 @@ func gatewayMySQLInsertValues(t *testing.T, literal gatewayMySQLRuntimeSQLLitera
 		}
 	}
 	if !closed {
-		t.Fatalf("%s:%d: the value tuple of the INSERT without a column list is not closed: %s",
-			literal.file, literal.line, literal.query)
+		t.Fatalf("%s:%d: the value tuple is not closed: %s", literal.file, literal.line, literal.query)
 	}
 	trimmed := make([]string, 0, len(values))
 	for _, value := range values {
@@ -168,7 +195,7 @@ func gatewayMySQLInsertValues(t *testing.T, literal gatewayMySQLRuntimeSQLLitera
 		}
 	}
 	if len(trimmed) == 0 {
-		t.Fatalf("%s:%d: the INSERT without a column list has an empty value tuple", literal.file, literal.line)
+		t.Fatalf("%s:%d: the INSERT has an empty value tuple", literal.file, literal.line)
 	}
 	return trimmed
 }
@@ -195,13 +222,13 @@ func gatewayMySQLSQLiteColumnOrder(t *testing.T, db *sql.DB, table string) []str
 		t.Fatalf("read %s columns from the frozen export: %v", table, err)
 	}
 	if len(columns) == 0 {
-		t.Fatalf("%s is missing from the frozen export, but the runtime inserts into it without a column list; migrate the table before guarding the INSERT", table)
+		t.Fatalf("%s is missing from the frozen export, but the runtime inserts into it; migrate the table before guarding the INSERT", table)
 	}
 	return columns
 }
 
 // gatewayMySQLDDLColumnOrder returns the MySQL column order as the DDL declares
-// it (gatewayMySQLDDLColumns keeps files order; the name helper sorts and must
+// it (gatewayMySQLDDLColumns keeps file order; the name helper sorts and must
 // not be used here).
 func gatewayMySQLDDLColumnOrder(t *testing.T, ddl, table string) []string {
 	t.Helper()

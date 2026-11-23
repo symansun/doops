@@ -91,7 +91,7 @@ func inspectionPlan(tx *sql.Tx, q inspectionRequest, now time.Time) (any, error)
 			}
 			seen[k] = true
 			if id != 0 {
-				if _, err = tx.Exec(`INSERT INTO inspection_scope VALUES(?,?,?,?,?,?)`, id, a.Asset, a.Cluster, a.Instance, clusterID, check); err != nil {
+				if _, err = tx.Exec(`INSERT INTO inspection_scope(plan_id,asset_id,cluster,instance,cluster_id,check_id) VALUES(?,?,?,?,?,?)`, id, a.Asset, a.Cluster, a.Instance, clusterID, check); err != nil {
 					return nil, err
 				}
 			}

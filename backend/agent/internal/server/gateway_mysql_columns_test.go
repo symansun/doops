@@ -38,10 +38,10 @@ func TestGatewayMySQLColumnsMatchExport(t *testing.T) {
 // column lists are extracted from the SQL literals in the package source, so a
 // new INSERT is guarded without editing this test.
 //
-// Statements without a column list are skipped here: INSERT INTO t VALUES (...)
-// depends on the physical column order, which this column-set guard cannot see.
-// TestGatewayMySQLInsertWithoutColumnListOrdersColumns owns those statements and
-// asserts the export order, the DDL order and the arity per site.
+// Statements without a column list are rejected outright: INSERT INTO t VALUES
+// (...) binds by physical column order, which no column-set comparison can see,
+// so the runtime must name its columns. TestGatewayMySQLInsertsNameColumns owns
+// the order, arity and site-count assertions for the same statements.
 func TestGatewayMySQLInsertDefaultsMatchSchema(t *testing.T) {
 	export := gatewayMySQLTestSQLiteExport(t)
 	ddl := string(gatewayMySQLSchemaSQL)
@@ -53,8 +53,11 @@ func TestGatewayMySQLInsertDefaultsMatchSchema(t *testing.T) {
 		upper := strings.ToUpper(literal.query)
 		table, columns, ok := gatewayMySQLInsertColumns(literal.query)
 		if !ok {
+			if table, unlisted := gatewayMySQLUnlistedInsertTable(literal.query); unlisted {
+				t.Fatalf("%s:%d: INSERT INTO %s without a column list is forbidden; name the columns so the statement does not depend on the physical column order", literal.file, literal.line, table)
+			}
 			if strings.Contains(upper, "INSERT") && strings.Contains(upper, "INTO") {
-				t.Logf("skip %s:%d: INSERT without a column list is guarded by TestGatewayMySQLInsertWithoutColumnListOrdersColumns (column order and arity), not by this column-set guard", literal.file, literal.line)
+				t.Logf("skip %s:%d: SQL assembled from identifiers at runtime names its columns explicitly and is covered by its own tests", literal.file, literal.line)
 			}
 			continue
 		}

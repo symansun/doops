@@ -83,7 +83,7 @@ func (h *GatewayHub) HandleClusterProfiles(w http.ResponseWriter, r *http.Reques
 	}
 	err = h.store.catalogChange(ctx, a, "cluster_profile:"+req.Op, func(tx *sql.Tx) error {
 		if req.Op == "create" {
-			_, e := tx.Exec("INSERT INTO inventory_cluster_profiles VALUES(?,?,?,?,?,1)", req.ID, req.Name, req.Environment, req.Contact, a.UserID)
+			_, e := tx.Exec("INSERT INTO inventory_cluster_profiles(asset_id,name,environment,contact,created_by,revision) VALUES(?,?,?,?,?,1)", req.ID, req.Name, req.Environment, req.Contact, a.UserID)
 			return e
 		}
 		var count int
@@ -106,7 +106,7 @@ func (h *GatewayHub) HandleClusterProfiles(w http.ResponseWriter, r *http.Reques
 		}
 		switch req.Op {
 		case "update":
-			_, e = tx.Exec("INSERT INTO inventory_cluster_profiles VALUES(?,?,?,?,?,1) ON CONFLICT(asset_id) DO UPDATE SET name=excluded.name,environment=excluded.environment,contact=excluded.contact,revision=revision+1", req.ID, req.Name, req.Environment, req.Contact, a.UserID)
+			_, e = tx.Exec("INSERT INTO inventory_cluster_profiles(asset_id,name,environment,contact,created_by,revision) VALUES(?,?,?,?,?,1) ON CONFLICT(asset_id) DO UPDATE SET name=excluded.name,environment=excluded.environment,contact=excluded.contact,revision=revision+1", req.ID, req.Name, req.Environment, req.Contact, a.UserID)
 			if e == nil {
 				_, e = tx.Exec("UPDATE cluster_inventory_sources SET name=? WHERE asset_id=?", req.Name, req.ID)
 			}
@@ -141,7 +141,7 @@ func (h *GatewayHub) HandleClusterProfiles(w http.ResponseWriter, r *http.Reques
 				return assetIssue(409, "cluster_source_in_use")
 			}
 			if count == 1 && owner == "" {
-				if _, e = tx.Exec("INSERT INTO inventory_cluster_profiles VALUES(?,?, '', '',?,1)", req.ID, name, a.UserID); e != nil {
+				if _, e = tx.Exec("INSERT INTO inventory_cluster_profiles(asset_id,name,environment,contact,created_by,revision) VALUES(?,?, '', '',?,1)", req.ID, name, a.UserID); e != nil {
 					return e
 				}
 			}
