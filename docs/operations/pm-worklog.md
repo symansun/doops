@@ -46,3 +46,4 @@
 - 在跑 6 个会话，已达并发上限，本轮不派新活：`skill-dev-01`(SB-01)、`dev-artifact-01`(SF-03)、`qa-skill-01`(QA-01)、`integrator-gm`(INT-01)、`integrator-ars`(INT-02 隔离移植)、`dev-sf-01`(SF-02 重派)。
 - 已落 main：`801a73e6` 合入 `rescue/gateway-mysql`（INT-01 的 merge 段完成，golden 断言与新测试在改）；`7beb4679` QA-01 基线报告。
 - 阻塞：github 仍不可达（推送循环 `bash-6174c5a7a3054908` 每 40 s 重试），本地领先 origin 138 个提交；`rescue/cnb-ci-split` 已删（内容被 31115116 主动撤销）。
+- 01:05 巡检：5 会话在跑（dev-sf-01/SF-02、skill-dev-01/SB-01+SF-07、dev-artifact-01/SF-04、integrator-gm/INT-01、integrator-ars/INT-02），并发未满；SF-03 已入 main（daada95c），台账 b8e8bcce 已推，远端 ahead=0/behind=0；推送重试 job 全部结束（已恢复）；工作区 19 改 + 1 未跟踪目录为两条进行中会话的半成品，编译暂不可用，符合预期；未派新活（依赖未解锁）。
