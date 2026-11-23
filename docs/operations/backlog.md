@@ -9,9 +9,9 @@
 |---|---|---|---|---|---|
 | SF-01 | 内置巡检 Skill 包 embed/registry 接线、`Entrypoint` 字段、落盘复用、恢复可编译 | dev-sf-01 | `backend/agent/internal/server/*.go`、`backend/docs/design/SKILL_FIRST_INSPECTION_SPEC.md` | 2026-11-24 00:39 | 运行中 |
 | SF-08 | 内置巡检包鲁棒性矩阵（畸形环境 10 场景真跑，治崩溃/非法 JSON/静默 fallback） | skill-dev-01 | `skills_builtin/**`、`testdata/skills_builtin_verify/**` | 2026-11-24 01:15 | 运行中 |
-| SF-04 | `inspection_metric_points` 通用时序表 + 标准键桥接快照 + `GET /v1/monitor/metrics` + 跨次 diff | dev-artifact-01 | `monitor_metric*.go`、`monitor_engine_{store,types,http}.go`、`gateway_store_schema.go` | 2026-11-24 01:05 | 运行中 |
+| SF-05 | 前端 `InspectionArtifactViewer` 动态渲染 + 趋势图 + diff/三态渲染，ego-browser 真实验收 | 未派（等前端会话窗口） | `components/`、`lib/` | — | 待办 |
 | INT-04 | MySQL 迁移覆盖率补齐：`platform_skills`/`platform_mcp_servers` 纳入导出与原生 DDL，parity 改全等断言 | integrator-gm | `testdata/gateway-sqlite-schema.sql`、`gateway_mysql_schema*.go`、`gateway_mysql_copy*.go`、`GATEWAY_MYSQL_MIGRATION_PLAN.md` | 2026-11-24 01:10 | 运行中 |
-| INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）+ 补 MySQL census（29/8 等）与 `agent_status` 两列 | integrator-ars | 阻塞于 SF-04 提交（`gateway_store_schema.go` 文件冲突）；动 `gateway_mysql_schema.sql`、`gateway_mysql_runtime_test.go` | 2026-11-24 01:20 | 待办（阻塞于 SF-04） |
+| INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）+ `agent_status` 两列 DDL/导出 + census 刷新 | integrator-ars | `gateway_mysql_schema.sql`、`testdata/gateway-sqlite-schema.sql`、`gateway_mysql_runtime_test.go` | 2026-11-24 01:23 | 运行中 |
 
 ## 待办（排队，等前置合入）
 
@@ -35,6 +35,7 @@
 | — | 建立本台账 | 见 docs(ops) 提交 | pm-worklog.md |
 | CLEAN-01 | worktree/分支清理 + 4 条遗留分支保全 | 见 docs(ops) 提交 | pm-worklog.md 00:52 |
 | QA-01 | 内置巡检 Skill 包基线缺陷实测（D1–D10，含 D4/D9 高危） | `7beb4679` | `docs/reviews/2026-11-24-skill-package-baseline.md` |
+| SF-04 | 指标时序表 + `GET /v1/monitor/metrics` + run 详情 diff | `0c000b1c` | 5 新用例 + 30.16s 绿；两个反向实验 |
 | INT-04 | MySQL 覆盖率缺口关闭 + 运行时 DDL 守卫（导出 61 表/49+4 索引/12 触发器；三表补齐含 `inspection_metric_points`） | `ca443a16` | 真机 8.655s 绿 + 三表回读一致 + 两个反向实验 |
 | SF-02 | 执行分派单一真源（移除 builtin_strategy/strategy_id 双轨，修复 D9） | `ee192275`（+`a47ed50d` spec 措辞） | 20/20 测试绿；8 slug 全产出 item |
 | SB-01 | 8 个内置巡检包实战化（协议断言/去重夹具/补缺脚本判定/verify.sh 20 项全绿） | `f00e01bf` `adb1286c` `fe65de7c` `cf20d2bb` `9a91baff` `8371e99a` | 静态 8/8 + 全量 20/20；额外发现脚本 0644 → chmod 0755 |

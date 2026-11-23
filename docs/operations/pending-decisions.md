@@ -35,3 +35,10 @@
 - 决定：维持**每文件**口径。理由：① spec 的截断规则本身逐表示实现（Markdown 按字节截断、JSON 改写信封、raw 保留原文），per-item 合计预算需要跨文件调度，收益不抵复杂度；② 常量 `maxInspectionArtifactBytes` 与 `sanitizeAndCapArtifact` 的语义就是单 blob 上限；③ 真实风险（无界增长）即使 768 KiB/条也已被封顶。
 - 收尾动作：由 dev-sf-01 在 spec §3.2 补一句「按单个文件各自 ≤256 KiB 执行」消除歧义；不回改 SF-03 代码（daada95c）。
 
+
+## D5 SF-05 前端归属（待用户定 2026-11-24 01:23）
+
+- 现状：另一条会话正在改 `components/files-panel.tsx`、`lib/console-views.ts`、`lib/files-maintenance.ts`、`app/globals.css`、`CHANGELOG.md`（01:15–01:19 仍在写，均未提交）。我的子会话禁区里一直写着这些路径归它。
+- 阻塞点：SF-05 要在 `components/inspection-artifact-viewer.tsx` 做动态渲染 + 趋势图 + 三态切换，正是同一地区，同时改会互相覆盖（R75）。
+- 选项：A) 等那条会话收尾提交后我再派 SF-05（保守，可能等很久）；B) 现在由 dev-sf-01 接管前端片区，先请那条会话停手（需要你出面或授权我发通知）；C) 只做 viewer 组件内部（不碰 lib/、files-panel），风险中等。
+- 我的建议：A 或 C，倾向 C——viewer 是独立组件，只要不动 `lib/console-views.ts` 的注册逻辑，冲突面很小。
