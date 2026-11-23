@@ -9,6 +9,7 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
+| INT-13 | MySQL 运行期 ON CONFLICT 语义：把 31 处 SQLite 写法落到 MySQL 可执行路径 | in_progress（integrator-gm） | 权威文档 backend/docs/GATEWAY_MYSQL_MIGRATION_PLAN.md:54 记录 31 处 ON CONFLICT 属「记录不重写」的欠账，INT-12 报告也点名该批。拥有文件：backend/agent/internal/server/mysql_runtime_dialect.go、gateway_mysql_runtime_test.go 与承载 ON CONFLICT 的运行期 .go；禁改 components/、lib/、package.json、pnpm-lock.yaml、CHANGELOG.md、skills_builtin/**。验收：golden gatewayMySQLRuntimeIssueOnConflict 必须从 31 归 0 或逐点给出不可译理由并把冻结数降到新值；真机 mysql:8.4 跑通被改语句；反向实验证明守卫会红 |
 
 ## 待办（排队/待决策）
 
