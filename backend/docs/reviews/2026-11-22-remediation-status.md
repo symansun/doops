@@ -82,3 +82,33 @@ DOOPS_ALLOW_UNENROLLED_CREDENTIAL_DELIVERY=1
 1. **ask/Proxy**：B-10（模型投递不阻塞 ask）+ B-11（Proxy 并发）；B-04、B-07、B-09、S-03 随 v0.3.24 发布后做生产验收。
 2. **存储治理**：B-12（审计保留、token 清理）+ M-02（接上 `DeleteExpiredTokens`）。
 3. **收口**：S-01 登记迁移；B-03 第二期；B-08 轮换；S-04 基准；S-06/S-08/B-13/M-01 阶段二。
+
+## v0.3.27 发布部署记录（2026-11-23）
+
+- 源提交：`6c64e52cc07a5f204f210b94975aa4744ce4c7ae`（tag `v0.3.27`，GitHub main 与 CNB main/master 已同步）。
+- CLI：GitHub Release `v0.3.27` 资产齐全；本机 `~/.local/bin/doops` sha256 `3ea13a47…` 与 `doops-darwin-arm64` 资产一致，`doops version` 报 `release=v0.3.27 commit=6c64e52c`。
+- Gateway：`doops-gateway-linux-amd64` 资产 sha256 `d1d93e6e…`；主机 `/usr/local/bin/doops-gateway` 实测同 hash，systemd active。`agent_registration=open`、`unenrolled_credential_delivery=open` 迁移窗口配置保持不变（见 S-01 收口步骤，仍未登记）。
+- Web：CNB 构建 `cnb-mft-1k83eqmav` 全绿；`docker.cnb.cool/l8ai/ai/doops.sh/web@sha256:db695f2edb7db0261d076a307bf82fbc07b131cee775839e5eaa0a7ad3b037f4` 经 `deploy-web-console.sh` 部署到 `doops.aiedulab.cn`，容器 running，`/console` 200；回滚容器 `doops-web-rollback-20261123T064625Z-28270` 保留。
+- Agent 镜像：`docker.cnb.cool/l8ai/ai/doops.sh@sha256:58b9cf3c61143c1a63a77971bb182f660a7347b27a98261d398005e8874e9cb1`（label `org.opencontainers.image.revision=6c64e52c`，doagent 0.2.47 / `aed1b4de`，base-light `inputs-53755a1eedca14c9`）。
+
+### Agent 逐 target 验收
+
+| Target | 路径 | 结果 | 证据 |
+|---|---|---|---|
+| gw-test | `doops upgrade` 原生控制器 | ✅ v0.3.27 | operation `upgrade_db42a74e…`，helm rev 29，receipt `doops-upgrade-receipt-ef72d802…-apply`，structuredSSH ready |
+| gw-zy | 首升控制器 `first-upgrade.py`（rbac_controller_identity_changed） | ✅ v0.3.27 | Job `zy-first-upgrade-v0327-r2` Complete；receipt phase=complete；Pod `doops-agent-239-74d99c698-kzl7x` imageID=digest；helm rev 3；备份 Secret/receipt 保留 |
+| gw-zyj | `doops upgrade` | ✅ v0.3.27 | operation `upgrade_64d10f46…`，release_commit 读回一致 |
+| gw-edu-coder | `doops upgrade` | ✅ v0.3.27 | operation `upgrade_d5bfb9b2…`，release_commit 读回一致 |
+| gw-hdu-235 | `doops upgrade` | ✅ v0.3.27 | operation `upgrade_d0e6f03a…`，release_commit 读回一致 |
+| gw-silicon | `release-host-agent.sh` 外部宿主控制器（sub2api-49 SSH） | ✅ v0.3.27 | audit 877831；`host_release_complete`；回滚容器 `doops-agent-rollback-agent-release-6c64e52c` 保留 |
+| gw-scu | — | ❌ 未升级 | preflight `rbac_controller_identity_changed`；首升控制器要求独立 kubeconfig，该实例为 serviceAccount 身份（`DOOPS_KUBECONFIG_SOURCE=serviceAccount`），控制器不支持此身份模式（2026-11-16 台账已记录的缺口） |
+| unicom-k8s | — | ❌ 未升级 | `upgrade_audit_protocol_required`（v1.3.126 无 upgradeAudit v1）；SA 身份同 gw-scu，首升控制器不适用 |
+| unicom-1 | — | ❌ 未升级 | Compose 一次性控制器绑定 2026-11-08 旧基线（容器 fc58d9a6、镜像 fd20c510），不可复用到 v0.3.27 |
+| gw-keyi | — | ❌ 未升级 | systemd 静态二进制（v1.3.43），无已审查的替换通道与主机访问 |
+| gw-jm / gw-114-k8s / oilan | — | ⚠️ 不可达 | 当前 Gateway 登录下 target unavailable，未做任何变更 |
+
+### CNB 构建说明
+
+- `api_trigger_release` 构建在 cloud-dev 节点上，`internal/server` 全量套件反复于约 2 分钟处被 SIGTERM（exit 143，非测试失败；隔离探针同命令完整跑完 523s）。release 配置改为：非 server 包正常跑 + `internal/server` 仅跑 `TestPlatformSkills|TestMonitorEngine` 冒烟子集；全量套件由 GitHub CI 在同一 commit `6c64e52c` 上 `go test -timeout 20m ./...` 完整通过作为覆盖证据。
+- `DO_AGENT_IMAGE` 为操作方输入，release stage 内按 `runtime-versions.env` 的 `DO_AGENT_INDEX_DIGEST` 导出 `docker.cnb.cool/l8ai/ai/doagent@sha256:35769bda…`（CNB 仓库未配置该变量，历史构建均跳过 Agent 镜像）。
+- `.cnb.yml` 正式修复（stage 拆分 + GOMEMLIMIT/GOGC + DO_AGENT_IMAGE 导出）尚未提交到 CNB 分支；本次 release 使用 API 内联 config。
