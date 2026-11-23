@@ -38,17 +38,17 @@ type platformSkillFile struct {
 }
 
 type platformSkillRecord struct {
-	Slug        string              `json:"slug"`
-	Name        string              `json:"name"`
-	Description string              `json:"description"`
-	Scope       string              `json:"scope"`       // system | custom
-	Category    string              `json:"category"` // inspection | security | ops
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Scope       string `json:"scope"`    // system | custom
+	Category    string `json:"category"` // inspection | security | ops
 	// Entrypoint and ExecMode are derived from the Skill package itself
 	// (SKILL.md frontmatter plus files); there is no builtin_strategy /
 	// strategy_id side channel (SKILL_FIRST_INSPECTION_SPEC.md 2.3, defect D9).
-	Entrypoint string `json:"entrypoint,omitempty"`
-	ExecMode   string `json:"exec_mode,omitempty"` // auto | script | agent
-	Enabled    bool   `json:"enabled"`
+	Entrypoint  string              `json:"entrypoint,omitempty"`
+	ExecMode    string              `json:"exec_mode,omitempty"` // auto | script | agent
+	Enabled     bool                `json:"enabled"`
 	SkillMD     string              `json:"skill_md,omitempty"`
 	Files       []platformSkillFile `json:"files,omitempty"`
 	FileCount   int                 `json:"file_count"`
@@ -225,6 +225,7 @@ func resolveSkillDispatchMode(sk platformSkillRecord, hasCustomAction bool) stri
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
+
 // SeedBuiltinSystemSkills indexes every builtin Skill package and materializes
 // its real directory under <dbDir>/skills/<slug>/. An existing package on disk
 // is authoritative and is never overwritten here, so an admin edit survives a

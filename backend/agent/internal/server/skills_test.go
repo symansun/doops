@@ -198,7 +198,7 @@ func TestInspectionPromptCommandAndArbitraryArtifacts(t *testing.T) {
 		t.Fatalf("expected prompt and command persisted on run, got %+v", runResp.Run)
 	}
 	if len(runResp.Items) != 1 {
-		t.Fatalf("expected exactly 1 item (not 6 default strategies), got %d: %+v", len(runResp.Items), runResp.Items)
+		t.Fatalf("expected exactly 1 item (a command run must not fan out into Skill items), got %d: %+v", len(runResp.Items), runResp.Items)
 	}
 	it := runResp.Items[0]
 	if it.CollectorMethod != "shell_command" || it.ArtifactFormat != "markdown+json" {
@@ -221,7 +221,7 @@ func TestInspectionPromptCommandAndArbitraryArtifacts(t *testing.T) {
 		t.Fatalf("persisted detail mismatch: run=%+v items=%+v", detailResp.Run, detailResp.Items)
 	}
 
-	// 3. Schedule with Skill + Prompt + Command persists cleanly and does not force default strategies.
+	// 3. Schedule with Prompt + Command persists cleanly and does not attach Skill items.
 	schedRaw := f.http(t, f.admin, "POST", "/v1/monitor/schedules", `{
 		"action": "create",
 		"name": "自定义命令与提示词巡检",
@@ -237,7 +237,7 @@ func TestInspectionPromptCommandAndArbitraryArtifacts(t *testing.T) {
 	if err := json.Unmarshal(schedRaw, &schedResp); err != nil {
 		t.Fatalf("decode schedule: %v", err)
 	}
-	if schedResp.Schedule.Prompt != "每日检查服务状态并输出 JSON" || schedResp.Schedule.Command == "" || len(schedResp.Schedule.Strategies) != 0 {
+	if schedResp.Schedule.Prompt != "每日检查服务状态并输出 JSON" || schedResp.Schedule.Command == "" || len(schedResp.Schedule.Skills) != 0 {
 		t.Fatalf("unexpected schedule saved: %+v", schedResp.Schedule)
 	}
 

@@ -67,7 +67,6 @@ var gatewayToolSpecs = []gatewayToolSpec{
 	{name: "doops_workspace_pull_chunk", visibility: clientCallable, action: constantAction(ActionPull)},
 	// Diagnostic collection uses a direct relay, not RunInternalToolCall.
 	{name: diagnosticReadTool, visibility: gatewayInternal},
-	{name: monitorInspectTool, visibility: gatewayInternal, publicDenial: "monitor_inspect_internal_only", action: constantAction(ActionInfo)},
 	{name: skillSyncTool, visibility: gatewayInternal, publicDenial: "skill_sync_internal_only", action: constantAction(ActionWrite)},
 	{name: skillsInspectTool, visibility: gatewayInternal, publicDenial: "skills_inspect_internal_only", action: constantAction(ActionInfo)},
 	{name: mcpSyncTool, visibility: gatewayInternal, publicDenial: "mcp_sync_internal_only", action: constantAction(ActionWrite)},

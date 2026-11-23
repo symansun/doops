@@ -99,7 +99,6 @@ func TestInternalToolsRetainTheirAction(t *testing.T) {
 		"doops_credential_cleanup":     ActionCredentialRevoke,
 		"doops_cos_sync":               ActionWrite,
 		diagnosticReadTool:             "",
-		monitorInspectTool:             ActionInfo,
 	} {
 		if spec := gatewayToolIndex[name]; spec.visibility != gatewayInternal || actionForTool(name, nil) != want {
 			t.Errorf("%s: want Gateway-internal tool with action %q", name, want)

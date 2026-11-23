@@ -446,8 +446,8 @@ func (l *operationLease) Release() {
 // `doops targets remove` keep reporting an exact "target offline" answer.
 func (h *ClientService) targetReconnectGrace(tool string) time.Duration {
 	switch tool {
-	case "doops_node_info", "doops_task_status", monitorInspectTool:
-		// Liveness probes and monitor dispatch must report current target state promptly.
+	case "doops_node_info", "doops_task_status":
+		// Liveness probes must report current target state promptly.
 		return 0
 	case "doops_credential_materialize", "doops_credential_cleanup", "doops_credential_import":
 		// Credential delivery and cleanup bind to one target and must fail (or

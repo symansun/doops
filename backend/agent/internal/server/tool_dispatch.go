@@ -50,7 +50,6 @@ var agentToolHandlers = map[string]func(*Gateway, toolInvocation){
 	"doops_workspace_pull_begin":   (*Gateway).handleToolWorkspacePullBegin,
 	"doops_workspace_pull_chunk":   (*Gateway).handleToolWorkspacePullChunk,
 	diagnosticReadTool:             (*Gateway).handleDiagnosticReadTool,
-	monitorInspectTool:             (*Gateway).handleToolMonitorInspect,
 	skillSyncTool:                  (*Gateway).handleToolSkillSync,
 	skillsInspectTool:              (*Gateway).handleToolSkillsInspect,
 	mcpSyncTool:                    (*Gateway).handleToolMCPSync,

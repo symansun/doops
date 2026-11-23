@@ -270,7 +270,7 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   target, derived from the user's latest 1000 audit records, and switches to
   one on selection.
 - The sidebar's 「自动化」 entry (`tab=tasks`, accessible even before selecting a
-  target) combines 「定时巡检与记录」 (scheduled/manual strategy inspections and
+  target) combines 「定时巡检与记录」 (scheduled/manual Skill-package inspections and
   run reports across authorized targets) and 「后台运行任务」 (the current user's
   Gateway-hosted detached `doops_bg` tasks — running, success, failed, canceled,
   timeout, outcome_unknown — for the selected target, even while the Agent is

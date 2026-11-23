@@ -138,6 +138,7 @@ func TestBuiltinSkillPackagesEmbedDiskIndexAndReset(t *testing.T) {
 		}
 	}
 }
+
 // TestBuiltinSkillDispatchIsPackageDriven locks the SF-02 / D9 contract: neither
 // the builtin spec nor the platform skill record may carry a builtin_strategy /
 // strategy_id side channel. Dispatch is derived purely from the Skill package

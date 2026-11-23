@@ -9,94 +9,6 @@ import (
 	"github.com/user/doops/agent/api"
 )
 
-const (
-	monitorInspectTool = "doops_monitor_inspect"
-
-	monitorStrategyVMHost           = "vm_host"
-	monitorStrategySSHHost          = "ssh_host"
-	monitorStrategyK8sCluster       = "k8s_cluster"
-	monitorStrategyContainerRuntime = "container_runtime"
-	monitorStrategyAppService       = "app_service"
-	monitorStrategyDatabaseService  = "database_service"
-)
-
-type monitorStrategyMeta struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	Description     string   `json:"description"`
-	AssetKinds      []string `json:"asset_kinds"`
-	CollectorMethod string   `json:"collector_method"`
-	Checks          []string `json:"checks"`
-}
-
-var monitorStrategyCatalog = []monitorStrategyMeta{
-	{
-		ID:              monitorStrategyVMHost,
-		Name:            "虚机 / 物理机本机策略",
-		Description:     "通过 Agent 本机直采 CPU、内存、内核、磁盘容量与 I/O、网卡流量、GPU 及 M1–M5 系统合规与安全巡检。",
-		AssetKinds:      []string{"vm", "physical"},
-		CollectorMethod: "agent_local",
-		Checks:          []string{"运行与重启(M1)", "CPU与内存水位(M2)", "磁盘容量", "磁盘I/O延迟", "可疑与僵尸进程(M3)", "内核配置合规(M4)", "登录与权限基线(M5)"},
-	},
-	{
-		ID:              monitorStrategySSHHost,
-		Name:            "SSH 远程主机策略",
-		Description:     "由在线 Agent 经结构化只读 SSH（BatchMode）采集无 Agent 虚机/物理机的资源指标与系统巡检项。",
-		AssetKinds:      []string{"vm", "physical"},
-		CollectorMethod: "ssh",
-		Checks:          []string{"SSH连通性", "运行与重启(M1)", "CPU与内存水位(M2)", "磁盘容量", "磁盘I/O", "僵尸进程与负载", "内核安全基线(M4)"},
-	},
-	{
-		ID:              monitorStrategyK8sCluster,
-		Name:            "Kubernetes 集群策略",
-		Description:     "通过 Agent 内置 kubectl 采集 Node/Pod 资源、节点健康与压力状态、Pod 异常重启、控制器副本、PVC 及告警事件。",
-		AssetKinds:      []string{"k8s"},
-		CollectorMethod: "k8s_api",
-		Checks:          []string{"节点健康与压力", "Pod运行态与重启", "控制器副本就绪", "PVC存储绑定", "集群Warning事件", "Node/Pod资源指标"},
-	},
-	{
-		ID:              monitorStrategyContainerRuntime,
-		Name:            "容器运行时策略",
-		Description:     "自动探测本机 Docker / nerdctl / Podman 运行态容器 CPU、内存与内存限额占比，识别退出或异常容器。",
-		AssetKinds:      []string{"container"},
-		CollectorMethod: "agent_local",
-		Checks:          []string{"运行时可用性", "容器退出/重启状态", "容器内存限额水位"},
-	},
-	{
-		ID:              monitorStrategyAppService,
-		Name:            "应用 / Web / API 策略",
-		Description:     "采集本机 Nginx 并发与请求速率，并对登记网站端点执行可用性、响应时间、错误率及 HTTPS/TLS 证书与安全响应头巡检。",
-		AssetKinds:      []string{"app"},
-		CollectorMethod: "http_probe",
-		Checks:          []string{"服务可用性(A1)", "响应时间与错误率", "HTTPS证书有效期与安全响应头(A4)", "Nginx并发与请求速率"},
-	},
-	{
-		ID:              monitorStrategyDatabaseService,
-		Name:            "数据库策略",
-		Description:     "针对已登记数据库实例探测连通性与延迟，识别实例存活状态与只读巡检覆盖情况。",
-		AssetKinds:      []string{"database"},
-		CollectorMethod: "tcp_probe",
-		Checks:          []string{"数据库实例连通性(A2)", "连接响应延迟"},
-	},
-}
-
-var validMonitorStrategies = func() map[string]bool {
-	m := make(map[string]bool, len(monitorStrategyCatalog))
-	for _, s := range monitorStrategyCatalog {
-		m[s.ID] = true
-	}
-	return m
-}()
-
-var defaultMonitorStrategies = []string{
-	monitorStrategyVMHost,
-	monitorStrategySSHHost,
-	monitorStrategyK8sCluster,
-	monitorStrategyContainerRuntime,
-	monitorStrategyAppService,
-	monitorStrategyDatabaseService,
-}
-
 func defaultMonitorThresholds() api.MonitorInspectThresholds {
 	return api.MonitorInspectThresholds{
 		CPUWarnPercent:    80,
@@ -170,30 +82,6 @@ func normalizeMonitorThresholds(in api.MonitorInspectThresholds) api.MonitorInsp
 	return d
 }
 
-func normalizeMonitorStrategies(list []string) []string {
-	out := normalizeMonitorStrategiesOptional(list)
-	if len(out) == 0 {
-		return append([]string(nil), defaultMonitorStrategies...)
-	}
-	return out
-}
-
-func normalizeMonitorStrategiesOptional(list []string) []string {
-	if len(list) == 0 {
-		return []string{}
-	}
-	seen := make(map[string]bool, len(list))
-	out := make([]string, 0, len(list))
-	for _, s := range list {
-		s = strings.TrimSpace(s)
-		if validMonitorStrategies[s] && !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 func normalizeSkillSlugs(list []string) []string {
 	if len(list) == 0 {
 		return []string{}
@@ -229,7 +117,6 @@ type monitorScheduleRecord struct {
 	ScopeMode       string                       `json:"scope_mode"` // all_online | targets | tags
 	Targets         []monitorTargetRef           `json:"targets"`
 	Tags            []string                     `json:"tags"`
-	Strategies      []string                     `json:"strategies"`
 	Skills          []string                     `json:"skills,omitempty"`
 	Prompt          string                       `json:"prompt,omitempty"`
 	Command         string                       `json:"command,omitempty"`
@@ -404,7 +291,6 @@ type monitorOverviewResponse struct {
 	Trends          []monitorTrendBucket        `json:"trends"`
 	ThresholdAlerts []monitorOpenThresholdAlert `json:"threshold_alerts"`
 	RecentRuns      []monitorRunRecord          `json:"recent_runs"`
-	Strategies      []monitorStrategyMeta       `json:"strategies"`
 }
 
 type monitorHistoryResponse struct {

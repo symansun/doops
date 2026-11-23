@@ -136,9 +136,8 @@ func (h *GatewayHub) HandleMonitorSchedules(w http.ResponseWriter, r *http.Reque
 			schedules = visible
 		}
 		writeJSONHTTP(w, map[string]any{
-			"schedules":  schedules,
-			"strategies": monitorStrategyCatalog,
-			"defaults":   defaultMonitorThresholds(),
+			"schedules": schedules,
+			"defaults":  defaultMonitorThresholds(),
 		})
 	case http.MethodPost:
 		if !h.store.UserIsPlatformAdmin(auth.UserID) {
@@ -150,6 +149,9 @@ func (h *GatewayHub) HandleMonitorSchedules(w http.ResponseWriter, r *http.Reque
 		dec.DisallowUnknownFields()
 		if dec.Decode(&req) != nil || dec.Decode(new(any)) != io.EOF {
 			writeMonitorHTTPError(w, 400, "invalid_monitor_schedule_json", "计划请求格式无效")
+			return
+		}
+		if rejectLegacyStrategyParams(w, req.Strategies) {
 			return
 		}
 		auditID, _ := h.store.StartAudit(AuditEvent{
@@ -256,10 +258,6 @@ func (h *GatewayHub) applyMonitorScheduleMutation(r *http.Request, auth TokenAut
 			return nil, "invalid_command", "巡检命令过长（上限 4 KiB）或包含非法字符", 400
 		}
 		skills := normalizeSkillSlugs(req.Skills)
-		strategies := normalizeMonitorStrategiesOptional(req.Strategies)
-		if len(skills) == 0 && prompt == "" && command == "" {
-			strategies = normalizeMonitorStrategies(req.Strategies)
-		}
 		rec := monitorScheduleRecord{
 			ID:              strings.TrimSpace(req.ID),
 			Name:            name,
@@ -268,7 +266,6 @@ func (h *GatewayHub) applyMonitorScheduleMutation(r *http.Request, auth TokenAut
 			ScopeMode:       scopeMode,
 			Targets:         cleanTargets,
 			Tags:            cleanTags,
-			Strategies:      strategies,
 			Skills:          skills,
 			Prompt:          prompt,
 			Command:         command,
@@ -339,9 +336,8 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeJSONHTTP(w, map[string]any{
-				"run":        run,
-				"items":      items,
-				"strategies": monitorStrategyCatalog,
+				"run":   run,
+				"items": items,
 			})
 			return
 		}
@@ -352,7 +348,7 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 			writeMonitorHTTPError(w, 503, "monitor_runs_unavailable", "无法读取巡检执行记录列表")
 			return
 		}
-		writeJSONHTTP(w, map[string]any{"runs": runs, "strategies": monitorStrategyCatalog})
+		writeJSONHTTP(w, map[string]any{"runs": runs})
 	case http.MethodPost:
 		if subPath != "" {
 			writeMonitorHTTPError(w, 405, "method_not_allowed", "不支持对该路径 POST")
@@ -363,6 +359,9 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 		dec.DisallowUnknownFields()
 		if dec.Decode(&req) != nil || dec.Decode(new(any)) != io.EOF {
 			writeMonitorHTTPError(w, 400, "invalid_monitor_run_json", "巡检触发参数格式无效")
+			return
+		}
+		if rejectLegacyStrategyParams(w, req.Strategies) || rejectLegacySSHHosts(w, req.SSHHosts) {
 			return
 		}
 
@@ -384,7 +383,6 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 			ScopeMode:   req.ScopeMode,
 			Targets:     req.Targets,
 			Tags:        req.Tags,
-			Strategies:  req.Strategies,
 			Skills:      normalizeSkillSlugs(req.Skills),
 			Prompt:      cleanPrompt,
 			Command:     cleanCommand,
@@ -432,7 +430,6 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 			plan.ScopeMode = sched.ScopeMode
 			plan.Targets = sched.Targets
 			plan.Tags = sched.Tags
-			plan.Strategies = sched.Strategies
 			plan.Skills = sched.Skills
 			plan.Prompt = sched.Prompt
 			plan.Command = sched.Command
@@ -456,17 +453,6 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 					writeMonitorHTTPError(w, 403, "monitor_target_forbidden", "当前账号无权巡检所选目标")
 					return
 				}
-			}
-			for _, sh := range req.SSHHosts {
-				if !safeMachineID(sh.AssetID) || !catalogHost(sh.Address) {
-					writeMonitorHTTPError(w, 400, "invalid_ssh_host", "SSH 主机资产编号或地址格式无效")
-					return
-				}
-				if sh.SSHUser != "" && !sshUsernamePattern.MatchString(sh.SSHUser) {
-					writeMonitorHTTPError(w, 400, "invalid_ssh_user", "SSH 用户名格式无效")
-					return
-				}
-				plan.ExplicitSSH = append(plan.ExplicitSSH, sh)
 			}
 		}
 
@@ -540,4 +526,26 @@ func (h *GatewayHub) HandleMonitorMetrics(w http.ResponseWriter, r *http.Request
 
 func writeMonitorHTTPError(w http.ResponseWriter, status int, code, message string) {
 	writeDoopsError(w, status, "", doopsErrorResponse{Error: code, Code: code, Message: message})
+}
+
+// rejectLegacyStrategyParams refuses the retired native strategy selector.
+// Inspection capability comes only from Skill packages
+// (SKILL_FIRST_INSPECTION_SPEC.md 1.1), so the parameter must fail loudly
+// instead of being silently ignored by an older client.
+func rejectLegacyStrategyParams(w http.ResponseWriter, strategies []string) bool {
+	if len(strategies) == 0 {
+		return false
+	}
+	writeMonitorHTTPError(w, 400, "strategies_removed", "strategies 已移除，请改用 skill/actions：巡检能力由 Skill 包提供")
+	return true
+}
+
+// rejectLegacySSHHosts refuses the retired inline SSH host list; SSH inspection
+// is delivered by the inspect-ssh-host Skill package now.
+func rejectLegacySSHHosts(w http.ResponseWriter, hosts []api.MonitorInspectAsset) bool {
+	if len(hosts) == 0 {
+		return false
+	}
+	writeMonitorHTTPError(w, 400, "ssh_hosts_removed", "ssh_hosts 已移除，请改用 inspect-ssh-host Skill 包")
+	return true
 }

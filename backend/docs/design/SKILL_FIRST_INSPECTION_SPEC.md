@@ -14,6 +14,8 @@ DoOps 平台层定位为 **极薄的通用运维与巡检框架**，不承载写
    - 严禁在平台核心保留 `builtin_strategy` / `strategy_id` 双轨后门。
    - 所有系统预置巡检（虚机/物理机、容器运行时、Kubernetes、Web/应用服务、数据库、违规代理、补丁合规、远程主机）与用户自定义巡检，统一以 **自包含的 Skill 目录包** 存在。
    - 在控制台修改任意 Skill 的 `SKILL.md` 或 `scripts/` 脚本后，下次执行必须立即反映修改，不允许绕开 Skill 文件走硬编码逻辑。
+   - **巡检能力的唯一来源是 Skill 包。** 原生采集器（`vm_host` / `ssh_host` / `k8s_cluster` / `container_runtime` / `app_service` / `database_service` 六条 `builtin_strategy`）与内部工具 `doops_monitor_inspect` 已整体退役，代码中不再存在；新增巡检能力只能新增或修改 Skill 包，不得复活任何原生采集分支。
+   - 请求仍携带 `strategies` 或 `ssh_hosts` 时，服务端一律返回 `400`（`strategies_removed` / `ssh_hosts_removed`）并提示改用 `skill/actions`，不得静默忽略。历史 run 记录的 `strategy` 字段只读展示，不再参与分派。
 2. **MCP 为纯粹工具能力层**
    - 「MCP 管理」统一治理内置 MCP（`doops`、`dosql`）与自定义外部 MCP（`stdio` / `http` / `sse`），提供真实的 JSON-RPC 2.0 `initialize` + `tools/list` 探测与原子热同步（写入 `/root/.agent/doops-mcp-servers.json` 并合并进 `/root/.agent/settings.json` 与 `do-agent` 允许工具列表）。
    - 「AI 助手」与「智能巡检」共享同一套已同步 Skill 与 MCP，不存在仅归属于巡检的孤立 MCP 开关。
@@ -78,9 +80,11 @@ required_mcp: doops
 脚本直跑模式向子进程注入且仅注入以下非敏感元数据环境变量：
 - `DOOPS_SKILL_DIR`（如 `/root/.agent/skills/inspect-vm-host`）
 - `DOOPS_SKILL_SLUG`
-- `DOOPS_CLUSTER`
-- `DOOPS_INSTANCE`
+- `DOOPS_TARGET_CLUSTER`
+- `DOOPS_TARGET_INSTANCE`
 - `DOOPS_RUN_ID`
+
+脚本可读取这些变量用于自述目标，也可以完全不读，二者都不影响判定结果；判定只依据脚本的 stdout 产物。脚本目录根由 `DOOPS_AGENT_SKILLS_ROOT` 决定（缺省 `/root/.agent/skills`），脚本以 `sh <root>/<slug>/<entrypoint>` 方式执行。
 
 ### 2.4 系统预置 Skill 包（全部真实可运行、可编辑）
 
@@ -96,6 +100,8 @@ required_mcp: doops
 | `inspect-package-vuln` | `scripts/inspect.sh`（脚本直跑 / 可切换 AI） | 检查发行版、内核、待更新安全补丁（`apt`/`dnf`/`yum`/`apk`）与重启需求标记 |
 
 平台管理员可在控制台编辑上述系统 Skill 的 `SKILL.md` 与 `scripts/`，也可一键 `reset_system` 恢复内置默认。
+
+历史兼容：早期 run 记录里的 `strategy` 值（`vm_host`、`ssh_host`、`k8s_cluster`、`container_runtime`、`app_service`、`database_service`）在重测（`retest_run_id`）时按上表映射到对应 Skill 包并重新执行；映射不到的历史资产保留为 `skipped` 项并给出 `legacy_strategy_retired` 原因，不静默丢失。
 
 ---
 
@@ -176,6 +182,9 @@ required_mcp: doops
   - `previous_run_id`、`previous_at_ms`、`previous_status`、`status_changed`
   - `metric_deltas[]`：`{ key, label, unit, previous, current, delta, delta_pct }`
   - `added_checks[]` / `resolved_checks[]` / `changed_checks[]`（按 `check.id` 或 `check.name` 匹配，突出显示新出现的异常、已恢复项与状态退化项）
+- `status_changed` 与 `previous_status` 固定为 **run 级**（实现即 run 级）：一次巡检的整体状态变化由 run 表达，item 级的差异由 `changed_checks[]` 表达，不再引入 item 级 `status_changed`，避免同一份响应里出现两套互相矛盾的状态口径。
+- `metric_deltas[]` 的渲染契约：未变化的键直接省略（不输出 `delta=0`），上一次存在而本次消失的键按 `0` 计负 delta，保证前端只在有变化时渲染芯片且不会出现空涨跌。
+- 有界上限（超出上限一律截断，不报错）：时序查询 `LIMIT 4000` 行，单张趋势图最多渲染 `720` 点；`range` 白名单为 `1h` / `6h` / `24h` / `7d` / `30d`，其中 `30d` 仅在新指标时序接口开放，run 详情与概览不接受 `30d`。
 
 ### 4.4 前端动态可视化器（`InspectionArtifactViewer`）
 

@@ -53,10 +53,13 @@ func (s *GatewayStore) GetMonitorSchedule(ctx context.Context, id string) (monit
 func scanMonitorSchedule(row interface{ Scan(...any) error }) (monitorScheduleRecord, error) {
 	var rec monitorScheduleRecord
 	var enabledInt int
-	var targetsRaw, tagsRaw, strategiesRaw, skillsRaw, thresholdsRaw string
+	var targetsRaw, tagsRaw, skillsRaw, thresholdsRaw string
+	// strategies_json is a retired column: it stays in the table so rows written
+	// before SF-09 keep loading, but it no longer selects any execution path.
+	var legacyStrategiesRaw string
 	err := row.Scan(
 		&rec.ID, &rec.Name, &rec.Description, &enabledInt, &rec.ScopeMode,
-		&targetsRaw, &tagsRaw, &strategiesRaw, &skillsRaw, &rec.Prompt, &rec.Command, &thresholdsRaw,
+		&targetsRaw, &tagsRaw, &legacyStrategiesRaw, &skillsRaw, &rec.Prompt, &rec.Command, &thresholdsRaw,
 		&rec.IntervalSeconds, &rec.NextRunAtMs, &rec.LastRunAtMs,
 		&rec.LastRunID, &rec.LastStatus, &rec.CreatedBy, &rec.CreatedAt, &rec.UpdatedAt,
 	)
@@ -66,21 +69,14 @@ func scanMonitorSchedule(row interface{ Scan(...any) error }) (monitorScheduleRe
 	rec.Enabled = enabledInt != 0
 	rec.Targets = []monitorTargetRef{}
 	rec.Tags = []string{}
-	rec.Strategies = []string{}
 	rec.Skills = []string{}
 	_ = json.Unmarshal([]byte(targetsRaw), &rec.Targets)
 	_ = json.Unmarshal([]byte(tagsRaw), &rec.Tags)
-	_ = json.Unmarshal([]byte(strategiesRaw), &rec.Strategies)
 	_ = json.Unmarshal([]byte(skillsRaw), &rec.Skills)
 	_ = json.Unmarshal([]byte(thresholdsRaw), &rec.Thresholds)
 	rec.Skills = normalizeSkillSlugs(rec.Skills)
 	rec.Prompt = strings.TrimSpace(rec.Prompt)
 	rec.Command = strings.TrimSpace(rec.Command)
-	if len(rec.Skills) == 0 && rec.Prompt == "" && rec.Command == "" {
-		rec.Strategies = normalizeMonitorStrategies(rec.Strategies)
-	} else {
-		rec.Strategies = normalizeMonitorStrategiesOptional(rec.Strategies)
-	}
 	rec.Thresholds = normalizeMonitorThresholds(rec.Thresholds)
 	return rec, nil
 }
@@ -91,11 +87,6 @@ func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorSched
 	rec.Skills = normalizeSkillSlugs(rec.Skills)
 	rec.Prompt = strings.TrimSpace(rec.Prompt)
 	rec.Command = strings.TrimSpace(rec.Command)
-	if len(rec.Skills) == 0 && rec.Prompt == "" && rec.Command == "" {
-		rec.Strategies = normalizeMonitorStrategies(rec.Strategies)
-	} else {
-		rec.Strategies = normalizeMonitorStrategiesOptional(rec.Strategies)
-	}
 	rec.Thresholds = normalizeMonitorThresholds(rec.Thresholds)
 	if rec.Targets == nil {
 		rec.Targets = []monitorTargetRef{}
@@ -105,7 +96,6 @@ func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorSched
 	}
 	targetsJSON, _ := json.Marshal(rec.Targets)
 	tagsJSON, _ := json.Marshal(rec.Tags)
-	strategiesJSON, _ := json.Marshal(rec.Strategies)
 	skillsJSON, _ := json.Marshal(rec.Skills)
 	thresholdsJSON, _ := json.Marshal(rec.Thresholds)
 	enabledInt := 0
@@ -128,7 +118,7 @@ func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorSched
 			last_run_at_ms, last_run_id, last_status, created_by, created_at, updated_at
 		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			rec.ID, rec.Name, rec.Description, enabledInt, rec.ScopeMode,
-			string(targetsJSON), string(tagsJSON), string(strategiesJSON), string(skillsJSON), rec.Prompt, rec.Command, string(thresholdsJSON),
+			string(targetsJSON), string(tagsJSON), "[]", string(skillsJSON), rec.Prompt, rec.Command, string(thresholdsJSON),
 			rec.IntervalSeconds, rec.NextRunAtMs, rec.LastRunAtMs, rec.LastRunID, rec.LastStatus,
 			rec.CreatedBy, rec.CreatedAt, rec.UpdatedAt,
 		)
@@ -148,7 +138,7 @@ func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorSched
 		strategies_json=?, skills_json=?, prompt=?, command=?, thresholds_json=?, interval_seconds=?, next_run_at_ms=?, updated_at=?
 		WHERE id=?`,
 		rec.Name, rec.Description, enabledInt, rec.ScopeMode,
-		string(targetsJSON), string(tagsJSON), string(strategiesJSON), string(skillsJSON), rec.Prompt, rec.Command, string(thresholdsJSON),
+		string(targetsJSON), string(tagsJSON), "[]", string(skillsJSON), rec.Prompt, rec.Command, string(thresholdsJSON),
 		rec.IntervalSeconds, nextRun, rec.UpdatedAt, rec.ID,
 	)
 	if err != nil {
@@ -849,7 +839,6 @@ func (h *GatewayHub) BuildMonitorOverview(ctx context.Context, auth TokenAuth, r
 		Trends:          trends,
 		ThresholdAlerts: thresholdAlerts,
 		RecentRuns:      recentRuns,
-		Strategies:      monitorStrategyCatalog,
 	}, nil
 }
 

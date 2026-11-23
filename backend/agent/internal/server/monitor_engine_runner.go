@@ -2,11 +2,9 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,12 +21,10 @@ type monitorRunPlan struct {
 	ScopeMode    string // all_online | targets | tags
 	Targets      []monitorTargetRef
 	Tags         []string
-	Strategies   []string
 	Skills       []string
 	Prompt       string
 	Command      string
 	Thresholds   api.MonitorInspectThresholds
-	ExplicitSSH  []api.MonitorInspectAsset
 	RetestItems  map[string][]api.MonitorInspectAsset // keyed by cluster/instance
 }
 
@@ -71,7 +67,6 @@ func (h *GatewayHub) RunDueMonitorSchedules(ctx context.Context, now time.Time) 
 				ScopeMode:    s.ScopeMode,
 				Targets:      s.Targets,
 				Tags:         s.Tags,
-				Strategies:   s.Strategies,
 				Skills:       s.Skills,
 				Prompt:       s.Prompt,
 				Command:      s.Command,
@@ -170,186 +165,6 @@ func (h *GatewayHub) resolveMonitorPlanTargets(ctx context.Context, plan monitor
 	return out
 }
 
-func (h *GatewayHub) buildAgentInspectAssets(ctx context.Context, cluster, instance string, strategies []string, explicitSSH []api.MonitorInspectAsset) []api.MonitorInspectAsset {
-	stratSet := make(map[string]bool, len(strategies))
-	for _, s := range strategies {
-		stratSet[s] = true
-	}
-	assets := []api.MonitorInspectAsset{}
-
-	// 1. Machines bound to this Agent (vm_host + ssh_host)
-	hasLocalHost := false
-	if (stratSet[monitorStrategyVMHost] || stratSet[monitorStrategySSHHost]) && h.store.tableExists(ctx, "inventory_machines") {
-		hasTags := h.store.tableExists(ctx, "inventory_machine_tags")
-		hasLogins := h.store.tableExists(ctx, "inventory_machine_login_accounts")
-		rows, err := h.store.db.QueryContext(ctx, `SELECT asset_id, name, kind, address FROM inventory_machines
-			WHERE cluster=? AND instance=? ORDER BY (asset_id=?) DESC, kind='vm' DESC, asset_id ASC LIMIT 32`,
-			cluster, instance, instance)
-		if err == nil {
-			type mRow struct{ id, name, kind, addr string }
-			var mList []mRow
-			for rows.Next() {
-				var m mRow
-				if rows.Scan(&m.id, &m.name, &m.kind, &m.addr) == nil {
-					mList = append(mList, m)
-				}
-			}
-			rows.Close()
-			for idx, m := range mList {
-				var tags []string
-				if hasTags {
-					tRows, tErr := h.store.db.QueryContext(ctx, `SELECT tag FROM inventory_machine_tags WHERE asset_id=? ORDER BY tag`, m.id)
-					if tErr == nil {
-						for tRows.Next() {
-							var tg string
-							if tRows.Scan(&tg) == nil {
-								tags = append(tags, tg)
-							}
-						}
-						tRows.Close()
-					}
-				}
-				sshUser := ""
-				if hasLogins {
-					_ = h.store.db.QueryRowContext(ctx, `SELECT username FROM inventory_machine_login_accounts WHERE asset_id=? ORDER BY username LIMIT 1`, m.id).Scan(&sshUser)
-				}
-				isSSH := false
-				for _, tg := range tags {
-					if tg == "ssh" || tg == "collector=ssh" {
-						isSSH = true
-					}
-				}
-				if idx == 0 && !isSSH && stratSet[monitorStrategyVMHost] {
-					hasLocalHost = true
-					assets = append(assets, api.MonitorInspectAsset{
-						AssetID: m.id, AssetName: m.name, AssetKind: m.kind,
-						Strategy: monitorStrategyVMHost, Address: m.addr, Tags: tags,
-					})
-				} else if m.addr != "" && stratSet[monitorStrategySSHHost] {
-					assets = append(assets, api.MonitorInspectAsset{
-						AssetID: m.id, AssetName: m.name, AssetKind: m.kind,
-						Strategy: monitorStrategySSHHost, Address: m.addr, SSHUser: sshUser, Tags: tags,
-					})
-				}
-			}
-		}
-	}
-	if stratSet[monitorStrategyVMHost] && !hasLocalHost {
-		assets = append(assets, api.MonitorInspectAsset{
-			AssetID:   instance,
-			AssetName: cluster + "/" + instance,
-			AssetKind: "vm",
-			Strategy:  monitorStrategyVMHost,
-		})
-	}
-	if stratSet[monitorStrategySSHHost] {
-		for _, extra := range explicitSSH {
-			extra.Strategy = monitorStrategySSHHost
-			if extra.AssetKind == "" {
-				extra.AssetKind = "vm"
-			}
-			assets = append(assets, extra)
-		}
-	}
-
-	// 2. K8s Cluster Strategy
-	if stratSet[monitorStrategyK8sCluster] {
-		addedK8s := false
-		if h.store.tableExists(ctx, "cluster_inventory_sources") {
-			var kID, kName string
-			if err := h.store.db.QueryRowContext(ctx, `SELECT asset_id, name FROM cluster_inventory_sources WHERE cluster=? AND instance=? LIMIT 1`, cluster, instance).Scan(&kID, &kName); err == nil && kID != "" {
-				addedK8s = true
-				assets = append(assets, api.MonitorInspectAsset{
-					AssetID: kID, AssetName: kName, AssetKind: "k8s", Strategy: monitorStrategyK8sCluster,
-				})
-			}
-		}
-		if !addedK8s {
-			assets = append(assets, api.MonitorInspectAsset{
-				AssetID: cluster + "-k8s", AssetName: cluster + " Kubernetes", AssetKind: "k8s", Strategy: monitorStrategyK8sCluster,
-			})
-		}
-	}
-
-	// 3. Container Runtime Strategy
-	if stratSet[monitorStrategyContainerRuntime] {
-		assets = append(assets, api.MonitorInspectAsset{
-			AssetID: instance + "-containers", AssetName: instance + " 容器运行时", AssetKind: "container", Strategy: monitorStrategyContainerRuntime,
-		})
-	}
-
-	// 4. App / Website & Database Strategies from inventory_resource_catalog
-	hasCatalog := h.store.tableExists(ctx, "inventory_resource_catalog")
-	if stratSet[monitorStrategyAppService] {
-		if hasCatalog {
-			rows, err := h.store.db.QueryContext(ctx, `SELECT name, details FROM inventory_resource_catalog WHERE kind='website' AND cluster=? AND instance=? ORDER BY id LIMIT 16`, cluster, instance)
-			if err == nil {
-				for rows.Next() {
-					var name string
-					var raw []byte
-					if rows.Scan(&name, &raw) != nil {
-						continue
-					}
-					var d map[string]string
-					if json.Unmarshal(raw, &d) != nil {
-						continue
-					}
-					scheme, domain, p := d["scheme"], d["domain"], d["path"]
-					if (scheme != "http" && scheme != "https") || !catalogHost(domain) || !strings.HasPrefix(p, "/") {
-						continue
-					}
-					aid := domain
-					if !monitorID(aid) {
-						aid = name
-					}
-					assets = append(assets, api.MonitorInspectAsset{
-						AssetID: aid, AssetName: name, AssetKind: "app",
-						Strategy: monitorStrategyAppService, URL: scheme + "://" + domain + p,
-					})
-				}
-				rows.Close()
-			}
-		}
-		// Local nginx stub_status probe (skipped cleanly if nginx is absent).
-		assets = append(assets, api.MonitorInspectAsset{
-			AssetID: "nginx", AssetName: "本机 Nginx", AssetKind: "app", Strategy: monitorStrategyAppService,
-		})
-	}
-
-	if stratSet[monitorStrategyDatabaseService] && hasCatalog {
-		rows, err := h.store.db.QueryContext(ctx, `SELECT name, details FROM inventory_resource_catalog WHERE kind='database' AND cluster=? AND instance=? ORDER BY id LIMIT 16`, cluster, instance)
-		if err == nil {
-			for rows.Next() {
-				var name string
-				var raw []byte
-				if rows.Scan(&name, &raw) != nil {
-					continue
-				}
-				var d map[string]string
-				if json.Unmarshal(raw, &d) != nil {
-					continue
-				}
-				port, _ := strconv.Atoi(d["port"])
-				aid := name
-				if !monitorID(aid) {
-					aid = d["database"]
-				}
-				if aid == "" {
-					aid = d["host"]
-				}
-				assets = append(assets, api.MonitorInspectAsset{
-					AssetID: aid, AssetName: name, AssetKind: "database",
-					Strategy: monitorStrategyDatabaseService,
-					Engine:   d["engine"], Address: d["host"], Port: port, Database: d["database"],
-				})
-			}
-			rows.Close()
-		}
-	}
-
-	return assets
-}
-
 func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan) (monitorRunRecord, []monitorRunItemRecord, error) {
 	started := time.Now().UTC()
 	runID := "run_" + randomHex(8)
@@ -379,17 +194,6 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 			drivenSkillSlugs = append(drivenSkillSlugs, sk.Slug)
 			selectedSkills = append(selectedSkills, sk)
 		}
-	}
-	if plan.RetestItems == nil {
-		// A Skill-driven or custom run must not silently pull in the six default
-		// native strategies; an explicit strategy list is still honored.
-		if len(selectedSkills) > 0 || hasCustomAction {
-			plan.Strategies = normalizeMonitorStrategiesOptional(plan.Strategies)
-		} else {
-			plan.Strategies = normalizeMonitorStrategies(plan.Strategies)
-		}
-	} else {
-		plan.Strategies = normalizeMonitorStrategies(plan.Strategies)
 	}
 	if plan.TriggerKind == "" {
 		plan.TriggerKind = "manual"
@@ -424,7 +228,7 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 		TokenID:        plan.Auth.TokenID,
 		Action:         GatewayAction("monitor:run"),
 		Session:        "monitor-" + runID,
-		CommandSummary: fmt.Sprintf("run=%s trigger=%s targets=%d strategies=%s skills=%s has_prompt=%t has_cmd=%t", runID, plan.TriggerKind, len(targets), strings.Join(plan.Strategies, ","), strings.Join(drivenSkillSlugs, ","), plan.Prompt != "", plan.Command != ""),
+		CommandSummary: fmt.Sprintf("run=%s trigger=%s targets=%d skills=%s has_prompt=%t has_cmd=%t", runID, plan.TriggerKind, len(targets), strings.Join(drivenSkillSlugs, ","), plan.Prompt != "", plan.Command != ""),
 	})
 
 	var (
@@ -433,6 +237,8 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 		allSnapshots []monitorResourceSnapshot
 		allSeries    []monitorSeriesBridgeEntry
 		offlineCount int
+
+		retestSkillSlugs = map[string]bool{}
 	)
 
 	hasCommand := plan.Command != ""
@@ -448,167 +254,81 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 			defer func() { <-sem }()
 
 			tStart := time.Now()
-			var assets []api.MonitorInspectAsset
+			var retestAssets []api.MonitorInspectAsset
 			if plan.RetestItems != nil {
-				assets = plan.RetestItems[tunnelKey(t.Cluster, t.Instance)]
-			} else if len(plan.Strategies) > 0 {
-				assets = h.buildAgentInspectAssets(ctx, t.Cluster, t.Instance, plan.Strategies, plan.ExplicitSSH)
+				retestAssets = plan.RetestItems[tunnelKey(t.Cluster, t.Instance)]
 			}
-			if len(assets) == 0 && len(selectedSkills) == 0 && !hasCommand && !hasPromptOnly {
+			// A retest carries the asset rows of an older run. The retired native strategies
+			// are translated to the Skill package that owns the capability now; nothing is
+			// re-dispatched through the legacy strategy path (SKILL_FIRST_INSPECTION_SPEC.md 1.1).
+			var (
+				retestSkills []platformSkillRecord
+				retestSkips  []monitorRetestSkip
+			)
+			if len(retestAssets) > 0 {
+				retestSkills, retestSkips = h.resolveRetestSkills(ctx, plan.Auth, retestAssets)
+				if len(retestSkills) > 0 {
+					mu.Lock()
+					for _, sk := range retestSkills {
+						retestSkillSlugs[sk.Slug] = true
+					}
+					mu.Unlock()
+				}
+			}
+			if len(retestSkills) == 0 && len(retestSkips) == 0 && len(selectedSkills) == 0 && !hasCommand && !hasPromptOnly {
 				return
 			}
 
 			// Offline Agent check — never silently skipped!
 			if h.getAgent(t.Cluster, t.Instance) == nil {
 				nowMs := time.Now().UnixMilli()
-				aid, aname, akind, astrat := t.Instance, t.Cluster+"/"+t.Instance, "vm", "vm_host"
-				if len(assets) > 0 {
-					aid, aname, akind, astrat = assets[0].AssetID, assets[0].AssetName, assets[0].AssetKind, assets[0].Strategy
-				} else if hasCommand {
-					aid, aname, akind, astrat = "shell-command", "自定义命令巡检", "command", "command"
-				} else if len(selectedSkills) > 0 {
-					aid, aname, akind, astrat = selectedSkills[0].Slug, selectedSkills[0].Name, "skill", "skill:"+selectedSkills[0].Slug
-				} else if hasPromptOnly {
-					aid, aname, akind, astrat = "custom-prompt", "提示词巡检", "prompt", "custom_prompt"
-				}
 				mu.Lock()
 				offlineCount++
-				allItems = append(allItems, monitorRunItemRecord{
-					RunID:           runID,
-					Cluster:         t.Cluster,
-					Instance:        t.Instance,
-					AssetID:         aid,
-					AssetName:       aname,
-					AssetKind:       akind,
-					Strategy:        astrat,
-					CollectorMethod: strategyCollectorMethod(astrat),
-					Status:          "offline",
-					Reason:          "target_offline",
-					StartedAtMs:     tStart.UnixMilli(),
-					FinishedAtMs:    nowMs,
-					DurationMs:      time.Since(tStart).Milliseconds(),
-					Checks: []api.MonitorInspectCheck{{
-						ID: "agent.online", Name: "Agent 隧道连通性", Category: "availability",
-						Status: "critical", Value: "离线", Threshold: "Agent 在线",
-						Detail: fmt.Sprintf("目标 %s/%s 当前离线，无法下发巡检任务", t.Cluster, t.Instance),
-					}},
-				})
-				if len(assets) > 0 {
-					allSnapshots = append(allSnapshots, monitorResourceSnapshot{
-						Cluster: t.Cluster, Instance: t.Instance,
-						AssetID: assets[0].AssetID, AssetName: assets[0].AssetName, AssetKind: assets[0].AssetKind,
-						Strategy: assets[0].Strategy, CollectorMethod: strategyCollectorMethod(assets[0].Strategy),
-						CollectedAtMs: nowMs, RunID: runID, Status: "offline", Tags: assets[0].Tags,
-					})
-				}
-				mu.Unlock()
-				return
-			}
-
-			if len(assets) > 0 {
-				results, callErr := h.dispatchAgentMonitorInspect(ctx, plan.Auth, t, runID, plan.Strategies, assets, plan.Thresholds)
-				nowMs := time.Now().UnixMilli()
-				if callErr != nil {
-					mu.Lock()
+				appendOffline := func(assetID, assetName, assetKind, strategy, collectorMethod string) {
 					allItems = append(allItems, monitorRunItemRecord{
 						RunID:           runID,
 						Cluster:         t.Cluster,
 						Instance:        t.Instance,
-						AssetID:         assets[0].AssetID,
-						AssetName:       assets[0].AssetName,
-						AssetKind:       assets[0].AssetKind,
-						Strategy:        assets[0].Strategy,
-						CollectorMethod: strategyCollectorMethod(assets[0].Strategy),
-						Status:          "error",
-						Reason:          sanitizeSecretText(callErr.Error()),
+						AssetID:         assetID,
+						AssetName:       assetName,
+						AssetKind:       assetKind,
+						Strategy:        strategy,
+						CollectorMethod: collectorMethod,
+						Status:          "offline",
+						Reason:          "target_offline",
 						StartedAtMs:     tStart.UnixMilli(),
 						FinishedAtMs:    nowMs,
-						DurationMs:      time.Since(tStart).Milliseconds(),
+						DurationMs:      nowMs - tStart.UnixMilli(),
 						Checks: []api.MonitorInspectCheck{{
-							ID: "agent.dispatch", Name: "任务下发与执行", Category: "availability",
-							Status: "critical", Detail: sanitizeSecretText(callErr.Error()),
+							ID: "agent.online", Name: "Agent 隧道连通性", Category: "availability",
+							Status: "critical", Value: "离线", Threshold: "Agent 在线",
+							Detail: fmt.Sprintf("目标 %s/%s 当前离线，无法下发巡检任务", t.Cluster, t.Instance),
 						}},
 					})
-					mu.Unlock()
-				} else {
-					mu.Lock()
-					for _, r := range results {
-						if r.Evidence == nil {
-							r.Evidence = map[string]any{}
-						}
-						artFmt, artMd, artJSON := buildBuiltinStrategyArtifact(r)
-						item := monitorRunItemRecord{
-							RunID:            runID,
-							Cluster:          t.Cluster,
-							Instance:         t.Instance,
-							AssetID:          r.AssetID,
-							AssetName:        r.AssetName,
-							AssetKind:        r.AssetKind,
-							Strategy:         r.Strategy,
-							CollectorMethod:  r.CollectorMethod,
-							Status:           r.Status,
-							Reason:           r.Reason,
-							StartedAtMs:      tStart.UnixMilli(),
-							FinishedAtMs:     r.CollectedAtMs,
-							DurationMs:       r.DurationMs,
-							Metrics:          r.Metrics,
-							Checks:           r.Checks,
-							Evidence:         r.Evidence,
-							ArtifactFormat:   artFmt,
-							ArtifactMarkdown: artMd,
-							ArtifactJSON:     artJSON,
-						}
-						allItems = append(allItems, item)
-
-						if r.Status != "skipped" {
-							snapStatus := "ok"
-							switch r.Status {
-							case "warning", "critical", "error", "offline":
-								snapStatus = r.Status
-							}
-							allSnapshots = append(allSnapshots, monitorResourceSnapshot{
-								Cluster:           t.Cluster,
-								Instance:          t.Instance,
-								AssetID:           r.AssetID,
-								AssetName:         r.AssetName,
-								AssetKind:         r.AssetKind,
-								Strategy:          r.Strategy,
-								CollectorMethod:   r.CollectorMethod,
-								CollectedAtMs:     r.CollectedAtMs,
-								RunID:             runID,
-								Status:            snapStatus,
-								CPUCores:          r.Metrics.CPUCores,
-								CPUTotalCores:     r.Metrics.CPUTotalCores,
-								CPUPercent:        r.Metrics.CPUPercent,
-								MemoryUsedBytes:   r.Metrics.MemoryUsedBytes,
-								MemoryTotalBytes:  r.Metrics.MemoryTotalBytes,
-								MemoryPercent:     r.Metrics.MemoryPercent,
-								DiskUsedBytes:     r.Metrics.DiskUsedBytes,
-								DiskTotalBytes:    r.Metrics.DiskTotalBytes,
-								DiskPercent:       r.Metrics.DiskPercent,
-								NetBytesPerSec:    r.Metrics.NetBytesPerSec,
-								DiskIOPS:          r.Metrics.DiskIOPS,
-								DiskLatencyMs:     r.Metrics.DiskLatencyMs,
-								GPUPercent:        r.Metrics.GPUPercent,
-								ResponseTimeMs:    r.Metrics.ResponseTimeMs,
-								ErrorRate:         r.Metrics.ErrorRate,
-								ActiveConnections: r.Metrics.ActiveConnections,
-								RequestsPerSec:    r.Metrics.RequestsPerSec,
-								UptimeSeconds:     r.Metrics.UptimeSeconds,
-								Load1m:            r.Metrics.Load1m,
-								OSInfo:            r.Metrics.OSInfo,
-								KernelInfo:        r.Metrics.KernelInfo,
-								Tags:              r.Tags,
-								Details:           r.Details,
-							})
-						}
-
-						for _, pt := range r.SeriesPoints {
-							allSeries = append(allSeries, monitorSeriesBridgeEntry{Cluster: t.Cluster, Instance: t.Instance, Point: pt})
-						}
-					}
-					mu.Unlock()
+					allSnapshots = append(allSnapshots, monitorResourceSnapshot{
+						Cluster: t.Cluster, Instance: t.Instance,
+						AssetID: assetID, AssetName: assetName, AssetKind: assetKind,
+						Strategy: strategy, CollectorMethod: collectorMethod,
+						CollectedAtMs: nowMs, RunID: runID, Status: "offline",
+					})
 				}
+				if hasCommand {
+					appendOffline("shell-command", "自定义命令巡检", "command", "command", "shell_command")
+				}
+				for _, sk := range selectedSkills {
+					appendOffline(sk.Slug, sk.Name, "skill", "skill:"+sk.Slug, skillCollectorMethod(sk, hasCustomAction))
+				}
+				if hasPromptOnly {
+					appendOffline("custom-prompt", "提示词巡检", "prompt", "custom_prompt", "agent_prompt")
+				}
+				for _, sk := range retestSkills {
+					appendOffline(sk.Slug, sk.Name, "skill", "skill:"+sk.Slug, skillCollectorMethod(sk, hasCustomAction))
+				}
+				for _, skip := range retestSkips {
+					allItems = append(allItems, monitorRetestSkipItem(runID, t, skip, tStart))
+				}
+				mu.Unlock()
+				return
 			}
 
 			if hasCommand {
@@ -637,11 +357,34 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 					mu.Unlock()
 				}
 			}
+			// Retest replay: each legacy asset runs through the Skill package that owns
+			// the retired native strategy; unmappable assets are reported, not dropped.
+			for _, sk := range retestSkills {
+				var item monitorRunItemRecord
+				if resolveSkillDispatchMode(sk, hasCustomAction) == skillExecModeScript {
+					item = h.runSkillScriptInspection(ctx, plan.Auth, t, runID, sk)
+				} else {
+					item = h.runAgentDrivenSkillInspection(ctx, plan.Auth, t, runID, sk, plan.Prompt)
+				}
+				mu.Lock()
+				allItems = append(allItems, item)
+				mu.Unlock()
+			}
+			for _, skip := range retestSkips {
+				item := monitorRetestSkipItem(runID, t, skip, tStart)
+				mu.Lock()
+				allItems = append(allItems, item)
+				mu.Unlock()
+			}
 		}(tgt)
 	}
 	wg.Wait()
-	if len(drivenSkillSlugs) > 0 {
-		h.store.RecordPlatformSkillRun(ctx, drivenSkillSlugs, time.Now().UnixMilli())
+	recordedSkillSlugs := append([]string(nil), drivenSkillSlugs...)
+	for slug := range retestSkillSlugs {
+		recordedSkillSlugs = append(recordedSkillSlugs, slug)
+	}
+	if len(recordedSkillSlugs) > 0 {
+		h.store.RecordPlatformSkillRun(ctx, recordedSkillSlugs, time.Now().UnixMilli())
 	}
 
 	sort.Slice(allItems, func(i, j int) bool {
@@ -715,91 +458,6 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 		})
 	}
 	return run, allItems, nil
-}
-
-func (h *GatewayHub) dispatchAgentMonitorInspect(
-	ctx context.Context,
-	auth TokenAuth,
-	target monitorTargetRef,
-	runID string,
-	strategies []string,
-	assets []api.MonitorInspectAsset,
-	thresholds api.MonitorInspectThresholds,
-) ([]api.MonitorInspectAssetResult, error) {
-	callCtx, cancel := context.WithTimeout(contextWithInternalAuditAuth(ctx, auth), 45*time.Second)
-	defer cancel()
-
-	out, err := h.RunInternalToolCall(callCtx, target.Cluster, target.Instance, monitorInspectTool, map[string]any{
-		"session_id": "monitor-" + runID,
-		"run_id":     runID,
-		"strategies": strategies,
-		"assets":     assets,
-		"thresholds": thresholds,
-	})
-	if err != nil {
-		// Graceful fallback for older Agents that do not yet register doops_monitor_inspect.
-		if strings.Contains(err.Error(), "-32601") || strings.Contains(err.Error(), "Unknown tool") {
-			return h.fallbackLegacyVMInspect(callCtx, target, runID, assets, thresholds)
-		}
-		return nil, err
-	}
-
-	var resp api.MonitorInspectResponse
-	if jsonErr := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); jsonErr != nil {
-		return nil, fmt.Errorf("invalid_monitor_inspect_response")
-	}
-	return resp.Results, nil
-}
-
-func (h *GatewayHub) fallbackLegacyVMInspect(
-	ctx context.Context,
-	target monitorTargetRef,
-	runID string,
-	assets []api.MonitorInspectAsset,
-	th api.MonitorInspectThresholds,
-) ([]api.MonitorInspectAssetResult, error) {
-	out, err := h.RunInternalToolCall(ctx, target.Cluster, target.Instance, "doops_node_info", map[string]any{
-		"session_id": "monitor-" + runID,
-		"section":    "vm_metrics",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("agent_upgrade_required_for_monitor_inspect")
-	}
-	var snap agentVMSnapshot
-	if json.Unmarshal([]byte(strings.TrimSpace(out)), &snap) != nil {
-		return nil, fmt.Errorf("invalid_legacy_vm_metrics")
-	}
-	at := snap.AtMs
-	if at <= 0 {
-		at = time.Now().UnixMilli()
-	}
-	aid := target.Instance
-	name := target.Cluster + "/" + target.Instance
-	if len(assets) > 0 {
-		aid = assets[0].AssetID
-		name = assets[0].AssetName
-	}
-	res := api.MonitorInspectAssetResult{
-		AssetID:         aid,
-		AssetName:       name,
-		AssetKind:       "vm",
-		Strategy:        monitorStrategyVMHost,
-		CollectorMethod: "agent_local",
-		CollectedAtMs:   at,
-		Reason:          "legacy_agent_fallback",
-		Metrics: api.MonitorInspectMetrics{
-			CPUCores:        snap.CPUCores,
-			KernelCPUCores:  snap.KernelCPUCores,
-			MemoryUsedBytes: snap.MemoryUsedBytes,
-			KernelSlabBytes: snap.KernelSlabBytes,
-		},
-		Checks: []api.MonitorInspectCheck{
-			evaluateHostCPUMemCheck(nil, nil, snap.CPUCores, nil, th),
-			{ID: "agent.version", Name: "Agent 策略引擎版本", Category: "runtime", Status: "warning", Detail: "旧版 Agent 仅支持基础主机指标回退，建议升级以启用完整 K8s/SSH/合规策略"},
-		},
-		Status: "warning",
-	}
-	return []api.MonitorInspectAssetResult{res}, nil
 }
 
 // runCommandInspection executes an arbitrary shell command on the target Agent via
@@ -1170,4 +828,106 @@ func (h *GatewayHub) runCustomPromptInspection(
 	item.Checks = parsed.Checks
 	item.Status = parsed.Status
 	return item
+}
+
+// retiredStrategySkillSlugs maps the native strategy identifiers that used to
+// drive inspection to the Skill package that owns the same capability today.
+// The native collectors are retired (SKILL_FIRST_INSPECTION_SPEC.md 1.1 / 2.4);
+// the map only keeps older runs, schedules and retest requests truthful.
+var retiredStrategySkillSlugs = map[string]string{
+	"vm_host":           "inspect-vm-host",
+	"ssh_host":          "inspect-ssh-host",
+	"k8s_cluster":       "inspect-k8s-cluster",
+	"container_runtime": "inspect-container-runtime",
+	"app_service":       "inspect-app-web",
+	"database_service":  "inspect-database",
+}
+
+// skillSlugForRetiredStrategy resolves the Skill package that replaced a legacy
+// native strategy. New runs carry "skill:<slug>" already, which passes through.
+func skillSlugForRetiredStrategy(strategy string) (string, bool) {
+	s := strings.TrimSpace(strategy)
+	if rest, ok := strings.CutPrefix(s, "skill:"); ok {
+		return rest, rest != ""
+	}
+	slug, ok := retiredStrategySkillSlugs[s]
+	return slug, ok
+}
+
+// skillCollectorMethod reports how a Skill item will be executed.
+func skillCollectorMethod(sk platformSkillRecord, hasCustomAction bool) string {
+	if resolveSkillDispatchMode(sk, hasCustomAction) == skillExecModeScript {
+		return "skill_script"
+	}
+	return "agent_skill"
+}
+
+// monitorRetestSkip records a retest asset that cannot be replayed through a
+// Skill package, together with the reason reported to the operator.
+type monitorRetestSkip struct {
+	Asset  api.MonitorInspectAsset
+	Reason string // legacy_strategy_retired | skill_unavailable
+}
+
+// resolveRetestSkills maps the asset rows of a previous run onto the Skill
+// packages that own their capability. Retesting never re-enters the retired
+// native dispatch path: it either replays the owning Skill or reports why not.
+func (h *GatewayHub) resolveRetestSkills(ctx context.Context, auth TokenAuth, assets []api.MonitorInspectAsset) ([]platformSkillRecord, []monitorRetestSkip) {
+	if len(assets) == 0 {
+		return nil, nil
+	}
+	lookupAuth := auth
+	if lookupAuth.UserID == "" {
+		lookupAuth.UserID = "system"
+	}
+	skills := make([]platformSkillRecord, 0, len(assets))
+	skips := make([]monitorRetestSkip, 0)
+	seen := map[string]bool{}
+	for _, a := range assets {
+		slug, ok := skillSlugForRetiredStrategy(a.Strategy)
+		if !ok {
+			skips = append(skips, monitorRetestSkip{Asset: a, Reason: "legacy_strategy_retired"})
+			continue
+		}
+		if seen[slug] {
+			continue
+		}
+		sk, err := h.store.GetPlatformSkill(ctx, lookupAuth, slug)
+		if err != nil || !sk.Enabled {
+			skips = append(skips, monitorRetestSkip{Asset: a, Reason: "skill_unavailable"})
+			continue
+		}
+		seen[slug] = true
+		skills = append(skills, sk)
+	}
+	return skills, skips
+}
+
+// monitorRetestSkipItem renders an explicit skipped item so a retest never
+// silently drops an asset the platform can no longer inspect.
+func monitorRetestSkipItem(runID string, t monitorTargetRef, skip monitorRetestSkip, started time.Time) monitorRunItemRecord {
+	nowMs := time.Now().UnixMilli()
+	detail := "旧版原生策略 " + skip.Asset.Strategy + " 已退役，且没有 Skill 包接管该能力；请通过 skills 参数指定巡检 Skill"
+	if skip.Reason == "skill_unavailable" {
+		detail = "该资产对应的 Skill 包不存在或已停用，无法按 Skill 包重测；请在技能库中启用后再重试"
+	}
+	return monitorRunItemRecord{
+		RunID:           runID,
+		Cluster:         t.Cluster,
+		Instance:        t.Instance,
+		AssetID:         skip.Asset.AssetID,
+		AssetName:       skip.Asset.AssetName,
+		AssetKind:       skip.Asset.AssetKind,
+		Strategy:        skip.Asset.Strategy,
+		CollectorMethod: "retired_strategy",
+		Status:          "skipped",
+		Reason:          skip.Reason,
+		StartedAtMs:     started.UnixMilli(),
+		FinishedAtMs:    nowMs,
+		DurationMs:      nowMs - started.UnixMilli(),
+		Checks: []api.MonitorInspectCheck{{
+			ID: "skill.dispatch", Name: "巡检能力来源", Category: "capability",
+			Status: "warning", Detail: detail,
+		}},
+	}
 }
