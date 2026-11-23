@@ -150,6 +150,9 @@ func (s *GatewayStore) purgeAuditBefore(userID, tokenID string, before time.Time
 	}
 	result.ReceiptID = receiptID
 	if err := purge.record(nil); err != nil {
+		// The receipt never reached a terminal state and nothing was deleted,
+		// so remove it instead of leaving a running row that looks in flight.
+		purge.discardReceipt()
 		return result, err
 	}
 
@@ -167,6 +170,13 @@ func (s *GatewayStore) purgeAuditBefore(userID, tokenID string, before time.Time
 		}
 		auditPurgePause()
 	}
+}
+
+// discardReceipt rolls back a receipt that could not be finalized before any
+// deletion ran. A receipt already moved to a terminal state is left in place.
+func (p *auditPurgeSession) discardReceipt() {
+	_, _ = p.store.db.Exec(`DELETE FROM audit_events
+		WHERE id = ? AND action = 'audit:purge' AND status IN ('running', 'executing')`, p.id)
 }
 
 // auditPurgeSession is one purge and its receipt. It is confined to one goroutine.
