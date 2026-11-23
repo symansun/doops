@@ -271,3 +271,11 @@
 - 在跑 2：qa-skill-01（QA-05）、qa-recheck-01（QA-03）。origin/main = 6c3fb171，ahead/behind 0。D11 仍待用户拍板（tag v0.3.29 已含整批巡检改造，CHANGELOG 还留在 Unreleased）。
 
 - 03:07 第 21 轮（03:05 提醒）：无实质变化——QA-05 与 QA-03 在跑、无后台 job、HEAD d570c7c1 已同步 ahead/behind 0；队列无可开工任务，本轮不派活（与第 20 轮重叠，不重复记账）。
+
+## 03:12 第 22 轮巡检：QA-03 收口（六条全部守住，但暴露 5 处「声称≠实测」）；INT-11 立项
+
+- **QA-03 完成**（`13011171` 报告 + `dd80ce53` 基线漂移附注）：干净树 `git archive c1b62473`，破坏全在 /tmp、恢复后 `diff -rq` 无输出；docker `python:3.12-slim` 与 `mysql:8.4` 都可用，**没有降级**。六条反向实验逐条重做后**全部守住**，「先红后绿」是真的。
+- **最有价值的不是绿，是 5 处不符**：① 我记的 404113 B 不可复现（`a8587ffc`→404086、`94fe9a1e`→404089、`2a29ed67`/`c1b62473`→405391；SB-02 加 disk_io 后基线也从 203983 长到 205158）——判定成立但**这个数不能当基准**，以后断言要写「≥ 上限」而不是等值；② INT-08 我没有单行指名 `credentials.revoked_at`，实际是两行（表名一行、`only in export: [revoked_at]` 一行），我在台账里的措辞偏宽；③ SF-15「4 组全红」易误读：顺序反转后 `TestMonitorRetentionRemovesFilesBeforeIndexRows` **仍绿**，只有 `BEFORE DELETE` 触发器那条能观测顺序——也就是说顺序这件事只有一条测试真守；④ 审计测试是**配对守卫**：只改谓词仍绿（整数与 TEXT 比较匹配不到，另一条 ms 谓词把它掩盖），谓词+参数一起回退才红；⑤ SF-08「脚本失败」不准确：破坏后夹具仍 `ROBUST_OK` 退出 0，红在 `robust_check.py` 的 `minmounts` 断言阶段。这五条我原样写进账，不粉饰。
+- **唯一真风险 → INT-11**（03:12 派 integrator-gm）：`gateway_mysql_columns_test.go:55` 对 6 处 `INSERT ... VALUES(...)`（无列清单）只 `t.Logf` 不计数不设限，新增一条就能让对应表的 NOT NULL 守卫失效而 CI 全绿。我给它三条硬要求：列顺序断言（SQLite 导出 vs MySQL DDL 逐列相同——这才是无列清单 INSERT 的正确性前提，位置错位会静默写错列）、占位符计数校验（跳过字符串字面量里的 `?`）、冻结「表→处数」清单防新增（不按行号，行号会漂）；三组反向实验分别对应删占位符、对调 DDL 列序、新增非法与合法 INSERT，验完全部还原。
+- 顺带确认：QA-03 提交时 main 已在 `7ebb8a2b`，但它实测的 Go/脚本/夹具逐字节未变（`git diff --name-only c1b62473..7ebb8a2b` 只有 `docs/`、`lib/`、`package.json`），结论不受漂移影响。
+- 在跑 2：qa-skill-01（QA-05 基线重跑）、integrator-gm（INT-11）。`origin/main = dd80ce53`，我的台账随后跟上。
