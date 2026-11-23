@@ -133,3 +133,10 @@
 - **决定 A**（改 9 处运行时 INSERT 显式给值），驳回 B（TEXT→VARCHAR 会截断 `audit_events.tail/error`、`scope_json`，且改 copier 互操作面）与 C（守卫降级成打印欠账，真机仍 1364）。A 的依据是 `gateway_mysql_schema.sql` 头部既有约定本身：**"SQLite TEXT columns keep no DEFAULT … The runtime dialect layer must supply values explicitly"** —— 代码补到与文档一致，不是新发明。
 - 给它的硬约束：逐列核对导出默认值（只补与导出一致的值，不一律 `''`）、SQLite 侧语义必须不变并有测试证明、numbered-parameter/on_conflict 两套变体同步改、`TestGatewayMySQLRuntimeSQLAudit` census 按实测刷新并写明哪几条语句新增了列、守卫最终**无 allowlist fail-closed** 且错误信息指名"表.列"、反向实验三组（删列 → 红；删 DDL 默认 → 红；把 `DEFAULT ('')` 加回去 → copier 必须拒，证明没走回死路）、真机 mysql:8.4 上跑一次改动前会 1364 的真实 INSERT。
 
+
+## 02:10 更正：SF-15 的前提说错了一条（我 grep 漏了）
+
+- 我在 02:08 巡检写"`grep -rn "retention|prune|cleanup" monitor_*.go` 零命中、没有任何生命周期"——**错**。实际存在 `GatewayStore.PruneMonitorEngineHistory`（`backend/agent/internal/server/monitor_engine_store.go:1060`，硬编码 30 天，**先删行后删文件**、无 keep-runs、无 running 保护、不碰 `inspection_metric_points`），由 `instance_retention.go:101` 每小时调用，`monitor_artifact_store_test.go:353` 有覆盖。我漏掉的原因是 grep 的路径/参数组合写错（`monitor_*.go` 未覆盖到该文件所在匹配链，且管道里串了 `grep -v _test`）。
+- 结论不变但性质变了：**SF-15 是升级既有清理而不是新建**。dev-sf-01 开工时自己核对出来并主动纠正我，属有效对抗性核查，记一笔。
+- 给它的追加约束：每小时兜底必须**必扫**（内部 `force bool` 区分，节流只作用于 run 完成后的高频触发，且要有测试锁住 force 不被传错）；prune 必须单飞防并发重入；`os.RemoveAll` 失败只 Warn 但仍删索引行（避免"永远删不掉的文件"每次重试刷日志），并按此写进 spec；`monitor_engine_store.go` 只换函数体不动签名，既有测试改断言前要先说明旧断言在保护什么。
+
