@@ -9,14 +9,13 @@ import type { Session, Target } from "./client"
 import { consoleFetch } from "./network-error.ts"
 import type { AgentSessionSnapshot } from "@agent-cloud/agent-ui"
 import { createDoopsAgentSessionTransport } from "./agent-session-transport"
+import { agentTurnRunning } from "./agent-busy-banner"
 import { agentErrorMessage } from "./agent-error"
 import { createDoopsCodeWorkspace, loadDoopsWorkspaceArtifact } from "./agent-code-workspace"
 import type { CodeWorkspaceSource } from "@agent-cloud/agent-ui"
 
 export function isDoopsAgentSessionBusy(snapshot: AgentSessionSnapshot): boolean {
-  return snapshot.status === "running" ||
-    snapshot.items.some((item) => item.kind === "message" && item.role === "user" && item.status === "pending") ||
-    snapshot.interactions.some((interaction) => interaction.status === "pending" || interaction.status === "running")
+  return agentTurnRunning(snapshot)
 }
 
 export function createDoopsAgentUiRuntime(options: {

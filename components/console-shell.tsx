@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { Menu } from "lucide-react"
 import dynamic from "next/dynamic"
-import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
+import type { AgentSessionRuntime, AgentSessionSnapshot } from "@agent-cloud/agent-ui"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { clearServerSession, fetchTargets, restoreServerSession, sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { isLostGatewaySession } from "@/lib/gateway-auth"
@@ -44,6 +44,7 @@ import { TerminalPanel } from "./terminal-panel"
 import { AutomationPanel } from "./automation-panel"
 import { navigationBlocker, nextTerminalPrefill, prefillToApply, targetSwitchBlocker, TERMINAL_RUNNING_MESSAGE, type TerminalPrefill } from "@/lib/shell-blocks"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
+import { agentBusyView } from "@/lib/agent-busy-banner"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
 import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
@@ -265,6 +266,30 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   useEffect(() => {
     if (!agentRuntime || (view === "console" && tab === "ask")) setOpenedAgentRuntime(agentRuntime)
   }, [agentRuntime, tab, view])
+  // AI 助手面板切到其他标签只是 hidden，回合仍在执行。这里常驻订阅它的快照，
+  // 让「停止 AI 任务」在任何标签页可用，而不是要求用户先切回「AI 助手」。
+  const [agentSnapshot, setAgentSnapshot] = useState<AgentSessionSnapshot | null>(null)
+  useEffect(() => {
+    if (!agentRuntime) { setAgentSnapshot(null); return }
+    const read = () => {
+      try { setAgentSnapshot(agentRuntime.getSnapshot(sessionId)) } catch { setAgentSnapshot(null) }
+    }
+    read()
+    try { return agentRuntime.subscribe(sessionId, read) } catch { return undefined }
+  }, [agentRuntime, sessionId])
+  const [stoppingAgent, setStoppingAgent] = useState(false)
+  const stopAgentTurn = useCallback(async () => {
+    if (!agentRuntime || stoppingAgent) return
+    setStoppingAgent(true)
+    setError("")
+    try {
+      await agentRuntime.interrupt(sessionId, crypto.randomUUID())
+    } catch (err) {
+      setError((err as Error).message || "中断 AI 任务失败")
+    } finally {
+      setStoppingAgent(false)
+    }
+  }, [agentRuntime, sessionId, stoppingAgent])
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -661,6 +686,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   // K25：刷新后的「结果未知」提示固定在 shell 顶层渲染，不依赖终端标签页是否打开，
   // 也不依赖当次 /api/targets 是否返回目标；记录留在状态里，直到用户关闭横幅。
   const interruptedBanner = interruptedBannerView(interruptedNotices)
+  const agentBusy = agentBusyView(agentSnapshot, tab)
 
   const resource = catalogContext && catalogContext.targetKey === selected?.key && catalogContext.sessionId === sessionId && catalogContext.row.kind === tab && catalogContext.scope === consoleScopeKey(session) ? catalogContext.row : null
   const fromAsset = view === "console" && assetOrigin?.scope === consoleScopeKey(session) && assetOrigin.targetKey === selected?.key && targets.some(t => t.key === selected.key && t.status !== "offline")
@@ -777,6 +803,27 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           </span>
           <Button size="sm" variant="ghost" onClick={clearInterruptedNotices} className="shrink-0">
             {interruptedBanner.dismissLabel}
+          </Button>
+        </StatusBanner>
+      )}
+      {view === "console" && onlineSelected && agentRuntime && agentBusy && (
+        <StatusBanner
+          tone="warning"
+          data-testid="agent-busy-banner"
+          className="flex shrink-0 flex-wrap items-center gap-2 rounded-none border-x-0 border-t-0 px-4"
+        >
+          <span className="min-w-0 flex-1">{agentBusy.text}</span>
+          <Button size="sm" variant="ghost" onClick={() => setTab("ask")} className="shrink-0">
+            {agentBusy.openLabel}
+          </Button>
+          <Button
+            size="sm"
+            variant="danger-outline"
+            disabled={stoppingAgent}
+            onClick={() => { void stopAgentTurn() }}
+            className="shrink-0"
+          >
+            {stoppingAgent ? "停止中…" : agentBusy.stopLabel}
           </Button>
         </StatusBanner>
       )}
