@@ -86,6 +86,25 @@ required_mcp: doops
 
 脚本可读取这些变量用于自述目标，也可以完全不读，二者都不影响判定结果；判定只依据脚本的 stdout 产物。脚本目录根由 `DOOPS_AGENT_SKILLS_ROOT` 决定（缺省 `/root/.agent/skills`），脚本以 `sh <root>/<slug>/<entrypoint>` 方式执行。
 
+#### 2.3.1 执行证据里的「声明模式」与「调度模式」（SF-18）
+
+运行明细（`GET /v1/monitor/runs/<id>` 的 `items[]`）对每个 Skill 项同时记录两个模式，二者含义不同、不得互相覆盖：
+
+| 位置 | 字段 | 取值域 | 含义 |
+|---|---|---|---|
+| `evidence.exec_mode` | 声明模式 | `auto` \| `script` \| `agent` | `SKILL.md` frontmatter 里声明的 `exec_mode`（未声明按 `auto`）。它表达包作者的意图，与实际是否执行脚本无关。 |
+| `evidence.dispatch_mode`，以及明细项顶层 `dispatch_mode` | 调度模式 | `script` \| `agent` | 本次运行调用 `resolveSkillDispatchMode` 得到的调度决策：`script` 表示走受审计 `doops_shell` 直跑 `entrypoint`，`agent` 表示走 `doops_agent_prompt`。 |
+
+顶层 `dispatch_mode` 是 `evidence.dispatch_mode` 的便捷投影，两者恒等。`dispatch_mode` 为空（JSON 中省略）表示该 run 写入于本字段引入之前，读取方按「未知」处理，不得据此推断为 `agent`；旧 run 的其余字段与解析行为不受影响。
+
+声明与调度不一致是合法且常见的情况，也不代表执行出错：
+
+- `exec_mode=auto` 且包内有有效 `entrypoint`、本次未传 `prompt` ⇒ `dispatch_mode=script`（最常见的正常态，`auto` 不等于 `agent`）；
+- `exec_mode=auto` 且本次传入自定义 `prompt` ⇒ `dispatch_mode=agent`；
+- `exec_mode=script` ⇒ `dispatch_mode=script`；`exec_mode=agent` ⇒ `dispatch_mode=agent`。
+
+`dispatch_mode` 只记录**调度决策**，不记录执行中途的降级。AI 驱动路径在 `doops_agent_prompt` 失败且包内有可执行脚本时会降级为脚本直跑，此时 `collector_method=skill_script`、`evidence.script` 与 `evidence.fallback_from_ai` 记录真实执行路径，而 `dispatch_mode` 保持 `agent`（不丢失「本应按 AI 调度」这一事实）。运维与前端判断「到底跑了什么」看 `collector_method` 与实际产物，判断「本应怎么调度」看 `dispatch_mode`。
+
 ### 2.4 系统预置 Skill 包（全部真实可运行、可编辑）
 
 | Skill Slug | 默认形态 | 真实采集/能力来源 |
@@ -109,12 +128,14 @@ required_mcp: doops
 
 | 退役 strategy | 承接 Skill 包 | 覆盖状态 |
 |---|---|---|
-| `vm_host` | `inspect-vm-host` | 已覆盖：uptime、CPU/内存、磁盘容量（按底层设备去重）、进程/僵尸、sysctl 基线、登录安全基线。缺口：`host.disk_io`（磁盘 I/O 与延迟，旧采集器读 `/proc/diskstats` 并比对 `DiskLatencyWarnMs`）——**待补（owner: skill-dev-01）** |
+| `vm_host` | `inspect-vm-host` | 已覆盖：uptime、CPU/内存、磁盘容量（按底层设备去重）、`host.disk_io`（读 `/proc/diskstats` 物理块设备的读写次数/字节/平均延迟，排除分区与 `loop`/`dm-`/`md` 等虚拟设备；延迟阈值默认 50 ms，对齐 `DiskLatencyWarnMs`）、进程/僵尸、sysctl 基线、登录安全基线 |
 | `ssh_host` | `inspect-ssh-host` | 部分覆盖：包内契约已含 CPU/内存/磁盘/uptime/内核安全基线，但平台当前没有 AI 可见的受管 SSH 通道，只能如实上报 `managed_ssh_channel=unavailable`。能力缺口不在包内容，在 AI 工具白名单（另立任务，不在 SF-09/SF-13 范围） |
-| `k8s_cluster` | `inspect-k8s-cluster` | 已覆盖：apiserver 连通、节点/工作负载/Pod/PVC/事件。缺口：`k8s.metrics`（metrics-server 节点与 Pod 实时用量、`kubectl top` 桥接时序）——**待补（owner: skill-dev-01）** |
+| `k8s_cluster` | `inspect-k8s-cluster` | 已覆盖：apiserver 连通、节点/工作负载/Pod/PVC/事件、`k8s.metrics`（`kubectl top` 取节点与 Pod 实时 CPU/内存；metrics-server 未安装或无权限时该检查记 `warning` 并写明原因，不改变集群健康结论） |
 | `container_runtime` | `inspect-container-runtime` | 已覆盖：runtime 可用性、容器内存上限与用量 |
 | `app_service` | `inspect-app-web` | 已覆盖：本机监听、Nginx 配置、HTTP 探活（状态码/延迟/证书剩余天数/安全响应头） |
 | `database_service` | `inspect-database` | 已覆盖：受管数据库只读连通性、活跃连接、锁等待与慢查询概况（AI 驱动，无确定性脚本） |
+
+`host.disk_io` 与 `k8s.metrics` 产出的 `metrics[]` 键按 §4.2 通用时序落库，不新增 `monitor_resource_snapshots` 桥接键；两者的降级路径（`/proc/diskstats` 不可读、metrics-server 不可用）都必须写进对应 `checks[].detail`，不得静默返回 0。
 
 ---
 
