@@ -19,6 +19,7 @@ func doagentAllowedTools(apply bool, skill string, kubernetes bool) []string {
 	tools := []string{"Read", "glob", "grep", "Skill"}
 	if !apply {
 		tools = append(tools, "Bash")
+		tools = append(tools, customSyncedMCPAllowedTools()...)
 	}
 	if kubernetes {
 		tools = append(tools, "mcp_doops_k8s_read")

@@ -69,6 +69,9 @@ var gatewayToolSpecs = []gatewayToolSpec{
 	{name: diagnosticReadTool, visibility: gatewayInternal},
 	{name: monitorInspectTool, visibility: gatewayInternal, publicDenial: "monitor_inspect_internal_only", action: constantAction(ActionInfo)},
 	{name: skillSyncTool, visibility: gatewayInternal, publicDenial: "skill_sync_internal_only", action: constantAction(ActionWrite)},
+	{name: skillsInspectTool, visibility: gatewayInternal, publicDenial: "skills_inspect_internal_only", action: constantAction(ActionInfo)},
+	{name: mcpSyncTool, visibility: gatewayInternal, publicDenial: "mcp_sync_internal_only", action: constantAction(ActionWrite)},
+	{name: mcpInspectTool, visibility: gatewayInternal, publicDenial: "mcp_inspect_internal_only", action: constantAction(ActionInfo)},
 }
 
 var gatewayToolIndex = func() map[string]gatewayToolSpec {

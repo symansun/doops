@@ -31,3 +31,9 @@ func containsWebString(values []string, value string) bool {
 	}
 	return false
 }
+
+// mcpAllowedOperationsSuffix tells the model which operations the tool accepts
+// so an invalid-operation retry self-corrects instead of guessing again.
+func mcpAllowedOperationsSuffix(operations []string) string {
+	return "; allowed operations: " + strings.Join(operations, ", ")
+}

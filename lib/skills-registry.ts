@@ -38,6 +38,16 @@ export interface SkillSyncTargetResult {
   detail?: string
 }
 
+export interface AgentLoadedSkillInfo {
+  slug: string
+  name: string
+  description?: string
+  kind: "dir" | "file" | string
+  file_count: number
+  size_bytes: number
+  updated_at_ms: number
+}
+
 export const SKILL_CATEGORY_LABELS: Record<PlatformSkillRecord["category"], string> = {
   inspection: "巡检驱动",
   security: "安全巡检",
@@ -157,7 +167,7 @@ async function skillsRequest<T>(session: Session, path: string, body?: object, s
     const { demoSkillsRequest } = await import("./demo.ts")
     return demoSkillsRequest(session, path, body as Record<string, unknown> | undefined) as Promise<T>
   }
-  const url = path ? `/api/skills/${path}` : "/api/skills"
+  const url = !path ? "/api/skills" : path.startsWith("?") ? `/api/skills${path}` : `/api/skills/${path}`
   const res = await consoleFetch(url, {
     method: body ? "POST" : "GET",
     cache: "no-store",
@@ -173,13 +183,19 @@ async function skillsRequest<T>(session: Session, path: string, body?: object, s
 
 export function fetchPlatformSkills(
   session: Session,
-  opts: { scope?: "system" | "custom"; category?: string; includeBody?: boolean } = {},
+  opts: { scope?: "system" | "custom"; category?: string; includeBody?: boolean; target?: string } = {},
   signal?: AbortSignal,
-): Promise<{ skills: PlatformSkillRecord[] }> {
+): Promise<{
+  skills: PlatformSkillRecord[]
+  agent_skills?: AgentLoadedSkillInfo[]
+  agent_skills_root?: string
+  agent_error?: string
+}> {
   const qs = new URLSearchParams()
   if (opts.scope) qs.set("scope", opts.scope)
   if (opts.category) qs.set("category", opts.category)
   if (opts.includeBody) qs.set("include_body", "1")
+  if (opts.target) qs.set("target", opts.target)
   const suffix = qs.toString() ? `?${qs.toString()}` : ""
   return skillsRequest(session, suffix, undefined, signal)
 }

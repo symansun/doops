@@ -95,6 +95,8 @@ type monitorScheduleMutationRequest struct {
 	Tags            []string                     `json:"tags,omitempty"`
 	Strategies      []string                     `json:"strategies,omitempty"`
 	Skills          []string                     `json:"skills,omitempty"`
+	Prompt          string                       `json:"prompt,omitempty"`
+	Command         string                       `json:"command,omitempty"`
 	Thresholds      api.MonitorInspectThresholds `json:"thresholds,omitempty"`
 	IntervalSeconds int                          `json:"interval_seconds,omitempty"`
 }
@@ -245,6 +247,19 @@ func (h *GatewayHub) applyMonitorScheduleMutation(r *http.Request, auth TokenAut
 		if req.Enabled != nil {
 			enabled = *req.Enabled
 		}
+		prompt, ok := validateInspectionFreeText(req.Prompt, maxInspectionPromptBytes)
+		if !ok {
+			return nil, "invalid_prompt", "巡检提示词过长（上限 8 KiB）或包含非法字符", 400
+		}
+		command, ok := validateInspectionFreeText(req.Command, maxInspectionCommandBytes)
+		if !ok {
+			return nil, "invalid_command", "巡检命令过长（上限 4 KiB）或包含非法字符", 400
+		}
+		skills := normalizeSkillSlugs(req.Skills)
+		strategies := normalizeMonitorStrategiesOptional(req.Strategies)
+		if len(skills) == 0 && prompt == "" && command == "" {
+			strategies = normalizeMonitorStrategies(req.Strategies)
+		}
 		rec := monitorScheduleRecord{
 			ID:              strings.TrimSpace(req.ID),
 			Name:            name,
@@ -253,8 +268,10 @@ func (h *GatewayHub) applyMonitorScheduleMutation(r *http.Request, auth TokenAut
 			ScopeMode:       scopeMode,
 			Targets:         cleanTargets,
 			Tags:            cleanTags,
-			Strategies:      normalizeMonitorStrategies(req.Strategies),
-			Skills:          normalizeSkillSlugs(req.Skills),
+			Strategies:      strategies,
+			Skills:          skills,
+			Prompt:          prompt,
+			Command:         command,
 			Thresholds:      normalizeMonitorThresholds(req.Thresholds),
 			IntervalSeconds: interval,
 			CreatedBy:       auth.UserID,
@@ -293,6 +310,8 @@ type monitorRunTriggerRequest struct {
 	Tags        []string                     `json:"tags,omitempty"`
 	Strategies  []string                     `json:"strategies,omitempty"`
 	Skills      []string                     `json:"skills,omitempty"`
+	Prompt      string                       `json:"prompt,omitempty"`
+	Command     string                       `json:"command,omitempty"`
 	Thresholds  api.MonitorInspectThresholds `json:"thresholds,omitempty"`
 	SSHHosts    []api.MonitorInspectAsset    `json:"ssh_hosts,omitempty"`
 }
@@ -347,6 +366,17 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		cleanPrompt, ok := validateInspectionFreeText(req.Prompt, maxInspectionPromptBytes)
+		if !ok {
+			writeMonitorHTTPError(w, 400, "invalid_prompt", "巡检提示词过长（上限 8 KiB）或包含非法字符")
+			return
+		}
+		cleanCommand, ok := validateInspectionFreeText(req.Command, maxInspectionCommandBytes)
+		if !ok {
+			writeMonitorHTTPError(w, 400, "invalid_command", "巡检命令过长（上限 4 KiB）或包含非法字符")
+			return
+		}
+
 		plan := monitorRunPlan{
 			TriggerKind: "manual",
 			TriggeredBy: auth.UserID,
@@ -356,6 +386,8 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 			Tags:        req.Tags,
 			Strategies:  req.Strategies,
 			Skills:      normalizeSkillSlugs(req.Skills),
+			Prompt:      cleanPrompt,
+			Command:     cleanCommand,
 			Thresholds:  req.Thresholds,
 		}
 
@@ -402,6 +434,8 @@ func (h *GatewayHub) HandleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 			plan.Tags = sched.Tags
 			plan.Strategies = sched.Strategies
 			plan.Skills = sched.Skills
+			plan.Prompt = sched.Prompt
+			plan.Command = sched.Command
 			plan.Thresholds = sched.Thresholds
 		} else {
 			if plan.ScopeMode == "" {

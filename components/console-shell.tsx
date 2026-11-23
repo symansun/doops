@@ -501,6 +501,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       next.section !== "situation" &&
       next.section !== "inspection" &&
       next.section !== "skills" &&
+      next.section !== "mcp" &&
       next.section !== "scope"
     ) {
       lastLedger.current = next
@@ -508,12 +509,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     setAssetPage(next)
   }
 
-  // 态势感知、智能巡检、Skill 管理、平台监控与台账各自独立；台账记忆上次打开的分节。
+  // 态势感知、智能巡检、Skill 管理、MCP 管理、平台监控与台账各自独立；台账记忆上次打开的分节。
   function openAssetArea(area: AssetArea): void {
     openView("assets")
     if (area === "situation") return openAssetPage({ section: "situation" })
     if (area === "inspection") return openAssetPage({ section: "inspection" })
     if (area === "skills") return openAssetPage({ section: "skills" })
+    if (area === "mcp") return openAssetPage({ section: "mcp" })
     if (area === "machines") return openAssetPage({ section: "machines" })
     if (area === "board") return openAssetPage({ section: "board" })
     if (area === "scope") return openAssetPage({ section: "scope" })

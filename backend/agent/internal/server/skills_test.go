@@ -141,3 +141,99 @@ func TestPlatformSkillsCRUDPermissionsSyncAndInspectionDriver(t *testing.T) {
 	f.http(t, f.admin, "POST", "/v1/skills", `{"action":"delete","slug":"inspect-vm-host"}`, 409)
 	f.http(t, operator, "POST", "/v1/skills", `{"action":"delete","slug":"custom-nginx-audit"}`, 200)
 }
+
+func TestInspectionPromptCommandAndArbitraryArtifacts(t *testing.T) {
+	// 1. Unit tests for extractInspectionArtifact with arbitrary schemas.
+	pureJSON := extractInspectionArtifact(`{"host":"node-1","open_ports":[{"port":443,"proto":"tcp"}],"status":"ok"}`, "端口检查", "network")
+	if pureJSON.Format != "json" || pureJSON.Status != "pass" || !strings.Contains(string(pureJSON.JSON), `"open_ports"`) {
+		t.Fatalf("unexpected pureJSON parse: %+v", pureJSON)
+	}
+
+	mdAndJSON := extractInspectionArtifact("# 巡检结论\n\n发现 1 个异常端口。\n\n```json\n{\"status\":\"warning\",\"summary\":\"发现调试端口\",\"ports\":[{\"port\":8080,\"state\":\"LISTEN\"}]}\n```\n", "自定义检查", "ops")
+	if mdAndJSON.Format != "markdown+json" || mdAndJSON.Status != "warning" || mdAndJSON.Summary != "发现调试端口" || !strings.Contains(string(mdAndJSON.JSON), `"port":8080`) {
+		t.Fatalf("unexpected markdown+json parse: %+v", mdAndJSON)
+	}
+
+	// 2. End-to-end Gateway -> Agent direct command inspection & schedule persistence.
+	f := monitorEngineFixture(t)
+	operator := f.user(t, "cmd-op", ScopeGrant{Cluster: "dev", Instance: "local"})
+	inventoryTestAgent(t, f, "local")
+
+	skillsRoot := t.TempDir()
+	t.Setenv("DOOPS_AGENT_SKILLS_ROOT", skillsRoot)
+
+	// Run an arbitrary shell command producing Markdown + custom JSON payload.
+	cmdBody := "printf '## 环境巡检摘要\\n\\n一切正常。\\n\\n```json\\n{\"status\":\"pass\",\"summary\":\"自定义命令采集成功\",\"custom_score\":98,\"rows\":[{\"item\":\"kernel\",\"ok\":true}]}\\n```\\n'"
+	reqJSON, _ := json.Marshal(map[string]any{
+		"targets": []map[string]string{{"cluster": "dev", "instance": "local"}},
+		"prompt":  "检查主机环境与自定义结构化指标",
+		"command": cmdBody,
+	})
+	runRaw := f.http(t, operator, "POST", "/v1/monitor/runs", string(reqJSON), 200)
+	var runResp struct {
+		Run   monitorRunRecord       `json:"run"`
+		Items []monitorRunItemRecord `json:"items"`
+	}
+	if err := json.Unmarshal(runRaw, &runResp); err != nil {
+		t.Fatalf("decode command run: %v", err)
+	}
+	if runResp.Run.Prompt != "检查主机环境与自定义结构化指标" || runResp.Run.Command == "" {
+		t.Fatalf("expected prompt and command persisted on run, got %+v", runResp.Run)
+	}
+	if len(runResp.Items) != 1 {
+		t.Fatalf("expected exactly 1 item (not 6 default strategies), got %d: %+v", len(runResp.Items), runResp.Items)
+	}
+	it := runResp.Items[0]
+	if it.CollectorMethod != "shell_command" || it.ArtifactFormat != "markdown+json" {
+		t.Fatalf("expected shell_command markdown+json artifact, got method=%s format=%s raw=%q", it.CollectorMethod, it.ArtifactFormat, it.RawOutput)
+	}
+	if !strings.Contains(string(it.ArtifactJSON), `"custom_score":98`) || !strings.Contains(it.ArtifactMarkdown, "环境巡检摘要") {
+		t.Fatalf("expected arbitrary JSON and Markdown preserved, got json=%s md=%q", string(it.ArtifactJSON), it.ArtifactMarkdown)
+	}
+
+	// Verify GET /v1/monitor/runs/<id> returns persisted prompt, command, and artifacts.
+	detailRaw := f.http(t, operator, "GET", "/v1/monitor/runs/"+runResp.Run.ID, "", 200)
+	var detailResp struct {
+		Run   monitorRunRecord       `json:"run"`
+		Items []monitorRunItemRecord `json:"items"`
+	}
+	if err := json.Unmarshal(detailRaw, &detailResp); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if detailResp.Run.Prompt != "检查主机环境与自定义结构化指标" || len(detailResp.Items) != 1 || detailResp.Items[0].ArtifactFormat != "markdown+json" {
+		t.Fatalf("persisted detail mismatch: run=%+v items=%+v", detailResp.Run, detailResp.Items)
+	}
+
+	// 3. Schedule with Skill + Prompt + Command persists cleanly and does not force default strategies.
+	schedRaw := f.http(t, f.admin, "POST", "/v1/monitor/schedules", `{
+		"action": "create",
+		"name": "自定义命令与提示词巡检",
+		"scope_mode": "targets",
+		"targets": [{"cluster": "dev", "instance": "local"}],
+		"prompt": "每日检查服务状态并输出 JSON",
+		"command": "printf '{\"status\":\"ok\",\"service\":\"demo\"}'",
+		"interval_seconds": 300
+	}`, 200)
+	var schedResp struct {
+		Schedule monitorScheduleRecord `json:"schedule"`
+	}
+	if err := json.Unmarshal(schedRaw, &schedResp); err != nil {
+		t.Fatalf("decode schedule: %v", err)
+	}
+	if schedResp.Schedule.Prompt != "每日检查服务状态并输出 JSON" || schedResp.Schedule.Command == "" || len(schedResp.Schedule.Strategies) != 0 {
+		t.Fatalf("unexpected schedule saved: %+v", schedResp.Schedule)
+	}
+
+	// Triggering that schedule executes the saved command and stores pure JSON artifact.
+	sRunRaw := f.http(t, operator, "POST", "/v1/monitor/runs", `{"schedule_id":"`+schedResp.Schedule.ID+`"}`, 200)
+	var sRunResp struct {
+		Run   monitorRunRecord       `json:"run"`
+		Items []monitorRunItemRecord `json:"items"`
+	}
+	if err := json.Unmarshal(sRunRaw, &sRunResp); err != nil {
+		t.Fatalf("decode scheduled run: %v", err)
+	}
+	if len(sRunResp.Items) != 1 || sRunResp.Items[0].ArtifactFormat != "json" || !strings.Contains(string(sRunResp.Items[0].ArtifactJSON), `"service":"demo"`) {
+		t.Fatalf("expected pure JSON artifact from scheduled command, got %+v", sRunResp.Items)
+	}
+}

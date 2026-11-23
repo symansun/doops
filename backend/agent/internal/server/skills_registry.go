@@ -9,9 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -346,6 +350,90 @@ func (s *GatewayStore) SeedBuiltinSystemSkills(ctx context.Context) error {
 	return nil
 }
 
+func (s *GatewayStore) skillStorageRoot() string {
+	if s.dbDir == "" || s.dbDir == "." {
+		return ""
+	}
+	return filepath.Join(s.dbDir, "skills")
+}
+
+func (s *GatewayStore) writeSkillFilesToDisk(slug, skillMD string, files []platformSkillFile) (string, error) {
+	root := s.skillStorageRoot()
+	if root == "" {
+		return "", nil
+	}
+	if !skillSlugPattern.MatchString(slug) {
+		return "", errors.New("invalid skill slug")
+	}
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return "", err
+	}
+	targetDir := filepath.Join(root, slug)
+	tmpDir, err := os.MkdirTemp(root, ".stage-"+slug+"-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "SKILL.md"), []byte(skillMD), 0600); err != nil {
+		return "", err
+	}
+	for _, f := range files {
+		dst := filepath.Join(tmpDir, filepath.FromSlash(f.Path))
+		rel, err := filepath.Rel(tmpDir, dst)
+		if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+			return "", errors.New("invalid skill attachment path")
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(dst, []byte(f.Content), 0600); err != nil {
+			return "", err
+		}
+	}
+	if err := os.RemoveAll(targetDir); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmpDir, targetDir); err != nil {
+		return "", err
+	}
+	return "skills/" + slug, nil
+}
+
+func (s *GatewayStore) readSkillFilesFromDisk(slug string) (string, []platformSkillFile, bool) {
+	root := s.skillStorageRoot()
+	if root == "" || !skillSlugPattern.MatchString(slug) {
+		return "", nil, false
+	}
+	dir := filepath.Join(root, slug)
+	mdBytes, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		return "", nil, false
+	}
+	files := []platformSkillFile{}
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "SKILL.md" {
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		files = append(files, platformSkillFile{Path: rel, Content: string(data)})
+		return nil
+	})
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return string(mdBytes), files, true
+}
+
 func (s *GatewayStore) ListPlatformSkills(ctx context.Context, auth TokenAuth, scopeFilter, categoryFilter string, includeBody bool) ([]platformSkillRecord, error) {
 	isAdmin := auth.UserID != "" && s.UserIsPlatformAdmin(auth.UserID)
 	args := []any{}
@@ -363,7 +451,7 @@ func (s *GatewayStore) ListPlatformSkills(ctx context.Context, auth TokenAuth, s
 		args = append(args, auth.UserID)
 	}
 	query := `SELECT slug, name, description, scope, category, driver_mode, strategy_id,
-		enabled, skill_md, files_json, sha256, owner_id, owner_name,
+		enabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,
 		created_at_ms, updated_at_ms, last_run_at_ms, run_count
 		FROM platform_skills WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY CASE scope WHEN 'system' THEN 0 ELSE 1 END, category, slug`
@@ -375,7 +463,7 @@ func (s *GatewayStore) ListPlatformSkills(ctx context.Context, auth TokenAuth, s
 
 	out := []platformSkillRecord{}
 	for rows.Next() {
-		rec, err := scanPlatformSkillRow(rows, auth.UserID, isAdmin, includeBody)
+		rec, err := s.scanPlatformSkillRow(rows, auth.UserID, isAdmin, includeBody)
 		if err != nil {
 			return nil, err
 		}
@@ -387,10 +475,10 @@ func (s *GatewayStore) ListPlatformSkills(ctx context.Context, auth TokenAuth, s
 func (s *GatewayStore) GetPlatformSkill(ctx context.Context, auth TokenAuth, slug string) (platformSkillRecord, error) {
 	isAdmin := auth.UserID == "system" || (auth.UserID != "" && s.UserIsPlatformAdmin(auth.UserID))
 	row := s.readDB().QueryRowContext(ctx, `SELECT slug, name, description, scope, category, driver_mode, strategy_id,
-		enabled, skill_md, files_json, sha256, owner_id, owner_name,
+		enabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,
 		created_at_ms, updated_at_ms, last_run_at_ms, run_count
 		FROM platform_skills WHERE slug=?`, slug)
-	rec, err := scanPlatformSkillRow(row, auth.UserID, isAdmin, true)
+	rec, err := s.scanPlatformSkillRow(row, auth.UserID, isAdmin, true)
 	if err != nil {
 		return rec, err
 	}
@@ -404,27 +492,41 @@ type skillRowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanPlatformSkillRow(sc skillRowScanner, userID string, isAdmin bool, includeBody bool) (platformSkillRecord, error) {
+func (s *GatewayStore) scanPlatformSkillRow(sc skillRowScanner, userID string, isAdmin bool, includeBody bool) (platformSkillRecord, error) {
 	var (
-		rec       platformSkillRecord
-		enabled   int
-		skillMD   string
-		filesJSON string
+		rec        platformSkillRecord
+		enabled    int
+		skillMD    string
+		filesJSON  string
+		fileCount  int
+		storageDir string
 	)
 	if err := sc.Scan(
 		&rec.Slug, &rec.Name, &rec.Description, &rec.Scope, &rec.Category, &rec.DriverMode, &rec.StrategyID,
-		&enabled, &skillMD, &filesJSON, &rec.SHA256, &rec.OwnerID, &rec.OwnerName,
+		&enabled, &skillMD, &filesJSON, &fileCount, &storageDir, &rec.SHA256, &rec.OwnerID, &rec.OwnerName,
 		&rec.CreatedAtMs, &rec.UpdatedAtMs, &rec.LastRunAtMs, &rec.RunCount,
 	); err != nil {
 		return rec, err
 	}
 	rec.Enabled = enabled != 0
-	var files []platformSkillFile
-	_ = json.Unmarshal([]byte(filesJSON), &files)
-	rec.FileCount = len(files)
+	var legacyFiles []platformSkillFile
+	if filesJSON != "" && filesJSON != "[]" {
+		_ = json.Unmarshal([]byte(filesJSON), &legacyFiles)
+	}
+	if fileCount > 0 {
+		rec.FileCount = fileCount
+	} else {
+		rec.FileCount = len(legacyFiles)
+	}
 	if includeBody {
-		rec.SkillMD = skillMD
-		rec.Files = files
+		if diskMD, diskFiles, ok := s.readSkillFilesFromDisk(rec.Slug); ok {
+			rec.SkillMD = diskMD
+			rec.Files = diskFiles
+			rec.FileCount = len(diskFiles)
+		} else {
+			rec.SkillMD = skillMD
+			rec.Files = legacyFiles
+		}
 	}
 	if rec.Scope == "system" {
 		rec.CanEdit = isAdmin
@@ -437,7 +539,6 @@ func scanPlatformSkillRow(sc skillRowScanner, userID string, isAdmin bool, inclu
 }
 
 func (s *GatewayStore) UpsertPlatformSkill(ctx context.Context, rec platformSkillRecord) (platformSkillRecord, error) {
-	filesJSON, _ := json.Marshal(rec.Files)
 	nowMs := time.Now().UnixMilli()
 	if rec.CreatedAtMs <= 0 {
 		rec.CreatedAtMs = nowMs
@@ -445,15 +546,28 @@ func (s *GatewayStore) UpsertPlatformSkill(ctx context.Context, rec platformSkil
 	rec.UpdatedAtMs = nowMs
 	rec.SHA256 = computeSkillSHA256(rec.SkillMD, rec.Files)
 	rec.FileCount = len(rec.Files)
+
+	storageDir, diskErr := s.writeSkillFilesToDisk(rec.Slug, rec.SkillMD, rec.Files)
+	dbSkillMD := rec.SkillMD
+	dbFilesJSON := "[]"
+	if diskErr == nil && storageDir != "" {
+		// Content lives on the Gateway filesystem; SQLite keeps only the lightweight metadata index.
+		dbSkillMD = ""
+		dbFilesJSON = "[]"
+	} else {
+		raw, _ := json.Marshal(rec.Files)
+		dbFilesJSON = string(raw)
+	}
+
 	enabledInt := 0
 	if rec.Enabled {
 		enabledInt = 1
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO platform_skills (
 		slug, name, description, scope, category, driver_mode, strategy_id,
-		enabled, skill_md, files_json, sha256, owner_id, owner_name,
+		enabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,
 		created_at_ms, updated_at_ms, last_run_at_ms, run_count
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(slug) DO UPDATE SET
 		name=excluded.name,
 		description=excluded.description,
@@ -463,10 +577,12 @@ func (s *GatewayStore) UpsertPlatformSkill(ctx context.Context, rec platformSkil
 		enabled=excluded.enabled,
 		skill_md=excluded.skill_md,
 		files_json=excluded.files_json,
+		file_count=excluded.file_count,
+		storage_dir=excluded.storage_dir,
 		sha256=excluded.sha256,
 		updated_at_ms=excluded.updated_at_ms`,
 		rec.Slug, rec.Name, rec.Description, rec.Scope, rec.Category, rec.DriverMode, rec.StrategyID,
-		enabledInt, rec.SkillMD, string(filesJSON), rec.SHA256, rec.OwnerID, rec.OwnerName,
+		enabledInt, dbSkillMD, dbFilesJSON, rec.FileCount, storageDir, rec.SHA256, rec.OwnerID, rec.OwnerName,
 		rec.CreatedAtMs, rec.UpdatedAtMs, rec.LastRunAtMs, rec.RunCount,
 	)
 	return rec, err
@@ -494,6 +610,9 @@ func (s *GatewayStore) DeletePlatformSkill(ctx context.Context, slug string) err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return sql.ErrNoRows
+	}
+	if root := s.skillStorageRoot(); root != "" && skillSlugPattern.MatchString(slug) {
+		_ = os.RemoveAll(filepath.Join(root, slug))
 	}
 	return nil
 }
@@ -564,7 +683,36 @@ func (h *GatewayHub) HandlePlatformSkills(w http.ResponseWriter, r *http.Request
 			writeSkillHTTPError(w, 503, "skill_store_unavailable", "无法读取 Skill 列表")
 			return
 		}
-		writeJSONHTTP(w, map[string]any{"skills": items})
+		resp := map[string]any{"skills": items}
+		if rawTarget := strings.TrimSpace(q.Get("target")); rawTarget != "" {
+			cluster, instance, ok := strings.Cut(rawTarget, "/")
+			if !ok || !monitorID(cluster) || !monitorID(instance) {
+				writeSkillHTTPError(w, 400, "invalid_target", "目标格式应为 cluster/instance")
+				return
+			}
+			if !h.store.UserIsPlatformAdmin(auth.UserID) && !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
+				writeSkillHTTPError(w, 403, "target_forbidden", "当前账号无权查看该目标已加载的 Skill")
+				return
+			}
+			callCtx, cancel := context.WithTimeout(contextWithInternalAuditAuth(r.Context(), auth), 20*time.Second)
+			rawOut, callErr := h.RunInternalToolCall(callCtx, cluster, instance, skillsInspectTool, map[string]any{
+				"session_id": "skills-inspect-" + randomHex(4),
+			})
+			cancel()
+			if callErr != nil {
+				resp["agent_error"] = trimTail(sanitizeSecretText(callErr.Error()), 200)
+			} else {
+				var parsed struct {
+					Root   string                 `json:"root"`
+					Skills []agentLoadedSkillInfo `json:"skills"`
+				}
+				if json.Unmarshal([]byte(strings.TrimSpace(rawOut)), &parsed) == nil {
+					resp["agent_skills_root"] = parsed.Root
+					resp["agent_skills"] = parsed.Skills
+				}
+			}
+		}
+		writeJSONHTTP(w, resp)
 
 	case http.MethodPost:
 		if subPath != "" {

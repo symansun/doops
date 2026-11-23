@@ -3,10 +3,24 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
+
+const skillsInspectTool = "doops_skills_inspect"
+
+type agentLoadedSkillInfo struct {
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Kind        string `json:"kind"` // dir | file
+	FileCount   int    `json:"file_count"`
+	SizeBytes   int64  `json:"size_bytes"`
+	UpdatedAtMs int64  `json:"updated_at_ms"`
+}
 
 type skillSyncParams struct {
 	SessionID string              `json:"session_id"`
@@ -117,6 +131,89 @@ func (gw *Gateway) handleToolSkillSync(call toolInvocation) {
 		"dir":           skillDir,
 		"files_written": written,
 		"detail":        fmt.Sprintf("synced %d files to %s", written, skillDir),
+	})
+	writeJSON(buildSuccessResponse(reqID, string(out)))
+}
+
+func (gw *Gateway) handleToolSkillsInspect(call toolInvocation) {
+	reqID, writeJSON := call.reqID, call.writeJSON
+	root := agentSkillsRoot()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			out, _ := json.Marshal(map[string]any{"root": root, "skills": []agentLoadedSkillInfo{}})
+			writeJSON(buildSuccessResponse(reqID, string(out)))
+			return
+		}
+		writeJSON(buildToolErrorResponse(reqID, "skills_inspect_failed: "+err.Error()))
+		return
+	}
+
+	skills := make([]agentLoadedSkillInfo, 0, len(entries))
+	for _, ent := range entries {
+		name := ent.Name()
+		if strings.HasPrefix(name, ".") || name == "system_prompt.md" {
+			continue
+		}
+		fullPath := filepath.Join(root, name)
+		if ent.IsDir() {
+			mdBytes, _ := os.ReadFile(filepath.Join(fullPath, "SKILL.md"))
+			fmName, fmDesc := parseSkillFrontmatter(string(mdBytes))
+			if fmName == "" {
+				fmName = name
+			}
+			var totalSize int64
+			fileCount := 0
+			var latestMod int64
+			_ = filepath.WalkDir(fullPath, func(p string, d fs.DirEntry, walkErr error) error {
+				if walkErr != nil || d.IsDir() {
+					return nil
+				}
+				fileCount++
+				if info, err := d.Info(); err == nil {
+					totalSize += info.Size()
+					if ms := info.ModTime().UnixMilli(); ms > latestMod {
+						latestMod = ms
+					}
+				}
+				return nil
+			})
+			skills = append(skills, agentLoadedSkillInfo{
+				Slug:        name,
+				Name:        fmName,
+				Description: fmDesc,
+				Kind:        "dir",
+				FileCount:   fileCount,
+				SizeBytes:   totalSize,
+				UpdatedAtMs: latestMod,
+			})
+		} else if strings.HasSuffix(name, ".md") {
+			slug := strings.TrimSuffix(name, ".md")
+			mdBytes, _ := os.ReadFile(fullPath)
+			fmName, fmDesc := parseSkillFrontmatter(string(mdBytes))
+			if fmName == "" {
+				fmName = slug
+			}
+			var sz, mod int64
+			if info, err := ent.Info(); err == nil {
+				sz = info.Size()
+				mod = info.ModTime().UnixMilli()
+			}
+			skills = append(skills, agentLoadedSkillInfo{
+				Slug:        slug,
+				Name:        fmName,
+				Description: fmDesc,
+				Kind:        "file",
+				FileCount:   1,
+				SizeBytes:   sz,
+				UpdatedAtMs: mod,
+			})
+		}
+	}
+	sort.Slice(skills, func(i, j int) bool { return skills[i].Slug < skills[j].Slug })
+	out, _ := json.Marshal(map[string]any{
+		"root":   root,
+		"skills": skills,
 	})
 	writeJSON(buildSuccessResponse(reqID, string(out)))
 }

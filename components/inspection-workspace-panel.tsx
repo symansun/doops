@@ -1,18 +1,13 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
-import {
-  getInspectionMcpServices,
-  subscribeInspectionMcpServices,
-} from "@/lib/inspection-mcp-store"
+import type { Session, Target } from "@/lib/client"
+import { fetchMonitorSchedules } from "@/lib/monitor-engine"
 import { fetchPlatformSkills } from "@/lib/skills-registry"
-import { AssetInspectionPanel } from "./asset-inspection-panel"
 import { InspectionCenterPanel } from "./inspection-center-panel"
-import { InspectionMcpPanel } from "./inspection-mcp-panel"
 import { Badge, Button, Inline, PageTabs } from "./ui"
 
-type InspectionWorkspaceTab = "runs" | "mcp" | "compliance"
+type InspectionWorkspaceTab = "runs" | "schedules"
 
 export function InspectionWorkspacePanel({
   session,
@@ -21,6 +16,7 @@ export function InspectionWorkspacePanel({
   onRunIdChange,
   onOpenSituation,
   onOpenSkills,
+  onOpenMcp,
 }: {
   session: Session
   targets: Target[]
@@ -28,19 +24,12 @@ export function InspectionWorkspacePanel({
   onRunIdChange?: (runId: string) => void
   onOpenSituation?: () => void
   onOpenSkills?: () => void
+  onOpenMcp?: () => void
 }) {
-  const isAdmin = sessionIsAdmin(session)
   const [subTab, setSubTab] = useState<InspectionWorkspaceTab>("runs")
   const [selectedRunId, setSelectedRunId] = useState(initialRunId || "")
-  const [skillCounts, setSkillCounts] = useState<{ enabled: number; total: number; custom: number }>({
-    enabled: 0,
-    total: 0,
-    custom: 0,
-  })
-  const [mcpCounts, setMcpCounts] = useState(() => {
-    const list = getInspectionMcpServices()
-    return { enabled: list.filter((s) => s.enabled).length, total: list.length }
-  })
+  const [skillCounts, setSkillCounts] = useState({ enabled: 0, total: 0 })
+  const [scheduleCount, setScheduleCount] = useState<number | null>(null)
 
   useEffect(() => {
     if (initialRunId) {
@@ -51,62 +40,55 @@ export function InspectionWorkspacePanel({
 
   useEffect(() => {
     const ctrl = new AbortController()
-    fetchPlatformSkills(session, {}, ctrl.signal)
-      .then((res) => {
-        if (ctrl.signal.aborted) return
-        const list = res.skills || []
+    Promise.all([
+      fetchPlatformSkills(session, {}, ctrl.signal).catch(() => null),
+      fetchMonitorSchedules(session, ctrl.signal).catch(() => null),
+    ]).then(([skillRes, schedRes]) => {
+      if (ctrl.signal.aborted) return
+      if (skillRes?.skills) {
         setSkillCounts({
-          enabled: list.filter((s) => s.enabled).length,
-          total: list.length,
-          custom: list.filter((s) => s.scope === "custom").length,
+          enabled: skillRes.skills.filter((s) => s.enabled).length,
+          total: skillRes.skills.length,
         })
-      })
-      .catch(() => {})
+      }
+      if (schedRes?.schedules) {
+        setScheduleCount(schedRes.schedules.length)
+      }
+    })
     return () => ctrl.abort()
   }, [session])
 
-  useEffect(() => {
-    const sync = () => {
-      const list = getInspectionMcpServices()
-      setMcpCounts({ enabled: list.filter((s) => s.enabled).length, total: list.length })
-    }
-    sync()
-    return subscribeInspectionMcpServices(sync)
-  }, [])
-
   return (
     <section aria-label="智能巡检" className="space-y-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0 space-y-0.5">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold text-foreground">智能巡检</h1>
-            <Badge variant={isAdmin ? "primary" : "outline"}>
-              {isAdmin ? "全局巡检权限" : "本人授权范围"}
-            </Badge>
             {skillCounts.total > 0 && (
-              <Badge variant="primary">
-                巡检 Skill {skillCounts.enabled}/{skillCounts.total} 已启用
-                {skillCounts.custom > 0 ? `（含 ${skillCounts.custom} 个自定义）` : ""}
+              <Badge variant="outline">
+                Skill {skillCounts.enabled}/{skillCounts.total}
               </Badge>
             )}
-            <Badge variant={mcpCounts.enabled >= 5 ? "success" : "warning"}>
-              安全巡检 MCP {mcpCounts.enabled}/{mcpCounts.total} 已启用
-            </Badge>
           </div>
-          <p className="text-sm text-muted-foreground">
-            巡检由系统驱动 Skill（系统内置 Skill + 自定义上传 Skill）统一执行，同时管理安全巡检 MCP 服务开关与周度合规修复复验台账。
+          <p className="text-xs text-muted-foreground">
+            关联 Skill 与提示词（或任意命令）发起即时或定时巡检，查看 Markdown / JSON 可视化产物。
           </p>
         </div>
-        {(onOpenSkills || onOpenSituation) && (
-          <Inline gap={2} className="flex-wrap">
+        {(onOpenSkills || onOpenMcp || onOpenSituation) && (
+          <Inline gap={2}>
             {onOpenSkills && (
               <Button size="sm" onClick={onOpenSkills}>
-                管理 / 上传 Skill
+                Skill 管理
+              </Button>
+            )}
+            {onOpenMcp && (
+              <Button size="sm" onClick={onOpenMcp}>
+                MCP 管理
               </Button>
             )}
             {onOpenSituation && (
               <Button size="sm" variant="ghost" onClick={onOpenSituation}>
-                前往态势感知
+                态势感知
               </Button>
             )}
           </Inline>
@@ -118,35 +100,28 @@ export function InspectionWorkspacePanel({
         value={subTab}
         onChange={(next) => setSubTab(next as InspectionWorkspaceTab)}
         items={[
-          { id: "runs", label: "Skill 驱动巡检与记录" },
-          { id: "mcp", label: `安全巡检 MCP 服务 (${mcpCounts.enabled}/${mcpCounts.total})` },
-          { id: "compliance", label: "周度合规与修复台账" },
+          { id: "runs", label: "执行与记录" },
+          { id: "schedules", label: scheduleCount != null ? `定时计划 (${scheduleCount})` : "定时计划" },
         ]}
       />
 
-      {subTab === "runs" ? (
-        <InspectionCenterPanel
-          session={session}
-          targets={targets}
-          initialRunId={selectedRunId || undefined}
-          onClearInitialRun={() => {
-            setSelectedRunId("")
-            onRunIdChange?.("")
-          }}
-          onOpenSkills={onOpenSkills}
-        />
-      ) : subTab === "mcp" ? (
-        <InspectionMcpPanel
-          session={session}
-          onOpenRunDetail={(runId) => {
-            setSelectedRunId(runId)
-            onRunIdChange?.(runId)
-            setSubTab("runs")
-          }}
-        />
-      ) : (
-        <AssetInspectionPanel session={session} targets={targets} />
-      )}
+      <InspectionCenterPanel
+        session={session}
+        targets={targets}
+        mode={subTab}
+        initialRunId={subTab === "runs" ? selectedRunId || undefined : undefined}
+        onSelectRun={(runId) => {
+          setSelectedRunId(runId)
+          onRunIdChange?.(runId)
+          if (runId && subTab !== "runs") setSubTab("runs")
+        }}
+        onClearInitialRun={() => {
+          setSelectedRunId("")
+          onRunIdChange?.("")
+        }}
+        onScheduleCountChange={setScheduleCount}
+        onOpenSkills={onOpenSkills}
+      />
     </section>
   )
 }

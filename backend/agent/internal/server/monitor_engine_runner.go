@@ -25,6 +25,8 @@ type monitorRunPlan struct {
 	Tags         []string
 	Strategies   []string
 	Skills       []string
+	Prompt       string
+	Command      string
 	Thresholds   api.MonitorInspectThresholds
 	ExplicitSSH  []api.MonitorInspectAsset
 	RetestItems  map[string][]api.MonitorInspectAsset // keyed by cluster/instance
@@ -71,6 +73,8 @@ func (h *GatewayHub) RunDueMonitorSchedules(ctx context.Context, now time.Time) 
 				Tags:         s.Tags,
 				Strategies:   s.Strategies,
 				Skills:       s.Skills,
+				Prompt:       s.Prompt,
+				Command:      s.Command,
 				Thresholds:   s.Thresholds,
 			})
 			if err != nil {
@@ -114,7 +118,9 @@ func (h *GatewayHub) resolveMonitorPlanTargets(ctx context.Context, plan monitor
 				add(c, i)
 			}
 		}
-		sort.Slice(out, func(i, j int) bool { return tunnelKey(out[i].Cluster, out[i].Instance) < tunnelKey(out[j].Cluster, out[j].Instance) })
+		sort.Slice(out, func(i, j int) bool {
+			return tunnelKey(out[i].Cluster, out[i].Instance) < tunnelKey(out[j].Cluster, out[j].Instance)
+		})
 		return out
 	}
 
@@ -348,17 +354,20 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 	started := time.Now().UTC()
 	runID := "run_" + randomHex(8)
 	plan.Skills = normalizeSkillSlugs(plan.Skills)
+	plan.Prompt = strings.TrimSpace(plan.Prompt)
+	plan.Command = strings.TrimSpace(plan.Command)
 	plan.Thresholds = normalizeMonitorThresholds(plan.Thresholds)
 
 	// Resolve Skill-driven inspection plan: builtin_strategy skills map to native
-	// Agent strategies, while agent_prompt (system security or user custom) skills
-	// sync to /root/.agent/skills/<slug>/ and execute via read-only doops_agent_prompt.
+	// Agent strategies, while agent_prompt skills sync to /root/.agent/skills/<slug>/
+	// and execute via doops_agent_prompt (or bundled scripts / direct command via doops_shell).
 	var (
 		agentDrivenSkills []platformSkillRecord
 		drivenSkillSlugs  []string
 		skillDerivedStrat []string
 		skillByStrategy   = map[string]string{}
 	)
+	hasCustomAction := plan.Prompt != "" || plan.Command != ""
 	if len(plan.Skills) > 0 && plan.RetestItems == nil {
 		lookupAuth := plan.Auth
 		if lookupAuth.UserID == "" {
@@ -383,8 +392,14 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 		}
 		if len(skillDerivedStrat) > 0 {
 			plan.Strategies = skillDerivedStrat
-		} else if len(agentDrivenSkills) > 0 && len(plan.Strategies) == 0 {
-			plan.Strategies = []string{}
+		} else if len(agentDrivenSkills) > 0 || hasCustomAction {
+			plan.Strategies = normalizeMonitorStrategiesOptional(plan.Strategies)
+		} else {
+			plan.Strategies = normalizeMonitorStrategies(plan.Strategies)
+		}
+	} else if plan.RetestItems == nil {
+		if hasCustomAction {
+			plan.Strategies = normalizeMonitorStrategiesOptional(plan.Strategies)
 		} else {
 			plan.Strategies = normalizeMonitorStrategies(plan.Strategies)
 		}
@@ -409,6 +424,9 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 		TriggerKind:  plan.TriggerKind,
 		TriggeredBy:  plan.TriggeredBy,
 		Status:       "running",
+		Skills:       drivenSkillSlugs,
+		Prompt:       plan.Prompt,
+		Command:      plan.Command,
 		TotalTargets: len(targets),
 		StartedAtMs:  started.UnixMilli(),
 	}
@@ -421,7 +439,7 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 		TokenID:        plan.Auth.TokenID,
 		Action:         GatewayAction("monitor:run"),
 		Session:        "monitor-" + runID,
-		CommandSummary: fmt.Sprintf("run=%s trigger=%s targets=%d strategies=%s skills=%s", runID, plan.TriggerKind, len(targets), strings.Join(plan.Strategies, ","), strings.Join(drivenSkillSlugs, ",")),
+		CommandSummary: fmt.Sprintf("run=%s trigger=%s targets=%d strategies=%s skills=%s has_prompt=%t has_cmd=%t", runID, plan.TriggerKind, len(targets), strings.Join(plan.Strategies, ","), strings.Join(drivenSkillSlugs, ","), plan.Prompt != "", plan.Command != ""),
 	})
 
 	var (
@@ -431,6 +449,9 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 		allSeries    []monitorSeriesBridgeEntry
 		offlineCount int
 	)
+
+	hasCommand := plan.Command != ""
+	hasPromptOnly := !hasCommand && plan.Prompt != "" && len(agentDrivenSkills) == 0
 
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
@@ -448,7 +469,7 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 			} else if len(plan.Strategies) > 0 {
 				assets = h.buildAgentInspectAssets(ctx, t.Cluster, t.Instance, plan.Strategies, plan.ExplicitSSH)
 			}
-			if len(assets) == 0 && len(agentDrivenSkills) == 0 {
+			if len(assets) == 0 && len(agentDrivenSkills) == 0 && !hasCommand && !hasPromptOnly {
 				return
 			}
 
@@ -458,8 +479,12 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 				aid, aname, akind, astrat := t.Instance, t.Cluster+"/"+t.Instance, "vm", "vm_host"
 				if len(assets) > 0 {
 					aid, aname, akind, astrat = assets[0].AssetID, assets[0].AssetName, assets[0].AssetKind, assets[0].Strategy
+				} else if hasCommand {
+					aid, aname, akind, astrat = "shell-command", "自定义命令巡检", "command", "command"
 				} else if len(agentDrivenSkills) > 0 {
 					aid, aname, akind, astrat = agentDrivenSkills[0].Slug, agentDrivenSkills[0].Name, "skill", "skill:"+agentDrivenSkills[0].Slug
+				} else if hasPromptOnly {
+					aid, aname, akind, astrat = "custom-prompt", "提示词巡检", "prompt", "custom_prompt"
 				}
 				mu.Lock()
 				offlineCount++
@@ -529,23 +554,27 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 						if slug := skillByStrategy[r.Strategy]; slug != "" {
 							r.Evidence["skill_slug"] = slug
 						}
+						artFmt, artMd, artJSON := buildBuiltinStrategyArtifact(r)
 						item := monitorRunItemRecord{
-							RunID:           runID,
-							Cluster:         t.Cluster,
-							Instance:        t.Instance,
-							AssetID:         r.AssetID,
-							AssetName:       r.AssetName,
-							AssetKind:       r.AssetKind,
-							Strategy:        r.Strategy,
-							CollectorMethod: r.CollectorMethod,
-							Status:          r.Status,
-							Reason:          r.Reason,
-							StartedAtMs:     tStart.UnixMilli(),
-							FinishedAtMs:    r.CollectedAtMs,
-							DurationMs:      r.DurationMs,
-							Metrics:         r.Metrics,
-							Checks:          r.Checks,
-							Evidence:        r.Evidence,
+							RunID:            runID,
+							Cluster:          t.Cluster,
+							Instance:         t.Instance,
+							AssetID:          r.AssetID,
+							AssetName:        r.AssetName,
+							AssetKind:        r.AssetKind,
+							Strategy:         r.Strategy,
+							CollectorMethod:  r.CollectorMethod,
+							Status:           r.Status,
+							Reason:           r.Reason,
+							StartedAtMs:      tStart.UnixMilli(),
+							FinishedAtMs:     r.CollectedAtMs,
+							DurationMs:       r.DurationMs,
+							Metrics:          r.Metrics,
+							Checks:           r.Checks,
+							Evidence:         r.Evidence,
+							ArtifactFormat:   artFmt,
+							ArtifactMarkdown: artMd,
+							ArtifactJSON:     artJSON,
 						}
 						allItems = append(allItems, item)
 
@@ -600,12 +629,25 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 				}
 			}
 
-			// Execute agent-driven custom & system AI Skills sequentially per target.
-			for _, sk := range agentDrivenSkills {
-				item := h.runAgentDrivenSkillInspection(ctx, plan.Auth, t, runID, sk)
+			if hasCommand {
+				item := h.runCommandInspection(ctx, plan.Auth, t, runID, plan.Command, plan.Prompt, agentDrivenSkills)
 				mu.Lock()
 				allItems = append(allItems, item)
 				mu.Unlock()
+			} else {
+				// Execute agent-driven custom & system AI Skills sequentially per target.
+				for _, sk := range agentDrivenSkills {
+					item := h.runAgentDrivenSkillInspection(ctx, plan.Auth, t, runID, sk, plan.Prompt)
+					mu.Lock()
+					allItems = append(allItems, item)
+					mu.Unlock()
+				}
+				if hasPromptOnly {
+					item := h.runCustomPromptInspection(ctx, plan.Auth, t, runID, plan.Prompt, drivenSkillSlugs)
+					mu.Lock()
+					allItems = append(allItems, item)
+					mu.Unlock()
+				}
 			}
 		}(tgt)
 	}
@@ -772,14 +814,105 @@ func (h *GatewayHub) fallbackLegacyVMInspect(
 	return []api.MonitorInspectAssetResult{res}, nil
 }
 
-// runAgentDrivenSkillInspection syncs a system/custom Skill to the target Agent's
-// /root/.agent/skills/<slug>/ directory and drives it through read-only doops_agent_prompt.
+// runCommandInspection executes an arbitrary shell command on the target Agent via
+// the audited doops_shell tool and parses stdout into JSON / Markdown+JSON / text artifacts.
+func (h *GatewayHub) runCommandInspection(
+	ctx context.Context,
+	auth TokenAuth,
+	target monitorTargetRef,
+	runID string,
+	command string,
+	prompt string,
+	attachedSkills []platformSkillRecord,
+) monitorRunItemRecord {
+	started := time.Now()
+	assetID := "shell-command"
+	assetName := "命令巡检"
+	assetKind := "command"
+	strategy := "command"
+	evidence := map[string]any{
+		"command": trimTail(sanitizeSecretText(command), 1024),
+	}
+	if prompt != "" {
+		evidence["prompt"] = trimTail(sanitizeSecretText(prompt), 1024)
+		assetName = truncateUTF8Head(strings.Split(prompt, "\n")[0], 48)
+	}
+	if len(attachedSkills) > 0 {
+		slugs := make([]string, 0, len(attachedSkills))
+		for _, sk := range attachedSkills {
+			_ = h.syncOneSkillToAgent(ctx, auth, target, sk)
+			slugs = append(slugs, sk.Slug)
+		}
+		evidence["skills"] = slugs
+		evidence["skill_slug"] = attachedSkills[0].Slug
+		assetID = attachedSkills[0].Slug
+		if prompt == "" {
+			assetName = attachedSkills[0].Name
+		}
+		assetKind = "skill"
+		strategy = "skill:" + attachedSkills[0].Slug
+	}
+
+	item := monitorRunItemRecord{
+		RunID:           runID,
+		Cluster:         target.Cluster,
+		Instance:        target.Instance,
+		AssetID:         assetID,
+		AssetName:       assetName,
+		AssetKind:       assetKind,
+		Strategy:        strategy,
+		CollectorMethod: "shell_command",
+		StartedAtMs:     started.UnixMilli(),
+		Evidence:        evidence,
+	}
+
+	callCtx, cancel := context.WithTimeout(contextWithInternalAuditAuth(ctx, auth), 90*time.Second)
+	defer cancel()
+	rawOut, err := h.RunInternalToolCall(callCtx, target.Cluster, target.Instance, "doops_shell", map[string]any{
+		"session_id": "inspect-cmd-" + runID,
+		"command":    command,
+	})
+	item.FinishedAtMs = time.Now().UnixMilli()
+	item.DurationMs = time.Since(started).Milliseconds()
+
+	cleaned := stripShellCompletionSuffix(rawOut)
+	parsed := extractInspectionArtifact(cleaned, assetName, "command")
+	item.ArtifactFormat = parsed.Format
+	item.ArtifactMarkdown = parsed.Markdown
+	item.ArtifactJSON = parsed.JSON
+	item.RawOutput = parsed.Raw
+	item.Checks = parsed.Checks
+	item.Status = parsed.Status
+
+	if err != nil {
+		cleanErr := trimTail(sanitizeSecretText(err.Error()), 240)
+		item.Status = "critical"
+		item.Reason = "command_failed"
+		if item.ArtifactMarkdown == "" {
+			item.ArtifactFormat = "markdown"
+			item.ArtifactMarkdown = fmt.Sprintf("### 命令执行失败\n\n- **错误**：`%s`\n\n```text\n%s\n```", cleanErr, parsed.Raw)
+		}
+		item.Checks = []api.MonitorInspectCheck{{
+			ID:       "command.exec",
+			Name:     assetName,
+			Category: "command",
+			Status:   "critical",
+			Value:    "执行失败",
+			Detail:   cleanErr,
+		}}
+	}
+	return item
+}
+
+// runAgentDrivenSkillInspection syncs a Skill to the target Agent's /root/.agent/skills/<slug>/
+// directory and drives it through doops_agent_prompt (or falls back to a bundled Skill script).
 func (h *GatewayHub) runAgentDrivenSkillInspection(
 	ctx context.Context,
 	auth TokenAuth,
 	target monitorTargetRef,
 	runID string,
 	sk platformSkillRecord,
+	userPrompt string,
 ) monitorRunItemRecord {
 	started := time.Now()
 	item := monitorRunItemRecord{
@@ -798,25 +931,28 @@ func (h *GatewayHub) runAgentDrivenSkillInspection(
 			"skill_sha":   sk.SHA256,
 		},
 	}
+	if userPrompt != "" {
+		item.Evidence["prompt"] = trimTail(sanitizeSecretText(userPrompt), 1024)
+	}
 
 	if err := h.syncOneSkillToAgent(ctx, auth, target, sk); err != nil {
 		item.Status = "error"
 		item.Reason = "skill_sync_failed"
 		item.FinishedAtMs = time.Now().UnixMilli()
 		item.DurationMs = time.Since(started).Milliseconds()
+		cleanErr := sanitizeSecretText(err.Error())
+		item.ArtifactFormat = "markdown"
+		item.ArtifactMarkdown = fmt.Sprintf("### Skill 同步失败 (`%s`)\n\n无法将 Skill 同步至目标 `%s/%s`：%s", sk.Slug, target.Cluster, target.Instance, cleanErr)
 		item.Checks = []api.MonitorInspectCheck{{
 			ID: "skill.sync", Name: sk.Name + " · 同步下发", Category: sk.Category,
 			Status: "critical", Value: "同步失败",
-			Detail: "无法将 Skill 同步至目标 Agent：" + sanitizeSecretText(err.Error()),
+			Detail: "无法将 Skill 同步至目标 Agent：" + cleanErr,
 		}}
 		return item
 	}
 	item.Evidence["synced"] = true
 
-	instruction := fmt.Sprintf(
-		"你正在执行 DoOps 系统驱动的只读巡检任务。请加载并使用 Skill `name=%s` 完成只读检查，严格遵守该 Skill 的检查步骤且不得修改任何系统状态。完成后仅输出一段 JSON 对象，格式为：{\"status\":\"pass|warning|critical\",\"summary\":\"简明摘要\",\"checks\":[{\"id\":\"...\",\"name\":\"检查项\",\"category\":\"%s\",\"status\":\"pass|warning|critical|skipped\",\"value\":\"观测值\",\"detail\":\"证据说明\"}]}。",
-		sk.Slug, sk.Category,
-	)
+	instruction := buildSkillPromptInstruction(&sk, userPrompt)
 
 	callCtx, cancel := context.WithTimeout(contextWithInternalAuditAuth(ctx, auth), 90*time.Second)
 	defer cancel()
@@ -826,83 +962,145 @@ func (h *GatewayHub) runAgentDrivenSkillInspection(
 		"operation":   "ask",
 		"skill":       sk.Slug,
 	})
+	if err != nil {
+		// If the Skill ships an executable script (scripts/inspect.sh or scripts/run.sh),
+		// run it directly through audited doops_shell so script-backed Skills work even without an LLM key.
+		if scriptRel := findSkillExecutableScript(sk); scriptRel != "" {
+			scriptCmd := fmt.Sprintf("sh /root/.agent/skills/%s/%s", sk.Slug, scriptRel)
+			shCtx, shCancel := context.WithTimeout(contextWithInternalAuditAuth(ctx, auth), 90*time.Second)
+			shOut, shErr := h.RunInternalToolCall(shCtx, target.Cluster, target.Instance, "doops_shell", map[string]any{
+				"session_id": "skill-script-" + runID + "-" + sk.Slug,
+				"command":    scriptCmd,
+			})
+			shCancel()
+			item.FinishedAtMs = time.Now().UnixMilli()
+			item.DurationMs = time.Since(started).Milliseconds()
+			item.CollectorMethod = "skill_script"
+			item.Evidence["script"] = scriptRel
+			item.Evidence["fallback_from_ai"] = trimTail(sanitizeSecretText(err.Error()), 180)
+			cleaned := stripShellCompletionSuffix(shOut)
+			parsed := extractInspectionArtifact(cleaned, sk.Name, sk.Category)
+			item.ArtifactFormat = parsed.Format
+			item.ArtifactMarkdown = parsed.Markdown
+			item.ArtifactJSON = parsed.JSON
+			item.RawOutput = parsed.Raw
+			item.Checks = parsed.Checks
+			item.Status = parsed.Status
+			if shErr != nil {
+				item.Status = "critical"
+				item.Reason = "skill_script_failed"
+				item.Checks = []api.MonitorInspectCheck{{
+					ID: "skill.script", Name: sk.Name, Category: sk.Category,
+					Status: "critical", Value: "脚本执行失败",
+					Detail: trimTail(sanitizeSecretText(shErr.Error()), 240),
+				}}
+			}
+			return item
+		}
+
+		item.FinishedAtMs = time.Now().UnixMilli()
+		item.DurationMs = time.Since(started).Milliseconds()
+		cleanErr := trimTail(sanitizeSecretText(err.Error()), 240)
+		item.Status = "skipped"
+		item.Reason = "skill_synced_ai_unavailable"
+		item.ArtifactFormat = "markdown"
+		item.ArtifactMarkdown = fmt.Sprintf(
+			"### Skill 已同步，等待大模型凭据或直接命令\n\n- **Skill**：`%s`（已同步至 `/root/.agent/skills/%s`）\n- **目标**：`%s/%s`\n- **未执行原因**：`%s`\n\n> 请为目标绑定 `modelProvider` 凭据以驱动 AI Skill + 提示词，或在巡检栏「直接执行命令」输入任意 Shell 命令，或在 Skill 包内附带 `scripts/inspect.sh`。",
+			sk.Slug, sk.Slug, target.Cluster, target.Instance, cleanErr,
+		)
+		item.Checks = []api.MonitorInspectCheck{{
+			ID: "skill.execute", Name: sk.Name, Category: sk.Category,
+			Status: "skipped", Value: "Skill 已同步 · 待配置大模型",
+			Detail: fmt.Sprintf("Skill 已同步至目标 Agent（/root/.agent/skills/%s），但未能驱动 AI Skill 执行：%s", sk.Slug, cleanErr),
+		}}
+		return item
+	}
+
+	item.FinishedAtMs = time.Now().UnixMilli()
+	item.DurationMs = time.Since(started).Milliseconds()
+	parsed := extractInspectionArtifact(rawOut, sk.Name, sk.Category)
+	item.ArtifactFormat = parsed.Format
+	item.ArtifactMarkdown = parsed.Markdown
+	item.ArtifactJSON = parsed.JSON
+	item.RawOutput = parsed.Raw
+	item.Checks = parsed.Checks
+	item.Status = parsed.Status
+	return item
+}
+
+// runCustomPromptInspection runs a free-form natural-language inspection prompt
+// through doops_agent_prompt and persists the resulting Markdown/JSON artifact.
+func (h *GatewayHub) runCustomPromptInspection(
+	ctx context.Context,
+	auth TokenAuth,
+	target monitorTargetRef,
+	runID string,
+	userPrompt string,
+	skillSlugs []string,
+) monitorRunItemRecord {
+	started := time.Now()
+	title := truncateUTF8Head(strings.Split(strings.TrimSpace(userPrompt), "\n")[0], 48)
+	if title == "" {
+		title = "提示词巡检"
+	}
+	evidence := map[string]any{
+		"prompt": trimTail(sanitizeSecretText(userPrompt), 1024),
+	}
+	if len(skillSlugs) > 0 {
+		evidence["skills"] = skillSlugs
+	}
+	item := monitorRunItemRecord{
+		RunID:           runID,
+		Cluster:         target.Cluster,
+		Instance:        target.Instance,
+		AssetID:         "custom-prompt",
+		AssetName:       title,
+		AssetKind:       "prompt",
+		Strategy:        "custom_prompt",
+		CollectorMethod: "agent_prompt",
+		StartedAtMs:     started.UnixMilli(),
+		Evidence:        evidence,
+	}
+
+	instruction := buildSkillPromptInstruction(nil, userPrompt)
+	args := map[string]any{
+		"session_id":  "prompt-inspect-" + runID,
+		"instruction": instruction,
+		"operation":   "ask",
+	}
+	if len(skillSlugs) > 0 {
+		args["skill"] = skillSlugs[0]
+	}
+
+	callCtx, cancel := context.WithTimeout(contextWithInternalAuditAuth(ctx, auth), 90*time.Second)
+	defer cancel()
+	rawOut, err := h.RunInternalToolCall(callCtx, target.Cluster, target.Instance, "doops_agent_prompt", args)
 	item.FinishedAtMs = time.Now().UnixMilli()
 	item.DurationMs = time.Since(started).Milliseconds()
 
 	if err != nil {
 		cleanErr := trimTail(sanitizeSecretText(err.Error()), 240)
 		item.Status = "skipped"
-		item.Reason = "skill_synced_ai_unavailable"
+		item.Reason = "ai_unavailable"
+		item.ArtifactFormat = "markdown"
+		item.ArtifactMarkdown = fmt.Sprintf(
+			"### 提示词巡检暂未执行（待配置大模型凭据）\n\n- **目标**：`%s/%s`\n- **提示词**：%s\n- **原因**：`%s`\n\n> 为目标绑定 `modelProvider` 凭据即可自动让 Agent 按提示词执行命令并返回 Markdown+JSON 产物；如需无大模型直接执行，可在「直接执行命令」栏输入 Shell 命令。",
+			target.Cluster, target.Instance, sanitizeSecretText(title), cleanErr,
+		)
 		item.Checks = []api.MonitorInspectCheck{{
-			ID: "skill.execute", Name: sk.Name, Category: sk.Category,
-			Status: "skipped", Value: "Skill 已同步 · 待配置大模型",
-			Detail: fmt.Sprintf("Skill 已同步至目标 Agent（/root/.agent/skills/%s），但未能驱动 AI Skill 执行：%s（请确认目标已绑定 modelProvider 凭据且 doagent 在线）", sk.Slug, cleanErr),
+			ID: "prompt.execute", Name: title, Category: "prompt",
+			Status: "skipped", Value: "待配置大模型",
+			Detail: "未能驱动提示词巡检：" + cleanErr,
 		}}
 		return item
 	}
 
-	checks, parsedStatus := parseSkillInspectAnswer(sk, rawOut)
-	item.Checks = checks
-	item.Status = parsedStatus
-	if item.Status == "" {
-		item.Status = aggregateCheckStatus(checks)
-	}
+	parsed := extractInspectionArtifact(rawOut, title, "prompt")
+	item.ArtifactFormat = parsed.Format
+	item.ArtifactMarkdown = parsed.Markdown
+	item.ArtifactJSON = parsed.JSON
+	item.RawOutput = parsed.Raw
+	item.Checks = parsed.Checks
+	item.Status = parsed.Status
 	return item
-}
-
-func parseSkillInspectAnswer(sk platformSkillRecord, raw string) ([]api.MonitorInspectCheck, string) {
-	trimmed := strings.TrimSpace(raw)
-	// Extract JSON block if wrapped in markdown fences or prose.
-	candidate := trimmed
-	if start := strings.IndexByte(trimmed, '{'); start >= 0 {
-		if end := strings.LastIndexByte(trimmed, '}'); end > start {
-			candidate = trimmed[start : end+1]
-		}
-	}
-	var parsed struct {
-		Status  string                    `json:"status"`
-		Summary string                    `json:"summary"`
-		Checks  []api.MonitorInspectCheck `json:"checks"`
-	}
-	if json.Unmarshal([]byte(candidate), &parsed) == nil && len(parsed.Checks) > 0 {
-		out := make([]api.MonitorInspectCheck, 0, len(parsed.Checks))
-		for i, c := range parsed.Checks {
-			if c.ID == "" {
-				c.ID = fmt.Sprintf("skill.%s.%d", sk.Slug, i+1)
-			}
-			if c.Name == "" {
-				c.Name = sk.Name
-			}
-			if c.Category == "" {
-				c.Category = sk.Category
-			}
-			switch c.Status {
-			case "pass", "warning", "critical", "skipped":
-			default:
-				c.Status = "pass"
-			}
-			out = append(out, c)
-		}
-		st := parsed.Status
-		switch st {
-		case "pass", "warning", "critical", "skipped":
-		default:
-			st = aggregateCheckStatus(out)
-		}
-		return out, st
-	}
-
-	// Plain-text fallback from doagent answer.
-	preview := trimTail(sanitizeSecretText(trimmed), 420)
-	if preview == "" {
-		preview = "Skill 执行完成，未返回明细内容"
-	}
-	return []api.MonitorInspectCheck{{
-		ID:       "skill." + sk.Slug,
-		Name:     sk.Name,
-		Category: sk.Category,
-		Status:   "pass",
-		Value:    "已完成",
-		Detail:   preview,
-	}}, "pass"
 }

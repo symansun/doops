@@ -372,6 +372,31 @@ func (s *GatewayStore) migrate() error {
 			run_count INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_platform_skills_scope ON platform_skills(scope, category, enabled)`,
+		`CREATE TABLE IF NOT EXISTS platform_mcp_servers (
+			slug TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			scope TEXT NOT NULL DEFAULT 'custom',
+			transport TEXT NOT NULL DEFAULT 'stdio',
+			command TEXT NOT NULL DEFAULT '',
+			args_json TEXT NOT NULL DEFAULT '[]',
+			url TEXT NOT NULL DEFAULT '',
+			env_json TEXT NOT NULL DEFAULT '{}',
+			headers_json TEXT NOT NULL DEFAULT '{}',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			auto_start INTEGER NOT NULL DEFAULT 1,
+			tool_timeout_secs INTEGER NOT NULL DEFAULT 120,
+			last_probe_status TEXT NOT NULL DEFAULT '',
+			last_probe_error TEXT NOT NULL DEFAULT '',
+			last_probe_at_ms INTEGER NOT NULL DEFAULT 0,
+			last_latency_ms INTEGER NOT NULL DEFAULT 0,
+			tools_json TEXT NOT NULL DEFAULT '[]',
+			owner_id TEXT NOT NULL DEFAULT '',
+			owner_name TEXT NOT NULL DEFAULT '',
+			created_at_ms INTEGER NOT NULL DEFAULT 0,
+			updated_at_ms INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_platform_mcp_scope ON platform_mcp_servers(scope, enabled)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -456,6 +481,17 @@ func (s *GatewayStore) migrate() error {
 	}{
 		{"credential_bundles", "scope", "TEXT NOT NULL DEFAULT 'personal'"},
 		{"monitor_schedules", "skills_json", "TEXT NOT NULL DEFAULT '[]'"},
+		{"monitor_schedules", "prompt", "TEXT NOT NULL DEFAULT ''"},
+		{"monitor_schedules", "command", "TEXT NOT NULL DEFAULT ''"},
+		{"monitor_runs", "prompt", "TEXT NOT NULL DEFAULT ''"},
+		{"monitor_runs", "command", "TEXT NOT NULL DEFAULT ''"},
+		{"monitor_runs", "skills_json", "TEXT NOT NULL DEFAULT '[]'"},
+		{"monitor_run_items", "artifact_format", "TEXT NOT NULL DEFAULT ''"},
+		{"monitor_run_items", "artifact_markdown", "TEXT NOT NULL DEFAULT ''"},
+		{"monitor_run_items", "artifact_json", "TEXT NOT NULL DEFAULT ''"},
+		{"monitor_run_items", "raw_output", "TEXT NOT NULL DEFAULT ''"},
+		{"platform_skills", "file_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"platform_skills", "storage_dir", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureColumn(column.table, column.name, column.definition); err != nil {
 			return err
@@ -465,6 +501,9 @@ func (s *GatewayStore) migrate() error {
 	defer cancel()
 	if err := s.SeedBuiltinSystemSkills(ctx); err != nil {
 		return fmt.Errorf("seed builtin system skills: %w", err)
+	}
+	if err := s.SeedBuiltinSystemMCPServers(ctx); err != nil {
+		return fmt.Errorf("seed builtin system mcp servers: %w", err)
 	}
 	if _, err := s.optimizeAuditIndexes(ctx); err != nil {
 		return fmt.Errorf("audit index maintenance: %w", err)

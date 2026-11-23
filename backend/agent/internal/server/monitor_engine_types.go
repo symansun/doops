@@ -171,8 +171,16 @@ func normalizeMonitorThresholds(in api.MonitorInspectThresholds) api.MonitorInsp
 }
 
 func normalizeMonitorStrategies(list []string) []string {
-	if len(list) == 0 {
+	out := normalizeMonitorStrategiesOptional(list)
+	if len(out) == 0 {
 		return append([]string(nil), defaultMonitorStrategies...)
+	}
+	return out
+}
+
+func normalizeMonitorStrategiesOptional(list []string) []string {
+	if len(list) == 0 {
+		return []string{}
 	}
 	seen := make(map[string]bool, len(list))
 	out := make([]string, 0, len(list))
@@ -182,9 +190,6 @@ func normalizeMonitorStrategies(list []string) []string {
 			seen[s] = true
 			out = append(out, s)
 		}
-	}
-	if len(out) == 0 {
-		return append([]string(nil), defaultMonitorStrategies...)
 	}
 	return out
 }
@@ -226,6 +231,8 @@ type monitorScheduleRecord struct {
 	Tags            []string                     `json:"tags"`
 	Strategies      []string                     `json:"strategies"`
 	Skills          []string                     `json:"skills,omitempty"`
+	Prompt          string                       `json:"prompt,omitempty"`
+	Command         string                       `json:"command,omitempty"`
 	Thresholds      api.MonitorInspectThresholds `json:"thresholds"`
 	IntervalSeconds int                          `json:"interval_seconds"`
 	NextRunAtMs     int64                        `json:"next_run_at_ms"`
@@ -238,44 +245,51 @@ type monitorScheduleRecord struct {
 }
 
 type monitorRunRecord struct {
-	ID             string `json:"id"`
-	ScheduleID     string `json:"schedule_id,omitempty"`
-	ScheduleName   string `json:"schedule_name,omitempty"`
-	TriggerKind    string `json:"trigger_kind"` // scheduled | manual | retest
-	TriggeredBy    string `json:"triggered_by,omitempty"`
-	Status         string `json:"status"` // running | success | warning | critical | partial | failed
-	TotalTargets   int    `json:"total_targets"`
-	TotalAssets    int    `json:"total_assets"`
-	PassedChecks   int    `json:"passed_checks"`
-	WarningChecks  int    `json:"warning_checks"`
-	FailedChecks   int    `json:"failed_checks"`
-	SkippedChecks  int    `json:"skipped_checks"`
-	OfflineTargets int    `json:"offline_targets"`
-	MetricsWritten int    `json:"metrics_written"`
-	StartedAtMs    int64  `json:"started_at_ms"`
-	FinishedAtMs   int64  `json:"finished_at_ms"`
-	DurationMs     int64  `json:"duration_ms"`
-	Summary        string `json:"summary,omitempty"`
+	ID             string   `json:"id"`
+	ScheduleID     string   `json:"schedule_id,omitempty"`
+	ScheduleName   string   `json:"schedule_name,omitempty"`
+	TriggerKind    string   `json:"trigger_kind"` // scheduled | manual | retest
+	TriggeredBy    string   `json:"triggered_by,omitempty"`
+	Status         string   `json:"status"` // running | success | warning | critical | partial | failed
+	Skills         []string `json:"skills,omitempty"`
+	Prompt         string   `json:"prompt,omitempty"`
+	Command        string   `json:"command,omitempty"`
+	TotalTargets   int      `json:"total_targets"`
+	TotalAssets    int      `json:"total_assets"`
+	PassedChecks   int      `json:"passed_checks"`
+	WarningChecks  int      `json:"warning_checks"`
+	FailedChecks   int      `json:"failed_checks"`
+	SkippedChecks  int      `json:"skipped_checks"`
+	OfflineTargets int      `json:"offline_targets"`
+	MetricsWritten int      `json:"metrics_written"`
+	StartedAtMs    int64    `json:"started_at_ms"`
+	FinishedAtMs   int64    `json:"finished_at_ms"`
+	DurationMs     int64    `json:"duration_ms"`
+	Summary        string   `json:"summary,omitempty"`
 }
 
 type monitorRunItemRecord struct {
-	ID              int64                     `json:"id"`
-	RunID           string                    `json:"run_id"`
-	Cluster         string                    `json:"cluster"`
-	Instance        string                    `json:"instance"`
-	AssetID         string                    `json:"asset_id"`
-	AssetName       string                    `json:"asset_name"`
-	AssetKind       string                    `json:"asset_kind"`
-	Strategy        string                    `json:"strategy"`
-	CollectorMethod string                    `json:"collector_method"`
-	Status          string                    `json:"status"`
-	Reason          string                    `json:"reason,omitempty"`
-	StartedAtMs     int64                     `json:"started_at_ms"`
-	FinishedAtMs    int64                     `json:"finished_at_ms"`
-	DurationMs      int64                     `json:"duration_ms"`
-	Metrics         api.MonitorInspectMetrics `json:"metrics"`
-	Checks          []api.MonitorInspectCheck `json:"checks"`
-	Evidence        map[string]any            `json:"evidence,omitempty"`
+	ID               int64                     `json:"id"`
+	RunID            string                    `json:"run_id"`
+	Cluster          string                    `json:"cluster"`
+	Instance         string                    `json:"instance"`
+	AssetID          string                    `json:"asset_id"`
+	AssetName        string                    `json:"asset_name"`
+	AssetKind        string                    `json:"asset_kind"`
+	Strategy         string                    `json:"strategy"`
+	CollectorMethod  string                    `json:"collector_method"`
+	Status           string                    `json:"status"`
+	Reason           string                    `json:"reason,omitempty"`
+	StartedAtMs      int64                     `json:"started_at_ms"`
+	FinishedAtMs     int64                     `json:"finished_at_ms"`
+	DurationMs       int64                     `json:"duration_ms"`
+	Metrics          api.MonitorInspectMetrics `json:"metrics"`
+	Checks           []api.MonitorInspectCheck `json:"checks"`
+	Evidence         map[string]any            `json:"evidence,omitempty"`
+	ArtifactFormat   string                    `json:"artifact_format,omitempty"`   // json | markdown+json | markdown | text
+	ArtifactMarkdown string                    `json:"artifact_markdown,omitempty"` // Markdown report / notes
+	ArtifactJSON     json.RawMessage           `json:"artifact_json,omitempty"`     // Arbitrary valid JSON payload
+	RawOutput        string                    `json:"raw_output,omitempty"`        // Sanitized raw stdout/answer
 }
 
 type monitorResourceSnapshot struct {
@@ -318,24 +332,24 @@ type monitorResourceSnapshot struct {
 }
 
 type monitorOverviewSummary struct {
-	TotalAssets       int     `json:"total_assets"`
-	OnlineAgents      int     `json:"online_agents"`
-	OfflineAgents     int     `json:"offline_agents"`
-	CoveredAssets     int     `json:"covered_assets"`
-	ProbeCoveragePct  float64 `json:"probe_coverage_pct"`
-	HealthyAssets     int     `json:"healthy_assets"`
-	WarningAssets     int     `json:"warning_assets"`
-	CriticalAssets    int     `json:"critical_assets"`
-	OfflineAssets     int     `json:"offline_assets"`
-	AvgCPUPercent     float64 `json:"avg_cpu_percent"`
-	AvgMemoryPercent  float64 `json:"avg_memory_percent"`
-	AvgDiskPercent    float64 `json:"avg_disk_percent"`
-	TotalCPUCores     float64 `json:"total_cpu_cores"`
-	UsedCPUCores      float64 `json:"used_cpu_cores"`
-	TotalMemoryBytes  float64 `json:"total_memory_bytes"`
-	UsedMemoryBytes   float64 `json:"used_memory_bytes"`
-	TotalDiskBytes    float64 `json:"total_disk_bytes"`
-	UsedDiskBytes     float64 `json:"used_disk_bytes"`
+	TotalAssets         int     `json:"total_assets"`
+	OnlineAgents        int     `json:"online_agents"`
+	OfflineAgents       int     `json:"offline_agents"`
+	CoveredAssets       int     `json:"covered_assets"`
+	ProbeCoveragePct    float64 `json:"probe_coverage_pct"`
+	HealthyAssets       int     `json:"healthy_assets"`
+	WarningAssets       int     `json:"warning_assets"`
+	CriticalAssets      int     `json:"critical_assets"`
+	OfflineAssets       int     `json:"offline_assets"`
+	AvgCPUPercent       float64 `json:"avg_cpu_percent"`
+	AvgMemoryPercent    float64 `json:"avg_memory_percent"`
+	AvgDiskPercent      float64 `json:"avg_disk_percent"`
+	TotalCPUCores       float64 `json:"total_cpu_cores"`
+	UsedCPUCores        float64 `json:"used_cpu_cores"`
+	TotalMemoryBytes    float64 `json:"total_memory_bytes"`
+	UsedMemoryBytes     float64 `json:"used_memory_bytes"`
+	TotalDiskBytes      float64 `json:"total_disk_bytes"`
+	UsedDiskBytes       float64 `json:"used_disk_bytes"`
 	ActiveSchedules     int     `json:"active_schedules"`
 	TotalRuns           int     `json:"total_runs"`
 	OpenThresholdAlerts int     `json:"open_threshold_alerts"`
@@ -368,16 +382,16 @@ type monitorTrendBucket struct {
 }
 
 type monitorOverviewResponse struct {
-	Scope      string                    `json:"scope"`
-	Range      string                    `json:"range"`
-	FromMs     int64                     `json:"from_ms"`
-	ToMs       int64                     `json:"to_ms"`
-	Summary    monitorOverviewSummary    `json:"summary"`
-	ByKind     map[string]int            `json:"by_kind"`
-	Resources  []monitorResourceSnapshot `json:"resources"`
-	TopCPU     []monitorResourceSnapshot `json:"top_cpu"`
-	TopMemory  []monitorResourceSnapshot `json:"top_memory"`
-	TopDisk    []monitorResourceSnapshot `json:"top_disk"`
+	Scope           string                      `json:"scope"`
+	Range           string                      `json:"range"`
+	FromMs          int64                       `json:"from_ms"`
+	ToMs            int64                       `json:"to_ms"`
+	Summary         monitorOverviewSummary      `json:"summary"`
+	ByKind          map[string]int              `json:"by_kind"`
+	Resources       []monitorResourceSnapshot   `json:"resources"`
+	TopCPU          []monitorResourceSnapshot   `json:"top_cpu"`
+	TopMemory       []monitorResourceSnapshot   `json:"top_memory"`
+	TopDisk         []monitorResourceSnapshot   `json:"top_disk"`
 	Trends          []monitorTrendBucket        `json:"trends"`
 	ThresholdAlerts []monitorOpenThresholdAlert `json:"threshold_alerts"`
 	RecentRuns      []monitorRunRecord          `json:"recent_runs"`

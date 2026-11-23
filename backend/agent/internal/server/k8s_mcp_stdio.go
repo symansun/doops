@@ -178,29 +178,29 @@ func callK8SMCPToolDomain(
 	switch call.Name {
 	case k8sReadMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, k8sReadOperations) {
-			return mcpErrorResponse(request.ID, -32602, "read tool requires a read-only operation")
+			return mcpErrorResponse(request.ID, -32602, "read tool requires a read-only operation"+mcpAllowedOperationsSuffix(k8sReadOperations))
 		}
 	case helmMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, helmMutationOperations) {
 			return helmMCPFailureResponse(request.ID, &helmToolFailure{
-				cause: fmt.Errorf("helm tool requires a supported mutating operation"), phase: "validation",
+				cause: errors.New("helm tool requires a supported mutating operation" + mcpAllowedOperationsSuffix(helmMutationOperations)), phase: "validation",
 			})
 		}
 	case webMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, webMutationOperations) {
-			return webMCPErrorResponse(request.ID, -32602, "web tool requires a supported mutation")
+			return webMCPErrorResponse(request.ID, -32602, "web tool requires a supported mutation"+mcpAllowedOperationsSuffix(webMutationOperations))
 		}
 	case webReadMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, webReadOperations) {
-			return webMCPErrorResponse(request.ID, -32602, "web_read tool requires a supported read operation")
+			return webMCPErrorResponse(request.ID, -32602, "web_read tool requires a supported read operation"+mcpAllowedOperationsSuffix(webReadOperations))
 		}
 	case kbReadMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, kbReadOperations) {
-			return mcpErrorResponse(request.ID, -32602, "kb_read tool requires a supported read operation")
+			return mcpErrorResponse(request.ID, -32602, "kb_read tool requires a supported read operation"+mcpAllowedOperationsSuffix(kbReadOperations))
 		}
 	case doSQLReadMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, doSQLReadOperations) {
-			return doSQLMCPErrorResponse(request.ID, -32602, "sql_read tool requires a supported read operation")
+			return doSQLMCPErrorResponse(request.ID, -32602, "sql_read tool requires a supported read operation"+mcpAllowedOperationsSuffix(doSQLReadOperations))
 		}
 	default:
 		return mcpErrorResponse(request.ID, -32601, "unknown tool")

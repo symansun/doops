@@ -24,7 +24,7 @@ func (s *GatewayStore) tableExists(ctx context.Context, name string) bool {
 
 func (s *GatewayStore) ListMonitorSchedules(ctx context.Context) ([]monitorScheduleRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, enabled, scope_mode, targets_json, tags_json,
-		strategies_json, skills_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
+		strategies_json, skills_json, prompt, command, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
 		created_by, created_at, updated_at
 		FROM monitor_schedules ORDER BY enabled DESC, created_at DESC, id DESC`)
 	if err != nil {
@@ -44,7 +44,7 @@ func (s *GatewayStore) ListMonitorSchedules(ctx context.Context) ([]monitorSched
 
 func (s *GatewayStore) GetMonitorSchedule(ctx context.Context, id string) (monitorScheduleRecord, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, name, description, enabled, scope_mode, targets_json, tags_json,
-		strategies_json, skills_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
+		strategies_json, skills_json, prompt, command, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
 		created_by, created_at, updated_at
 		FROM monitor_schedules WHERE id=?`, id)
 	return scanMonitorSchedule(row)
@@ -56,7 +56,7 @@ func scanMonitorSchedule(row interface{ Scan(...any) error }) (monitorScheduleRe
 	var targetsRaw, tagsRaw, strategiesRaw, skillsRaw, thresholdsRaw string
 	err := row.Scan(
 		&rec.ID, &rec.Name, &rec.Description, &enabledInt, &rec.ScopeMode,
-		&targetsRaw, &tagsRaw, &strategiesRaw, &skillsRaw, &thresholdsRaw,
+		&targetsRaw, &tagsRaw, &strategiesRaw, &skillsRaw, &rec.Prompt, &rec.Command, &thresholdsRaw,
 		&rec.IntervalSeconds, &rec.NextRunAtMs, &rec.LastRunAtMs,
 		&rec.LastRunID, &rec.LastStatus, &rec.CreatedBy, &rec.CreatedAt, &rec.UpdatedAt,
 	)
@@ -73,8 +73,14 @@ func scanMonitorSchedule(row interface{ Scan(...any) error }) (monitorScheduleRe
 	_ = json.Unmarshal([]byte(strategiesRaw), &rec.Strategies)
 	_ = json.Unmarshal([]byte(skillsRaw), &rec.Skills)
 	_ = json.Unmarshal([]byte(thresholdsRaw), &rec.Thresholds)
-	rec.Strategies = normalizeMonitorStrategies(rec.Strategies)
 	rec.Skills = normalizeSkillSlugs(rec.Skills)
+	rec.Prompt = strings.TrimSpace(rec.Prompt)
+	rec.Command = strings.TrimSpace(rec.Command)
+	if len(rec.Skills) == 0 && rec.Prompt == "" && rec.Command == "" {
+		rec.Strategies = normalizeMonitorStrategies(rec.Strategies)
+	} else {
+		rec.Strategies = normalizeMonitorStrategiesOptional(rec.Strategies)
+	}
 	rec.Thresholds = normalizeMonitorThresholds(rec.Thresholds)
 	return rec, nil
 }
@@ -82,8 +88,14 @@ func scanMonitorSchedule(row interface{ Scan(...any) error }) (monitorScheduleRe
 func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorScheduleRecord, isUpdate bool) (monitorScheduleRecord, error) {
 	now := time.Now().UTC()
 	nowStr := formatTime(now)
-	rec.Strategies = normalizeMonitorStrategies(rec.Strategies)
 	rec.Skills = normalizeSkillSlugs(rec.Skills)
+	rec.Prompt = strings.TrimSpace(rec.Prompt)
+	rec.Command = strings.TrimSpace(rec.Command)
+	if len(rec.Skills) == 0 && rec.Prompt == "" && rec.Command == "" {
+		rec.Strategies = normalizeMonitorStrategies(rec.Strategies)
+	} else {
+		rec.Strategies = normalizeMonitorStrategiesOptional(rec.Strategies)
+	}
 	rec.Thresholds = normalizeMonitorThresholds(rec.Thresholds)
 	if rec.Targets == nil {
 		rec.Targets = []monitorTargetRef{}
@@ -112,11 +124,11 @@ func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorSched
 		}
 		_, err := s.db.ExecContext(ctx, `INSERT INTO monitor_schedules(
 			id, name, description, enabled, scope_mode, targets_json, tags_json,
-			strategies_json, skills_json, thresholds_json, interval_seconds, next_run_at_ms,
+			strategies_json, skills_json, prompt, command, thresholds_json, interval_seconds, next_run_at_ms,
 			last_run_at_ms, last_run_id, last_status, created_by, created_at, updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			rec.ID, rec.Name, rec.Description, enabledInt, rec.ScopeMode,
-			string(targetsJSON), string(tagsJSON), string(strategiesJSON), string(skillsJSON), string(thresholdsJSON),
+			string(targetsJSON), string(tagsJSON), string(strategiesJSON), string(skillsJSON), rec.Prompt, rec.Command, string(thresholdsJSON),
 			rec.IntervalSeconds, rec.NextRunAtMs, rec.LastRunAtMs, rec.LastRunID, rec.LastStatus,
 			rec.CreatedBy, rec.CreatedAt, rec.UpdatedAt,
 		)
@@ -133,10 +145,10 @@ func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorSched
 	}
 	res, err := s.db.ExecContext(ctx, `UPDATE monitor_schedules SET
 		name=?, description=?, enabled=?, scope_mode=?, targets_json=?, tags_json=?,
-		strategies_json=?, skills_json=?, thresholds_json=?, interval_seconds=?, next_run_at_ms=?, updated_at=?
+		strategies_json=?, skills_json=?, prompt=?, command=?, thresholds_json=?, interval_seconds=?, next_run_at_ms=?, updated_at=?
 		WHERE id=?`,
 		rec.Name, rec.Description, enabledInt, rec.ScopeMode,
-		string(targetsJSON), string(tagsJSON), string(strategiesJSON), string(skillsJSON), string(thresholdsJSON),
+		string(targetsJSON), string(tagsJSON), string(strategiesJSON), string(skillsJSON), rec.Prompt, rec.Command, string(thresholdsJSON),
 		rec.IntervalSeconds, nextRun, rec.UpdatedAt, rec.ID,
 	)
 	if err != nil {
@@ -194,7 +206,7 @@ func (s *GatewayStore) ClaimDueMonitorSchedules(ctx context.Context, now time.Ti
 	defer tx.Rollback()
 	nowMs := now.UnixMilli()
 	rows, err := tx.QueryContext(ctx, `SELECT id, name, description, enabled, scope_mode, targets_json, tags_json,
-		strategies_json, skills_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
+		strategies_json, skills_json, prompt, command, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
 		created_by, created_at, updated_at
 		FROM monitor_schedules WHERE enabled=1 AND next_run_at_ms>0 AND next_run_at_ms<=?
 		ORDER BY next_run_at_ms ASC, id ASC LIMIT ?`, nowMs, limit)
@@ -235,12 +247,16 @@ func (s *GatewayStore) ClaimDueMonitorSchedules(ctx context.Context, now time.Ti
 // ---------------- Runs, Run Items & Snapshots Persistence ----------------
 
 func (s *GatewayStore) CreateMonitorRun(ctx context.Context, run monitorRunRecord) error {
+	skills := normalizeSkillSlugs(run.Skills)
+	skillsJSON, _ := json.Marshal(skills)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO monitor_runs(
 		id, schedule_id, schedule_name, trigger_kind, triggered_by, status,
+		skills_json, prompt, command,
 		total_targets, total_assets, passed_checks, warning_checks, failed_checks, skipped_checks,
 		offline_targets, metrics_written, started_at_ms, finished_at_ms, duration_ms, summary
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		run.ID, run.ScheduleID, run.ScheduleName, run.TriggerKind, run.TriggeredBy, run.Status,
+		string(skillsJSON), run.Prompt, run.Command,
 		run.TotalTargets, run.TotalAssets, run.PassedChecks, run.WarningChecks, run.FailedChecks, run.SkippedChecks,
 		run.OfflineTargets, run.MetricsWritten, run.StartedAtMs, run.FinishedAtMs, run.DurationMs, run.Summary,
 	)
@@ -264,13 +280,22 @@ func (s *GatewayStore) PersistMonitorRunResults(
 		metricsJSON, _ := json.Marshal(item.Metrics)
 		checksJSON, _ := json.Marshal(item.Checks)
 		evidenceJSON, _ := json.Marshal(sanitizeMonitorEvidence(item.Evidence))
+		artifactJSONStr := ""
+		if len(item.ArtifactJSON) > 0 && json.Valid(item.ArtifactJSON) {
+			candidate := redactSecretText(string(item.ArtifactJSON))
+			if json.Valid([]byte(candidate)) {
+				artifactJSONStr = candidate
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO monitor_run_items(
 			run_id, cluster, instance, asset_id, asset_name, asset_kind, strategy, collector_method,
-			status, reason, started_at_ms, finished_at_ms, duration_ms, metrics_json, checks_json, evidence_json
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			status, reason, started_at_ms, finished_at_ms, duration_ms, metrics_json, checks_json, evidence_json,
+			artifact_format, artifact_markdown, artifact_json, raw_output
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			run.ID, item.Cluster, item.Instance, item.AssetID, item.AssetName, item.AssetKind, item.Strategy, item.CollectorMethod,
 			item.Status, item.Reason, item.StartedAtMs, item.FinishedAtMs, item.DurationMs,
 			string(metricsJSON), string(checksJSON), string(evidenceJSON),
+			item.ArtifactFormat, sanitizeAndCapArtifact(item.ArtifactMarkdown), artifactJSONStr, sanitizeAndCapArtifact(item.RawOutput),
 		); err != nil {
 			return 0, err
 		}
@@ -379,6 +404,7 @@ func (s *GatewayStore) ListMonitorRuns(ctx context.Context, auth TokenAuth, sche
 	}
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `SELECT r.id, r.schedule_id, r.schedule_name, r.trigger_kind, r.triggered_by, r.status,
+		r.skills_json, r.prompt, r.command,
 		r.total_targets, r.total_assets, r.passed_checks, r.warning_checks, r.failed_checks, r.skipped_checks,
 		r.offline_targets, r.metrics_written, r.started_at_ms, r.finished_at_ms, r.duration_ms, r.summary
 		FROM monitor_runs r WHERE `+strings.Join(where, " AND ")+` ORDER BY r.started_at_ms DESC, r.id DESC LIMIT ?`, args...)
@@ -389,13 +415,17 @@ func (s *GatewayStore) ListMonitorRuns(ctx context.Context, auth TokenAuth, sche
 	out := []monitorRunRecord{}
 	for rows.Next() {
 		var rec monitorRunRecord
+		var skillsRaw string
 		if err := rows.Scan(
 			&rec.ID, &rec.ScheduleID, &rec.ScheduleName, &rec.TriggerKind, &rec.TriggeredBy, &rec.Status,
+			&skillsRaw, &rec.Prompt, &rec.Command,
 			&rec.TotalTargets, &rec.TotalAssets, &rec.PassedChecks, &rec.WarningChecks, &rec.FailedChecks, &rec.SkippedChecks,
 			&rec.OfflineTargets, &rec.MetricsWritten, &rec.StartedAtMs, &rec.FinishedAtMs, &rec.DurationMs, &rec.Summary,
 		); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(skillsRaw), &rec.Skills)
+		rec.Skills = normalizeSkillSlugs(rec.Skills)
 		out = append(out, rec)
 	}
 	return out, rows.Err()
@@ -403,20 +433,26 @@ func (s *GatewayStore) ListMonitorRuns(ctx context.Context, auth TokenAuth, sche
 
 func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, runID string) (monitorRunRecord, []monitorRunItemRecord, error) {
 	var run monitorRunRecord
+	var skillsRaw string
 	err := s.db.QueryRowContext(ctx, `SELECT id, schedule_id, schedule_name, trigger_kind, triggered_by, status,
+		skills_json, prompt, command,
 		total_targets, total_assets, passed_checks, warning_checks, failed_checks, skipped_checks,
 		offline_targets, metrics_written, started_at_ms, finished_at_ms, duration_ms, summary
 		FROM monitor_runs WHERE id=?`, runID).Scan(
 		&run.ID, &run.ScheduleID, &run.ScheduleName, &run.TriggerKind, &run.TriggeredBy, &run.Status,
+		&skillsRaw, &run.Prompt, &run.Command,
 		&run.TotalTargets, &run.TotalAssets, &run.PassedChecks, &run.WarningChecks, &run.FailedChecks, &run.SkippedChecks,
 		&run.OfflineTargets, &run.MetricsWritten, &run.StartedAtMs, &run.FinishedAtMs, &run.DurationMs, &run.Summary,
 	)
 	if err != nil {
 		return run, nil, err
 	}
+	_ = json.Unmarshal([]byte(skillsRaw), &run.Skills)
+	run.Skills = normalizeSkillSlugs(run.Skills)
 	isAdmin := s.UserIsPlatformAdmin(auth.UserID)
 	query := `SELECT i.id, i.run_id, i.cluster, i.instance, i.asset_id, i.asset_name, i.asset_kind, i.strategy, i.collector_method,
-		i.status, i.reason, i.started_at_ms, i.finished_at_ms, i.duration_ms, i.metrics_json, i.checks_json, i.evidence_json
+		i.status, i.reason, i.started_at_ms, i.finished_at_ms, i.duration_ms, i.metrics_json, i.checks_json, i.evidence_json,
+		i.artifact_format, i.artifact_markdown, i.artifact_json, i.raw_output
 		FROM monitor_run_items i WHERE i.run_id=?`
 	args := []any{runID}
 	if !isAdmin {
@@ -432,11 +468,12 @@ func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, 
 	items := []monitorRunItemRecord{}
 	for rows.Next() {
 		var item monitorRunItemRecord
-		var metricsRaw, checksRaw, evidenceRaw string
+		var metricsRaw, checksRaw, evidenceRaw, artifactJSONRaw string
 		if err := rows.Scan(
 			&item.ID, &item.RunID, &item.Cluster, &item.Instance, &item.AssetID, &item.AssetName, &item.AssetKind,
 			&item.Strategy, &item.CollectorMethod, &item.Status, &item.Reason,
 			&item.StartedAtMs, &item.FinishedAtMs, &item.DurationMs, &metricsRaw, &checksRaw, &evidenceRaw,
+			&item.ArtifactFormat, &item.ArtifactMarkdown, &artifactJSONRaw, &item.RawOutput,
 		); err != nil {
 			return run, nil, err
 		}
@@ -444,6 +481,9 @@ func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, 
 		_ = json.Unmarshal([]byte(metricsRaw), &item.Metrics)
 		_ = json.Unmarshal([]byte(checksRaw), &item.Checks)
 		_ = json.Unmarshal([]byte(evidenceRaw), &item.Evidence)
+		if compact, ok := compactValidJSON(artifactJSONRaw); ok {
+			item.ArtifactJSON = compact
+		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -703,16 +743,16 @@ func (h *GatewayHub) BuildMonitorOverview(ctx context.Context, auth TokenAuth, r
 	}
 
 	return monitorOverviewResponse{
-		Scope:      scope,
-		Range:      rName,
-		FromMs:     fromMs,
-		ToMs:       toMs,
-		Summary:    summary,
-		ByKind:     byKind,
-		Resources:  resources,
-		TopCPU:     topCPU,
-		TopMemory:  topMem,
-		TopDisk:    topDisk,
+		Scope:           scope,
+		Range:           rName,
+		FromMs:          fromMs,
+		ToMs:            toMs,
+		Summary:         summary,
+		ByKind:          byKind,
+		Resources:       resources,
+		TopCPU:          topCPU,
+		TopMemory:       topMem,
+		TopDisk:         topDisk,
 		Trends:          trends,
 		ThresholdAlerts: thresholdAlerts,
 		RecentRuns:      recentRuns,

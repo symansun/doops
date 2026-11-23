@@ -52,6 +52,9 @@ var agentToolHandlers = map[string]func(*Gateway, toolInvocation){
 	diagnosticReadTool:             (*Gateway).handleDiagnosticReadTool,
 	monitorInspectTool:             (*Gateway).handleToolMonitorInspect,
 	skillSyncTool:                  (*Gateway).handleToolSkillSync,
+	skillsInspectTool:              (*Gateway).handleToolSkillsInspect,
+	mcpSyncTool:                    (*Gateway).handleToolMCPSync,
+	mcpInspectTool:                 (*Gateway).handleToolMCPInspect,
 }
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）。

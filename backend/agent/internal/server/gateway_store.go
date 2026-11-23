@@ -15,8 +15,9 @@ import (
 )
 
 type GatewayStore struct {
-	db  *sql.DB
-	rdb *sql.DB
+	db    *sql.DB
+	rdb   *sql.DB
+	dbDir string
 }
 
 // readDB returns the read-only SQLite connection pool when open, falling back
@@ -65,7 +66,7 @@ func OpenGatewayStore(path string) (*GatewayStore, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	store := &GatewayStore{db: db}
+	store := &GatewayStore{db: db, dbDir: storeDir}
 	if err := store.migrate(); err != nil {
 		db.Close()
 		return nil, err

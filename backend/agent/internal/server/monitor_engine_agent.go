@@ -87,6 +87,14 @@ func (gw *Gateway) handleToolMonitorInspect(call toolInvocation) {
 }
 
 func strategyCollectorMethod(strategy string) string {
+	switch {
+	case strategy == "command":
+		return "shell_command"
+	case strategy == "custom_prompt":
+		return "agent_prompt"
+	case strings.HasPrefix(strategy, "skill:"):
+		return "agent_skill"
+	}
 	for _, m := range monitorStrategyCatalog {
 		if m.ID == strategy {
 			return m.CollectorMethod
@@ -1650,9 +1658,9 @@ func executeK8sClusterStrategy(ctx context.Context, asset api.MonitorInspectAsse
 	if evtRaw, err := runKubectlReadOnly(ctx, 8*time.Second, evtArgs...); err == nil {
 		var evtList struct {
 			Items []struct {
-				Reason        string `json:"reason"`
-				LastTimestamp string `json:"lastTimestamp"`
-				EventTime     string `json:"eventTime"`
+				Reason         string `json:"reason"`
+				LastTimestamp  string `json:"lastTimestamp"`
+				EventTime      string `json:"eventTime"`
 				InvolvedObject struct {
 					Kind      string `json:"kind"`
 					Namespace string `json:"namespace"`

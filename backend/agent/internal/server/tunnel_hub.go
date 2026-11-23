@@ -144,6 +144,8 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/monitor/runs/", h.HandleMonitorRuns)
 	mux.HandleFunc("/v1/skills", h.HandlePlatformSkills)
 	mux.HandleFunc("/v1/skills/", h.HandlePlatformSkills)
+	mux.HandleFunc("/v1/mcp-servers", h.HandlePlatformMCPServers)
+	mux.HandleFunc("/v1/mcp-servers/", h.HandlePlatformMCPServers)
 	mux.HandleFunc("/v1/assets/records", h.HandlePersonalAssetRecords)
 	mux.HandleFunc("/v1/assets/catalog", h.HandleResourceCatalog)
 	mux.HandleFunc("/v1/assets/cluster-profiles", h.HandleClusterProfiles)

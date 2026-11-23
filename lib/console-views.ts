@@ -23,9 +23,9 @@ export const TARGET_TABS = [
 export type TargetTab = (typeof TARGET_TABS)[number]
 
 // Areas of the platform asset view. "situation" is 态势感知 (Business -> Cluster -> Machine),
-// "inspection" is 智能巡检, "skills" is Skill 管理 (System + Custom Skills driving inspection),
+// "inspection" is 智能巡检, "skills" is Skill 管理, "mcp" is MCP 管理,
 // "board" is 平台监控 (Agent-dimension); the rest are ledger sections.
-export type AssetArea = "situation" | "inspection" | "skills" | "board" | "machines" | "clusters" | "systems" | "scope"
+export type AssetArea = "situation" | "inspection" | "skills" | "mcp" | "board" | "machines" | "clusters" | "systems" | "scope"
 
 export const ASSET_LEDGER_SECTIONS: { id: AssetArea; label: string }[] = [
   { id: "machines", label: "机器台账" },
@@ -92,6 +92,7 @@ const NAV: ConsoleNavEntry[] = [
   { id: "situational-awareness", label: "态势感知", destination: { view: "assets", area: "situation" } },
   { id: "smart-inspection", label: "智能巡检", destination: { view: "assets", area: "inspection" } },
   { id: "skill-registry", label: "Skill 管理", destination: { view: "assets", area: "skills" } },
+  { id: "mcp-registry", label: "MCP 管理", destination: { view: "assets", area: "mcp" } },
   { id: "platform-monitor", label: "平台监控", destination: { view: "assets", area: "board" } },
   { id: "ledger-machines", label: "机器台账", destination: { view: "assets", area: "machines" } },
   { id: "ledger-systems", label: "业务系统", destination: { view: "assets", area: "systems" } },

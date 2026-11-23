@@ -191,8 +191,8 @@ func writeDoagentSettings(model map[string]any) error {
 	for key, value := range model {
 		settings[key] = value
 	}
-	settings["mcp_servers"] = doagentRuntimeMCPServers
-	settings["permissions"] = doagentRuntimePermissions
+	settings["mcp_servers"] = effectiveDoagentMCPServers()
+	settings["permissions"] = effectiveDoagentPermissions()
 	encoded, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err

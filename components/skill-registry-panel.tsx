@@ -3,19 +3,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react"
 import {
   FileCode2,
-  FolderArchive,
+  FlaskConical,
+  FolderOpen,
   Play,
   Plus,
   RefreshCw,
   RotateCcw,
   Send,
-  ShieldCheck,
-  Sparkles,
   Trash2,
   Upload,
 } from "lucide-react"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
-import { STRATEGY_LABELS, triggerMonitorRun } from "@/lib/monitor-engine"
+import {
+  STRATEGY_LABELS,
+  describeMonitorStatus,
+  formatBytesCompact,
+  triggerMonitorRun,
+  type MonitorRunItemRecord,
+  type MonitorRunRecord,
+} from "@/lib/monitor-engine"
 import {
   SKILL_CATEGORY_LABELS,
   SKILL_DRIVER_LABELS,
@@ -29,12 +35,13 @@ import {
   syncSkillsToAgents,
   togglePlatformSkill,
   upsertPlatformSkill,
+  type AgentLoadedSkillInfo,
   type PlatformSkillFile,
   type PlatformSkillRecord,
   type SkillSyncTargetResult,
 } from "@/lib/skills-registry"
-import { Badge, Button, Card, CardContent, Inline, Input, Select, Stack, StatusBanner, Textarea } from "./ui"
-import { TiltCard3D } from "./viz-3d"
+import { InspectionArtifactViewer } from "./inspection-artifact-viewer"
+import { Badge, Button, Card, CardContent, Inline, Input, PageTabs, Select, Stack, StatusBanner, Textarea } from "./ui"
 
 const CUSTOM_SKILL_TEMPLATE = `---
 name: custom-nginx-audit
@@ -59,19 +66,24 @@ function fmtStamp(ms?: number): string {
 }
 
 type FilterMode = "all" | "system" | "custom" | "inspection" | "security" | "ops"
+type SkillPanelTab = "registry" | "agent"
 
 export function SkillRegistryPanel({
   session,
   targets,
   initialSlug,
   onOpenInspection,
+  onOpenMcp,
 }: {
   session: Session
   targets: Target[]
   initialSlug?: string
   onOpenInspection?: (runId?: string) => void
+  onOpenMcp?: () => void
 }) {
   const isAdmin = sessionIsAdmin(session)
+  const onlineTargets = useMemo(() => targets.filter((t) => t.status !== "offline"), [targets])
+  const [activeTab, setActiveTab] = useState<SkillPanelTab>("registry")
   const [skills, setSkills] = useState<PlatformSkillRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -81,6 +93,23 @@ export function SkillRegistryPanel({
   const [lastRunId, setLastRunId] = useState("")
   const [syncResults, setSyncResults] = useState<SkillSyncTargetResult[]>([])
   const [revision, setRevision] = useState(0)
+
+  // Agent runtime skills inspection state
+  const [selectedTarget, setSelectedTarget] = useState("")
+  const [agentSkills, setAgentSkills] = useState<AgentLoadedSkillInfo[]>([])
+  const [agentSkillsRoot, setAgentSkillsRoot] = useState("")
+  const [agentError, setAgentError] = useState("")
+  const [agentLoading, setAgentLoading] = useState(false)
+  const [agentQuery, setAgentQuery] = useState("")
+  const [agentRevision, setAgentRevision] = useState(0)
+
+  // Inline Skill test-run verification state
+  const [testSkill, setTestSkill] = useState<PlatformSkillRecord | null>(null)
+  const [testTarget, setTestTarget] = useState("")
+  const [testPrompt, setTestPrompt] = useState("")
+  const [testBusy, setTestBusy] = useState(false)
+  const [testError, setTestError] = useState("")
+  const [testResult, setTestResult] = useState<{ run: MonitorRunRecord; items: MonitorRunItemRecord[] } | null>(null)
 
   // Filters
   const [filter, setFilter] = useState<FilterMode>("all")
@@ -106,7 +135,19 @@ export function SkillRegistryPanel({
   const [uploadSummary, setUploadSummary] = useState("")
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const reload = useCallback(() => setRevision((v) => v + 1), [])
+  useEffect(() => {
+    if (!selectedTarget && onlineTargets.length > 0) {
+      setSelectedTarget(onlineTargets[0].key)
+    }
+    if (!testTarget && onlineTargets.length > 0) {
+      setTestTarget(onlineTargets[0].key)
+    }
+  }, [onlineTargets, selectedTarget, testTarget])
+
+  const reload = useCallback(() => {
+    setRevision((v) => v + 1)
+    setAgentRevision((v) => v + 1)
+  }, [])
 
   useEffect(() => {
     const ctrl = new AbortController()
@@ -126,6 +167,28 @@ export function SkillRegistryPanel({
       })
     return () => ctrl.abort()
   }, [session, revision])
+
+  useEffect(() => {
+    if (activeTab !== "agent" || !selectedTarget) return
+    const ctrl = new AbortController()
+    setAgentLoading(true)
+    setAgentError("")
+    fetchPlatformSkills(session, { target: selectedTarget }, ctrl.signal)
+      .then((res) => {
+        if (ctrl.signal.aborted) return
+        setAgentSkills(res.agent_skills || [])
+        setAgentSkillsRoot(res.agent_skills_root || "/root/.agent/skills")
+        setAgentError(res.agent_error || "")
+        setAgentLoading(false)
+      })
+      .catch((err) => {
+        if (!ctrl.signal.aborted) {
+          setAgentError((err as Error).message)
+          setAgentLoading(false)
+        }
+      })
+    return () => ctrl.abort()
+  }, [session, activeTab, selectedTarget, agentRevision])
 
   const openSkillEditor = useCallback(
     async (slug: string) => {
@@ -344,21 +407,29 @@ export function SkillRegistryPanel({
     }
   }
 
-  async function handleSync(slug?: string) {
+  async function handleSync(slug?: string, targetKey?: string) {
     if (busy) return
     setBusy(true)
     setError("")
     setNotice("")
     try {
-      const res = await syncSkillsToAgents(session, slug ? { slug } : {})
+      let targetRefs: { cluster: string; instance: string }[] | undefined
+      if (targetKey) {
+        const [cluster, instance] = targetKey.split("/")
+        if (cluster && instance) targetRefs = [{ cluster, instance }]
+      }
+      const res = await syncSkillsToAgents(session, { slug, targets: targetRefs })
       setSyncResults(res.results || [])
       const okCount = (res.results || []).filter((r) => r.status === "ok").length
       const totalCount = (res.results || []).length
       setNotice(
         slug
           ? `已将 Skill「${slug}」同步至 ${okCount}/${totalCount} 个目标 Agent`
-          : `已将全部已启用 Skill 同步至 ${okCount}/${totalCount} 个目标 Agent（/root/.agent/skills/）`,
+          : targetKey
+            ? `已将全部已启用平台 Skill 同步至 ${targetKey}（/root/.agent/skills/）`
+            : `已将全部已启用 Skill 同步至 ${okCount}/${totalCount} 个目标 Agent（/root/.agent/skills/）`,
       )
+      setAgentRevision((v) => v + 1)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -389,11 +460,60 @@ export function SkillRegistryPanel({
     }
   }
 
+  function openSkillTestRun(sk: PlatformSkillRecord) {
+    setTestSkill(sk)
+    setTestError("")
+    setTestResult(null)
+    if (!testTarget && onlineTargets.length > 0) {
+      setTestTarget(onlineTargets[0].key)
+    }
+    setTestPrompt(
+      sk.driver_mode === "agent_prompt"
+        ? `请按 Skill「${sk.slug}」执行一次只读核查，并用 Markdown + JSON 输出结构化结果。`
+        : "",
+    )
+  }
+
+  async function executeSkillTestRun(e: FormEvent) {
+    e.preventDefault()
+    if (!testSkill || testBusy) return
+    const targetKey = testTarget || onlineTargets[0]?.key || ""
+    const [cluster, instance] = targetKey.split("/")
+    if (!cluster || !instance) {
+      setTestError("请先选择一个在线 Agent 节点")
+      return
+    }
+    setTestBusy(true)
+    setTestError("")
+    setTestResult(null)
+    try {
+      const res = await triggerMonitorRun(session, {
+        scope_mode: "targets",
+        targets: [{ cluster, instance }],
+        skills: [testSkill.slug],
+        prompt: testPrompt.trim() || undefined,
+      })
+      setTestResult(res)
+      setLastRunId(res.run.id)
+      reload()
+    } catch (err) {
+      setTestError((err as Error).message)
+    } finally {
+      setTestBusy(false)
+    }
+  }
+
   const counts = useMemo(() => {
     const system = skills.filter((s) => s.scope === "system").length
     const custom = skills.filter((s) => s.scope === "custom").length
     const enabledInspection = skills.filter((s) => s.enabled && (s.category === "inspection" || s.category === "security"))
     return { total: skills.length, system, custom, enabledInspection }
+  }, [skills])
+
+  const platformSkillMap = useMemo(() => {
+    const map = new Map<string, PlatformSkillRecord>()
+    for (const sk of skills) map.set(sk.slug, sk)
+    return map
   }, [skills])
 
   const filteredSkills = useMemo(() => {
@@ -411,7 +531,18 @@ export function SkillRegistryPanel({
     })
   }, [skills, filter, query])
 
-  const onlineTargetsCount = targets.filter((t) => t.status !== "offline").length
+  const filteredAgentSkills = useMemo(() => {
+    const q = agentQuery.trim().toLowerCase()
+    if (!q) return agentSkills
+    return agentSkills.filter(
+      (s) =>
+        s.slug.toLowerCase().includes(q) ||
+        s.name.toLowerCase().includes(q) ||
+        (s.description || "").toLowerCase().includes(q),
+    )
+  }, [agentSkills, agentQuery])
+
+  const onlineTargetsCount = onlineTargets.length
 
   return (
     <section aria-label="Skill 管理" className="space-y-4">
@@ -419,84 +550,53 @@ export function SkillRegistryPanel({
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold text-foreground">Skill 管理</h1>
-            <Badge variant="primary">系统 Skill {counts.system}</Badge>
-            <Badge variant="success">自定义 Skill {counts.custom}</Badge>
+            <Badge variant="primary">系统 {counts.system}</Badge>
+            <Badge variant="success">自定义 {counts.custom}</Badge>
             <Badge variant="outline">在线 Agent {onlineTargetsCount}</Badge>
           </div>
-          <p className="text-sm text-muted-foreground">
-            巡检即系统驱动 Skill 执行：统一管理系统内置巡检 Skill 与用户上传的自定义 Skill（支持 `.md` 与 `.zip` Skill 包），支持一键同步至在线 Agent 并直接驱动智能巡检或供 AI 助手调用。
+          <p className="text-xs text-muted-foreground">
+            文件目录化托管 Skill（支持 `.md` / `.zip`），统一同步至在线 Agent `/root/.agent/skills/` 并直接在线试跑验证，供 AI 助手与智能巡检共同调用。
           </p>
         </div>
 
         <Inline gap={2} className="flex-wrap">
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={busy || counts.enabledInspection.length === 0}
-            onClick={() =>
-              void handleDriveInspection(
-                counts.enabledInspection.map((s) => s.slug),
-                `按已启用的 ${counts.enabledInspection.length} 个巡检 Skill 发起巡检`,
-              )
-            }
-          >
-            <Play width={14} height={14} />
-            {runningSlug === "__all__"
-              ? "巡检执行中…"
-              : `驱动已启用巡检 Skill (${counts.enabledInspection.length})`}
-          </Button>
-          <Button size="sm" disabled={busy} onClick={() => void handleSync()}>
-            <Send width={14} height={14} />
-            同步至在线 Agent
-          </Button>
-          <Button size="sm" onClick={() => openNewSkill("custom")}>
+          <Button size="sm" variant="primary" onClick={() => openNewSkill("custom")}>
             <Upload width={14} height={14} />
             上传 / 新建 Skill
           </Button>
-          {onOpenInspection && (
-            <Button size="sm" variant="ghost" onClick={() => onOpenInspection()}>
-              前往智能巡检
+          <Button size="sm" disabled={busy || onlineTargetsCount === 0} onClick={() => void handleSync()}>
+            <Send width={14} height={14} />
+            同步至在线 Agent
+          </Button>
+          {onOpenMcp && (
+            <Button size="sm" variant="ghost" onClick={onOpenMcp}>
+              MCP 管理
             </Button>
           )}
-          <Button size="sm" variant="ghost" disabled={loading} onClick={reload}>
-            <RefreshCw width={14} height={14} className={loading ? "animate-spin" : ""} />
+          {onOpenInspection && (
+            <Button size="sm" variant="ghost" onClick={() => onOpenInspection()}>
+              智能巡检
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" disabled={loading || agentLoading} onClick={reload}>
+            <RefreshCw width={14} height={14} className={loading || agentLoading ? "animate-spin" : ""} />
             刷新
           </Button>
         </Inline>
       </header>
 
-      {/* Architecture Principle Strip */}
-      <Card>
-        <CardContent className="grid gap-3 p-3.5 text-xs sm:grid-cols-3">
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-1.5 font-medium text-foreground">
-              <ShieldCheck width={14} className="text-primary" />
-              系统 Skill（平台预置 · 可定制）
-            </div>
-            <p className="text-muted-foreground">
-              覆盖虚机/SSH/K8s/容器/Web/数据库及违规代理与补丁安全基线；平台管理员可在线修改、启停或一键恢复内置默认。
-            </p>
-          </div>
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-1.5 font-medium text-foreground">
-              <FolderArchive width={14} className="text-success" />
-              自定义 Skill（上传 .md / .zip）
-            </div>
-            <p className="text-muted-foreground">
-              支持上传单个 `SKILL.md` 或包含 `scripts/`、`references/` 的 `.zip` Skill 包；个人可管理本人 Skill，管理员可全局治理。
-            </p>
-          </div>
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-1.5 font-medium text-foreground">
-              <Sparkles width={14} className="text-warning" />
-              系统驱动巡检 &amp; Agent 热同步
-            </div>
-            <p className="text-muted-foreground">
-              内置策略类 Skill 走原生高速探针；自定义/安全 Skill 经内部控制面同步到 Agent `/root/.agent/skills/` 并由巡检引擎只读驱动。
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <PageTabs
+        ariaLabel="Skill 管理视图"
+        value={activeTab}
+        onChange={(next) => setActiveTab(next as SkillPanelTab)}
+        items={[
+          { id: "registry", label: `平台 Skill 仓库 (${counts.total})` },
+          {
+            id: "agent",
+            label: agentSkills.length > 0 ? `Agent 运行态 Skill (${agentSkills.length})` : "Agent 运行态 Skill",
+          },
+        ]}
+      />
 
       {error && <StatusBanner tone="error">{error}</StatusBanner>}
       {notice && (
@@ -529,6 +629,112 @@ export function SkillRegistryPanel({
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Inline Skill Test-Run Drawer */}
+      {testSkill && (
+        <Card className="border-primary/40">
+          <CardContent className="space-y-3 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <FlaskConical width={15} className="text-primary" />
+                <h2 className="text-sm font-semibold text-foreground">
+                  在线试跑验证：{testSkill.name}
+                </h2>
+                <Badge variant="outline" className="font-mono">{testSkill.slug}</Badge>
+                <Badge variant="outline">{SKILL_DRIVER_LABELS[testSkill.driver_mode] || testSkill.driver_mode}</Badge>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => { setTestSkill(null); setTestResult(null); setTestError("") }}>
+                关闭
+              </Button>
+            </div>
+
+            <form onSubmit={(e) => void executeSkillTestRun(e)} className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="text-xs text-muted-foreground">
+                  目标 Agent 节点
+                  <Select
+                    scale="sm"
+                    className="mt-1 font-mono"
+                    value={testTarget}
+                    onChange={(e) => setTestTarget(e.target.value)}
+                    disabled={onlineTargetsCount === 0 || testBusy}
+                  >
+                    {onlineTargetsCount === 0 ? (
+                      <option value="">暂无在线 Agent</option>
+                    ) : (
+                      onlineTargets.map((t) => (
+                        <option key={t.key} value={t.key}>
+                          {t.key}
+                        </option>
+                      ))
+                    )}
+                  </Select>
+                </label>
+                <label className="text-xs text-muted-foreground sm:col-span-2">
+                  附加提示词（可选；留空则直接按 Skill 默认指令运行）
+                  <Input
+                    scale="sm"
+                    className="mt-1"
+                    placeholder="如：只读检查当前节点系统负载、磁盘与监听端口，输出 Markdown + JSON"
+                    value={testPrompt}
+                    onChange={(e) => setTestPrompt(e.target.value)}
+                    disabled={testBusy}
+                  />
+                </label>
+              </div>
+
+              <Inline gap={2} className="flex-wrap">
+                <Button type="submit" size="sm" variant="primary" disabled={testBusy || onlineTargetsCount === 0}>
+                  <Play width={13} height={13} />
+                  {testBusy ? "正在 Agent 上真实执行…" : "立即试跑"}
+                </Button>
+                {testResult && onOpenInspection && (
+                  <Button type="button" size="sm" variant="ghost" onClick={() => onOpenInspection(testResult.run.id)}>
+                    在智能巡检中查看 #{testResult.run.id}
+                  </Button>
+                )}
+              </Inline>
+            </form>
+
+            {testError && <StatusBanner tone="error">{testError}</StatusBanner>}
+
+            {testResult && (
+              <div className="space-y-3 border-t pt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={describeMonitorStatus(testResult.run.status).variant}>
+                      {describeMonitorStatus(testResult.run.status).label}
+                    </Badge>
+                    <span className="font-mono text-muted-foreground">#{testResult.run.id}</span>
+                    <span className="text-muted-foreground">耗时 {testResult.run.duration_ms} ms</span>
+                    {testResult.run.summary && <span className="text-foreground">{testResult.run.summary}</span>}
+                  </div>
+                </div>
+                {testResult.items.map((item) => (
+                  <div key={`${item.cluster}-${item.instance}-${item.asset_id}-${item.id}`} className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="font-mono font-medium text-foreground">
+                        {item.cluster}/{item.instance}
+                      </span>
+                      <Badge variant={describeMonitorStatus(item.status).variant}>
+                        {describeMonitorStatus(item.status).label}
+                      </Badge>
+                      {item.reason && <span className="text-muted-foreground">{item.reason}</span>}
+                    </div>
+                    <InspectionArtifactViewer
+                      format={item.artifact_format}
+                      markdown={item.artifact_markdown}
+                      jsonData={item.artifact_json}
+                      rawOutput={item.raw_output}
+                      filePrefix={`${testSkill.slug}-${item.cluster}-${item.instance}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -823,156 +1029,321 @@ export function SkillRegistryPanel({
         </Card>
       )}
 
-      {/* Filter Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Skill 筛选">
-          {(
-            [
-              ["all", `全部 (${counts.total})`],
-              ["system", `系统 Skill (${counts.system})`],
-              ["custom", `自定义 Skill (${counts.custom})`],
-              ["inspection", "巡检驱动"],
-              ["security", "安全巡检"],
-              ["ops", "运维与诊断"],
-            ] as const
-          ).map(([key, label]) => (
-            <Button
-              key={key}
-              size="sm"
-              variant={filter === key ? "primary" : "default"}
-              onClick={() => setFilter(key)}
-            >
-              {label}
-            </Button>
-          ))}
-        </div>
-        <Input
-          scale="sm"
-          className="w-60"
-          placeholder="搜索 Skill 名称、slug 或说明…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      </div>
+      {activeTab === "registry" ? (
+        <>
+          {/* Filter Toolbar */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Skill 筛选">
+              {(
+                [
+                  ["all", `全部 (${counts.total})`],
+                  ["system", `系统 (${counts.system})`],
+                  ["custom", `自定义 (${counts.custom})`],
+                  ["inspection", "巡检驱动"],
+                  ["security", "安全巡检"],
+                  ["ops", "运维与诊断"],
+                ] as const
+              ).map(([key, label]) => (
+                <Button
+                  key={key}
+                  size="sm"
+                  variant={filter === key ? "primary" : "default"}
+                  onClick={() => setFilter(key)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+            <Input
+              scale="sm"
+              className="w-60"
+              placeholder="搜索 Skill 名称、slug 或说明…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
 
-      {/* Skills Grid */}
-      {loading && skills.length === 0 ? (
-        <p role="status" className="py-10 text-center text-sm text-muted-foreground">
-          正在加载平台 Skill 仓库…
-        </p>
-      ) : filteredSkills.length === 0 ? (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            当前筛选条件下暂无 Skill。点击右上角「上传 / 新建 Skill」即可导入 `.md` 或 `.zip` Skill 包。
-          </CardContent>
-        </Card>
+          {/* Skills Grid */}
+          {loading && skills.length === 0 ? (
+            <p role="status" className="py-10 text-center text-sm text-muted-foreground">
+              正在加载平台 Skill 仓库…
+            </p>
+          ) : filteredSkills.length === 0 ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                当前筛选条件下暂无 Skill。点击右上角「上传 / 新建 Skill」即可导入 `.md` 或 `.zip` Skill 包。
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {filteredSkills.map((sk) => {
+                const isRunningThis = runningSlug === sk.slug
+                return (
+                  <Card key={sk.slug} className={`flex h-full flex-col transition-opacity ${sk.enabled ? "" : "opacity-65"}`}>
+                    <CardContent className="flex flex-1 flex-col justify-between gap-3 p-4">
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge variant={sk.scope === "system" ? "primary" : "success"}>
+                              {sk.scope === "system" ? "系统 Skill" : "自定义 Skill"}
+                            </Badge>
+                            <Badge variant="outline">{SKILL_CATEGORY_LABELS[sk.category] || sk.category}</Badge>
+                            <Badge variant="outline">{SKILL_DRIVER_LABELS[sk.driver_mode] || sk.driver_mode}</Badge>
+                          </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={sk.enabled}
+                            aria-label={`${sk.enabled ? "停用" : "启用"} ${sk.name}`}
+                            disabled={busy || !sk.can_edit}
+                            onClick={() => void handleToggle(sk)}
+                            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+                              sk.enabled ? "border-primary bg-primary" : "border-border bg-muted"
+                            } ${!sk.can_edit ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                          >
+                            <span
+                              className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+                                sk.enabled ? "translate-x-4" : "translate-x-0.5"
+                              }`}
+                            />
+                          </button>
+                        </div>
+
+                        <div>
+                          <h3 className="text-sm font-semibold text-foreground">{sk.name}</h3>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-2xs text-muted-foreground">
+                            <span>{sk.slug}</span>
+                            {sk.strategy_id && <span>→ {STRATEGY_LABELS[sk.strategy_id] || sk.strategy_id}</span>}
+                          </div>
+                        </div>
+
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {sk.description || "无简介说明，点击编辑查看完整 SKILL.md 规范。"}
+                        </p>
+                      </div>
+
+                      <Stack gap={2} className="border-t pt-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-1 font-mono text-2xs text-muted-foreground">
+                          <span>
+                            归属：{sk.owner_name || sk.owner_id} · 附属 {sk.file_count} 文件
+                          </span>
+                          <span>
+                            驱动 {sk.run_count} 次 · {sk.sha256 ? sk.sha256.slice(0, 8) : "—"}
+                          </span>
+                        </div>
+                        <div className="font-mono text-2xs text-muted-foreground">
+                          最近执行：{fmtStamp(sk.last_run_at_ms)}
+                        </div>
+                        <Inline gap={2} className="flex-wrap pt-0.5">
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            disabled={busy || !sk.enabled || onlineTargetsCount === 0}
+                            onClick={() => openSkillTestRun(sk)}
+                          >
+                            <FlaskConical width={12} height={12} />
+                            试跑验证
+                          </Button>
+                          <Button
+                            size="sm"
+                            disabled={busy || !sk.enabled || onlineTargetsCount === 0}
+                            onClick={() => void handleDriveInspection([sk.slug], `Skill「${sk.name}」巡检`)}
+                          >
+                            <Play width={12} height={12} />
+                            {isRunningThis ? "执行中…" : "全量巡检"}
+                          </Button>
+                          <Button size="sm" disabled={busy || onlineTargetsCount === 0} onClick={() => void handleSync(sk.slug)}>
+                            同步
+                          </Button>
+                          <Button size="sm" disabled={busy} onClick={() => void openSkillEditor(sk.slug)}>
+                            {sk.can_edit ? "编辑" : "查看"}
+                          </Button>
+                          {sk.scope === "system" && isAdmin && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={busy}
+                              title="恢复为系统内置默认定义"
+                              onClick={() => void handleResetSystem(sk)}
+                            >
+                              <RotateCcw width={12} height={12} />
+                              恢复默认
+                            </Button>
+                          )}
+                          {sk.can_delete && (
+                            <Button
+                              size="sm"
+                              variant="danger-outline"
+                              disabled={busy}
+                              onClick={() => void handleDelete(sk)}
+                            >
+                              <Trash2 width={12} height={12} />
+                              删除
+                            </Button>
+                          )}
+                        </Inline>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          )}
+        </>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {filteredSkills.map((sk) => {
-            const isRunningThis = runningSlug === sk.slug
-            return (
-              <TiltCard3D key={sk.slug} maxTilt={4} className="h-full">
-                <Card className={`flex h-full flex-col transition-opacity ${sk.enabled ? "" : "opacity-65"}`}>
-                  <CardContent className="flex flex-1 flex-col justify-between gap-3 p-4">
-                    <div className="space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <Badge variant={sk.scope === "system" ? "primary" : "success"}>
-                            {sk.scope === "system" ? "系统 Skill" : "自定义 Skill"}
-                          </Badge>
-                          <Badge variant="outline">{SKILL_CATEGORY_LABELS[sk.category] || sk.category}</Badge>
-                          <Badge variant="outline">{SKILL_DRIVER_LABELS[sk.driver_mode] || sk.driver_mode}</Badge>
+        <div className="space-y-3">
+          {/* Agent Runtime Skills Toolbar */}
+          <Card>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 p-3.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">目标 Agent</span>
+                <Select
+                  scale="sm"
+                  className="w-56 font-mono"
+                  value={selectedTarget}
+                  onChange={(e) => setSelectedTarget(e.target.value)}
+                  disabled={onlineTargetsCount === 0}
+                >
+                  {onlineTargetsCount === 0 ? (
+                    <option value="">暂无在线 Agent</option>
+                  ) : (
+                    onlineTargets.map((t) => (
+                      <option key={t.key} value={t.key}>
+                        {t.key}
+                      </option>
+                    ))
+                  )}
+                </Select>
+                {agentSkillsRoot && (
+                  <span className="flex items-center gap-1 font-mono text-2xs text-muted-foreground">
+                    <FolderOpen width={13} />
+                    {agentSkillsRoot}
+                  </span>
+                )}
+              </div>
+
+              <Inline gap={2} className="flex-wrap">
+                <Input
+                  scale="sm"
+                  className="w-52"
+                  placeholder="搜索 Agent 已加载 Skill…"
+                  value={agentQuery}
+                  onChange={(e) => setAgentQuery(e.target.value)}
+                />
+                <Button
+                  size="sm"
+                  disabled={busy || !selectedTarget}
+                  onClick={() => void handleSync(undefined, selectedTarget)}
+                >
+                  <Send width={13} height={13} />
+                  同步平台 Skill 到此节点
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={agentLoading || !selectedTarget}
+                  onClick={() => setAgentRevision((v) => v + 1)}
+                >
+                  <RefreshCw width={13} height={13} className={agentLoading ? "animate-spin" : ""} />
+                  实时读取
+                </Button>
+              </Inline>
+            </CardContent>
+          </Card>
+
+          {agentError && <StatusBanner tone="error">{agentError}</StatusBanner>}
+
+          {onlineTargetsCount === 0 ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                当前没有在线的 Agent 节点，无法实时读取运行态 Skill 目录。
+              </CardContent>
+            </Card>
+          ) : agentLoading && agentSkills.length === 0 ? (
+            <p role="status" className="py-10 text-center text-sm text-muted-foreground">
+              正在从 {selectedTarget} 实时读取 /root/.agent/skills/ …
+            </p>
+          ) : filteredAgentSkills.length === 0 ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                {agentSkills.length === 0
+                  ? `${selectedTarget} 的 ${agentSkillsRoot || "/root/.agent/skills"} 目录暂未发现 Skill，可点击右上角「同步平台 Skill 到此节点」。`
+                  : "当前搜索条件下无匹配的 Agent 运行态 Skill。"}
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {filteredAgentSkills.map((as) => {
+                const managed = platformSkillMap.get(as.slug)
+                return (
+                  <Card key={as.slug} className="flex h-full flex-col">
+                    <CardContent className="flex flex-1 flex-col justify-between gap-3 p-4">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge variant={managed ? "primary" : "success"}>
+                              {managed ? "平台托管" : "Agent 镜像内置"}
+                            </Badge>
+                            <Badge variant="outline">
+                              {as.kind === "dir" ? `目录 · ${as.file_count} 文件` : "单文件"}
+                            </Badge>
+                          </div>
+                          <span className="font-mono text-2xs text-muted-foreground">
+                            {formatBytesCompact(as.size_bytes)}
+                          </span>
                         </div>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={sk.enabled}
-                          aria-label={`${sk.enabled ? "停用" : "启用"} ${sk.name}`}
-                          disabled={busy || !sk.can_edit}
-                          onClick={() => void handleToggle(sk)}
-                          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
-                            sk.enabled ? "border-primary bg-primary" : "border-border bg-muted"
-                          } ${!sk.can_edit ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
-                        >
-                          <span
-                            className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-                              sk.enabled ? "translate-x-4" : "translate-x-0.5"
-                            }`}
-                          />
-                        </button>
-                      </div>
 
-                      <div>
-                        <h3 className="text-sm font-semibold text-foreground">{sk.name}</h3>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-2xs text-muted-foreground">
-                          <span>{sk.slug}</span>
-                          {sk.strategy_id && <span>→ {STRATEGY_LABELS[sk.strategy_id] || sk.strategy_id}</span>}
+                        <div>
+                          <h3 className="text-sm font-semibold text-foreground">{as.name || as.slug}</h3>
+                          <div className="mt-0.5 font-mono text-2xs text-muted-foreground">{as.slug}</div>
                         </div>
+
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {as.description || managed?.description || "Agent 运行时已挂载该 Skill，可供 AI 助手与巡检直接调用。"}
+                        </p>
                       </div>
 
-                      <p className="text-xs leading-relaxed text-muted-foreground">
-                        {sk.description || "无简介说明，点击编辑查看完整 SKILL.md 规范。"}
-                      </p>
-                    </div>
-
-                    <Stack gap={2} className="border-t pt-2.5">
-                      <div className="flex flex-wrap items-center justify-between gap-1 font-mono text-2xs text-muted-foreground">
-                        <span>
-                          归属：{sk.owner_name || sk.owner_id} · 附属 {sk.file_count} 文件
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2.5">
+                        <span className="font-mono text-2xs text-muted-foreground">
+                          更新：{fmtStamp(as.updated_at_ms)}
                         </span>
-                        <span>
-                          驱动 {sk.run_count} 次 · {sk.sha256 ? sk.sha256.slice(0, 8) : "—"}
-                        </span>
+                        <Inline gap={1}>
+                          {managed && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                disabled={busy || !managed.enabled}
+                                onClick={() => {
+                                  setActiveTab("registry")
+                                  setTestTarget(selectedTarget)
+                                  openSkillTestRun(managed)
+                                }}
+                              >
+                                <FlaskConical width={12} height={12} />
+                                试跑
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={busy}
+                                onClick={() => {
+                                  setActiveTab("registry")
+                                  void openSkillEditor(managed.slug)
+                                }}
+                              >
+                                {managed.can_edit ? "编辑" : "查看"}
+                              </Button>
+                            </>
+                          )}
+                        </Inline>
                       </div>
-                      <div className="font-mono text-2xs text-muted-foreground">
-                        最近执行：{fmtStamp(sk.last_run_at_ms)}
-                      </div>
-                      <Inline gap={2} className="flex-wrap pt-0.5">
-                        <Button
-                          size="sm"
-                          variant="primary"
-                          disabled={busy || !sk.enabled}
-                          onClick={() => void handleDriveInspection([sk.slug], `Skill「${sk.name}」巡检`)}
-                        >
-                          <Play width={12} height={12} />
-                          {isRunningThis ? "执行中…" : "驱动巡检"}
-                        </Button>
-                        <Button size="sm" disabled={busy} onClick={() => void handleSync(sk.slug)}>
-                          同步 Agent
-                        </Button>
-                        <Button size="sm" disabled={busy} onClick={() => void openSkillEditor(sk.slug)}>
-                          {sk.can_edit ? "编辑" : "查看"}
-                        </Button>
-                        {sk.scope === "system" && isAdmin && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={busy}
-                            title="恢复为系统内置默认定义"
-                            onClick={() => void handleResetSystem(sk)}
-                          >
-                            <RotateCcw width={12} height={12} />
-                            恢复默认
-                          </Button>
-                        )}
-                        {sk.can_delete && (
-                          <Button
-                            size="sm"
-                            variant="danger-outline"
-                            disabled={busy}
-                            onClick={() => void handleDelete(sk)}
-                          >
-                            <Trash2 width={12} height={12} />
-                            删除
-                          </Button>
-                        )}
-                      </Inline>
-                    </Stack>
-                  </CardContent>
-                </Card>
-              </TiltCard3D>
-            )
-          })}
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
     </section>

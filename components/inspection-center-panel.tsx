@@ -13,31 +13,23 @@ import {
   fetchMonitorRunDetail,
   fetchMonitorRuns,
   fetchMonitorSchedules,
-  formatBytesCompact,
   formatIntervalLabel,
-  formatPercent,
   mutateMonitorSchedule,
   triggerMonitorRun,
   type MonitorRunDetailData,
+  type MonitorRunItemRecord,
   type MonitorRunRecord,
   type MonitorScheduleRecord,
-  type MonitorStrategyMeta,
-  type MonitorThresholds,
 } from "@/lib/monitor-engine"
-import {
-  analyzeInspectionWithAi,
-  buildCustomReportHtml,
-  buildCustomReportMarkdown,
-} from "@/lib/inspection-report"
-import { fetchPlatformSkills, SKILL_DRIVER_LABELS, type PlatformSkillRecord } from "@/lib/skills-registry"
-import { HistoryIcon, RefreshIcon, RocketIcon, SparkIcon } from "./icons"
+import { fetchPlatformSkills, type PlatformSkillRecord } from "@/lib/skills-registry"
+import { HistoryIcon, RefreshIcon, RocketIcon } from "./icons"
+import { InspectionArtifactViewer } from "./inspection-artifact-viewer"
 import {
   Badge,
   Button,
   Card,
   CardContent,
   Checkbox,
-  Grid,
   Inline,
   Input,
   Select,
@@ -49,6 +41,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from "./ui"
 
 function fmtStamp(ms?: number): string {
@@ -71,22 +64,58 @@ function downloadText(filename: string, content: string, mime: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
+function buildLegacyFallbackArtifact(item: MonitorRunItemRecord): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    asset_id: item.asset_id,
+    asset_name: item.asset_name,
+    asset_kind: item.asset_kind,
+    strategy: item.strategy,
+    status: item.status,
+  }
+  const m = item.metrics || {}
+  if (m.cpu_percent != null) out.cpu_percent = m.cpu_percent
+  if (m.memory_percent != null) out.memory_percent = m.memory_percent
+  if (m.disk_percent != null) out.disk_percent = m.disk_percent
+  if (m.disk_iops != null) out.disk_iops = m.disk_iops
+  if (m.response_time_ms != null) out.response_time_ms = m.response_time_ms
+  if (m.os_info) out.os_info = m.os_info
+  if (m.kernel_info) out.kernel_info = m.kernel_info
+  if (item.checks?.length) {
+    out.checks = item.checks.map((c) => ({
+      name: c.name,
+      status: c.status,
+      value: c.value || "—",
+      threshold: c.threshold || "—",
+      detail: c.detail || "—",
+    }))
+  }
+  if (item.evidence && Object.keys(item.evidence).length > 0) {
+    out.evidence = item.evidence
+  }
+  return out
+}
+
 export function InspectionCenterPanel({
   session,
   targets,
+  mode = "runs",
   initialRunId,
+  onSelectRun,
   onClearInitialRun,
+  onScheduleCountChange,
   onOpenSkills,
 }: {
   session: Session
   targets: Target[]
+  mode?: "runs" | "schedules"
   initialRunId?: string
+  onSelectRun?: (runId: string) => void
   onClearInitialRun?: () => void
+  onScheduleCountChange?: (count: number) => void
   onOpenSkills?: () => void
 }) {
   const isAdmin = sessionIsAdmin(session)
   const [schedules, setSchedules] = useState<MonitorScheduleRecord[]>([])
-  const [strategies, setStrategies] = useState<MonitorStrategyMeta[]>([])
   const [platformSkills, setPlatformSkills] = useState<PlatformSkillRecord[]>([])
   const [runs, setRuns] = useState<MonitorRunRecord[]>([])
   const [selectedRunId, setSelectedRunId] = useState<string>(initialRunId || "")
@@ -103,55 +132,37 @@ export function InspectionCenterPanel({
   const [itemStatusFilter, setItemStatusFilter] = useState("")
   const [itemStrategyFilter, setItemStrategyFilter] = useState("")
 
-  // Schedule editor state
+  // Minimal schedule form state: Name + Interval + Target Scope + Skill + Prompt + optional Command
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState("")
   const [schedName, setSchedName] = useState("")
-  const [schedDesc, setSchedDesc] = useState("")
-  const [scopeMode, setScopeMode] = useState<"all_online" | "targets" | "tags">("all_online")
+  const [schedPrompt, setSchedPrompt] = useState("")
+  const [schedCommand, setSchedCommand] = useState("")
+  const [scopeMode, setScopeMode] = useState<"all_online" | "targets">("all_online")
   const [selectedTargetKeys, setSelectedTargetKeys] = useState<string[]>([])
-  const [tagsInput, setTagsInput] = useState("")
-  const [selectedStrategies, setSelectedStrategies] = useState<string[]>([
-    "vm_host",
-    "ssh_host",
-    "k8s_cluster",
-    "container_runtime",
-    "app_service",
-    "database_service",
-  ])
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [intervalSeconds, setIntervalSeconds] = useState(300)
-  const [thresholds, setThresholds] = useState<MonitorThresholds>({
-    cpu_warn_percent: 80,
-    cpu_crit_percent: 90,
-    mem_warn_percent: 80,
-    mem_crit_percent: 90,
-    disk_warn_percent: 85,
-    disk_crit_percent: 95,
-    cert_warn_days: 14,
-    latency_warn_ms: 1000,
-  })
 
-  // Quick ad-hoc dispatch bar state
+  // Minimal quick dispatch state: Target + Skill + Prompt + optional Command
   const [quickTarget, setQuickTarget] = useState("")
-  const [quickStrategies, setQuickStrategies] = useState<string[]>([
-    "vm_host",
-    "k8s_cluster",
-    "container_runtime",
-    "app_service",
-    "database_service",
-  ])
   const [quickSkills, setQuickSkills] = useState<string[]>([])
   const [quickSkillsInitialized, setQuickSkillsInitialized] = useState(false)
-  const [sshOpen, setSshOpen] = useState(false)
-  const [sshAssetId, setSshAssetId] = useState("")
-  const [sshAddr, setSshAddr] = useState("")
-  const [sshUser, setSshUser] = useState("")
-  const [sshPort, setSshPort] = useState("22")
+  const [quickPrompt, setQuickPrompt] = useState("")
+  const [quickCommand, setQuickCommand] = useState("")
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
 
   useEffect(() => {
-    if (initialRunId) setSelectedRunId(initialRunId)
+    setSelectedRunId(initialRunId || "")
   }, [initialRunId])
+
+  const openRun = useCallback(
+    (runId: string) => {
+      setSelectedRunId(runId)
+      onSelectRun?.(runId)
+    },
+    [onSelectRun],
+  )
 
   const reload = useCallback(() => setRevision((v) => v + 1), [])
 
@@ -166,17 +177,15 @@ export function InspectionCenterPanel({
     ])
       .then(([schedRes, runsRes, skillsRes]) => {
         if (ctrl.signal.aborted) return
-        setSchedules(schedRes.schedules || [])
-        setStrategies(schedRes.strategies || runsRes.strategies || [])
+        const nextSchedules = schedRes.schedules || []
+        setSchedules(nextSchedules)
+        onScheduleCountChange?.(nextSchedules.length)
         setRuns(runsRes.runs || [])
         const fetchedSkills = skillsRes.skills || []
         setPlatformSkills(fetchedSkills)
         if (!quickSkillsInitialized && fetchedSkills.length > 0) {
-          setQuickSkills(
-            fetchedSkills
-              .filter((s) => s.enabled && (s.category === "inspection" || s.category === "security"))
-              .map((s) => s.slug),
-          )
+          const defaultSkill = fetchedSkills.find((s) => s.enabled && s.slug === "inspect-vm-host") || fetchedSkills.find((s) => s.enabled)
+          setQuickSkills(defaultSkill ? [defaultSkill.slug] : [])
           setQuickSkillsInitialized(true)
         }
         setLoading(false)
@@ -188,7 +197,7 @@ export function InspectionCenterPanel({
         }
       })
     return () => ctrl.abort()
-  }, [session, runStatusFilter, revision, quickSkillsInitialized])
+  }, [session, runStatusFilter, revision, quickSkillsInitialized, onScheduleCountChange])
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -239,19 +248,12 @@ export function InspectionCenterPanel({
   function openNewSchedule() {
     setEditingId("")
     setSchedName("")
-    setSchedDesc("")
+    setSchedPrompt("")
+    setSchedCommand("")
     setScopeMode("all_online")
     setSelectedTargetKeys([])
-    setTagsInput("")
-    const defaultSlugs = enabledSkills
-      .filter((s) => s.category === "inspection" || s.category === "security")
-      .map((s) => s.slug)
-    setSelectedSkills(defaultSlugs)
-    setSelectedStrategies(
-      defaultSlugs.length > 0
-        ? strategiesFromSkills(defaultSlugs)
-        : ["vm_host", "ssh_host", "k8s_cluster", "container_runtime", "app_service", "database_service"],
-    )
+    const firstSkill = enabledSkills.find((s) => s.slug === "inspect-vm-host") || enabledSkills[0]
+    setSelectedSkills(firstSkill ? [firstSkill.slug] : [])
     setIntervalSeconds(300)
     setFormOpen(true)
   }
@@ -259,21 +261,21 @@ export function InspectionCenterPanel({
   function openEditSchedule(s: MonitorScheduleRecord) {
     setEditingId(s.id)
     setSchedName(s.name)
-    setSchedDesc(s.description || "")
-    setScopeMode(s.scope_mode)
+    setSchedPrompt(s.prompt || "")
+    setSchedCommand(s.command || "")
+    setScopeMode(s.scope_mode === "targets" ? "targets" : "all_online")
     setSelectedTargetKeys((s.targets || []).map((t) => `${t.cluster}/${t.instance}`))
-    setTagsInput((s.tags || []).join(", "))
-    setSelectedStrategies(s.strategies || [])
     if (s.skills && s.skills.length > 0) {
       setSelectedSkills(s.skills)
-    } else {
+    } else if (!s.prompt && !s.command) {
       const inferred = platformSkills
         .filter((sk) => sk.strategy_id && (s.strategies || []).includes(sk.strategy_id))
         .map((sk) => sk.slug)
       setSelectedSkills(inferred)
+    } else {
+      setSelectedSkills([])
     }
     setIntervalSeconds(s.interval_seconds || 300)
-    setThresholds({ ...thresholds, ...(s.thresholds || {}) })
     setFormOpen(true)
   }
 
@@ -288,28 +290,21 @@ export function InspectionCenterPanel({
         const [cluster, instance] = k.split("/")
         return { cluster, instance }
       })
-      const tags = tagsInput
-        .split(/[,，\s]+/)
-        .map((x) => x.trim())
-        .filter(Boolean)
-      const effectiveStrategies =
-        selectedSkills.length > 0 ? strategiesFromSkills(selectedSkills) : selectedStrategies
       await mutateMonitorSchedule(session, {
         action: editingId ? "update" : "create",
         ...(editingId ? { id: editingId } : {}),
         name: schedName.trim(),
-        description: schedDesc.trim(),
+        prompt: schedPrompt.trim(),
+        command: schedCommand.trim(),
         enabled: true,
         scope_mode: scopeMode,
         targets: scopeMode === "targets" ? targetRefs : [],
-        tags: scopeMode === "tags" ? tags : [],
-        strategies: effectiveStrategies,
+        strategies: strategiesFromSkills(selectedSkills),
         skills: selectedSkills,
-        thresholds,
         interval_seconds: intervalSeconds,
       })
       setFormOpen(false)
-      setNotice(editingId ? "定时巡检计划已更新" : "定时巡检计划已创建，Gateway 将按周期自动驱动所选 Skill 下发执行")
+      setNotice(editingId ? "定时巡检计划已更新" : "定时巡检计划已创建")
       reload()
     } catch (err) {
       setError((err as Error).message)
@@ -355,8 +350,8 @@ export function InspectionCenterPanel({
     setNotice("")
     try {
       const res = await triggerMonitorRun(session, { schedule_id: s.id })
-      setNotice(`计划「${s.name}」执行完成（#${res.run.id}）：${res.run.summary}`)
-      setSelectedRunId(res.run.id)
+      setNotice(`计划「${s.name}」执行完成（#${res.run.id}）`)
+      openRun(res.run.id)
       reload()
     } catch (err) {
       setError((err as Error).message)
@@ -372,15 +367,16 @@ export function InspectionCenterPanel({
     setError("")
     setNotice("")
     try {
-      const useSkills = platformSkills.length > 0 && quickSkills.length > 0
-      const payload: Parameters<typeof triggerMonitorRun>[1] = useSkills
-        ? {
-            skills: quickSkills,
-            strategies: strategiesFromSkills(quickSkills),
-          }
-        : {
-            strategies: quickStrategies,
-          }
+      const promptText = quickPrompt.trim()
+      const commandText = commandOpen ? quickCommand.trim() : ""
+      const payload: Parameters<typeof triggerMonitorRun>[1] = {}
+      if (quickSkills.length > 0) {
+        payload.skills = quickSkills
+        const derived = strategiesFromSkills(quickSkills)
+        if (derived.length > 0) payload.strategies = derived
+      }
+      if (promptText) payload.prompt = promptText
+      if (commandText) payload.command = commandText
       if (quickTarget) {
         const [cluster, instance] = quickTarget.split("/")
         payload.scope_mode = "targets"
@@ -388,25 +384,9 @@ export function InspectionCenterPanel({
       } else {
         payload.scope_mode = "all_online"
       }
-      if (sshOpen && sshAddr.trim() && sshAssetId.trim()) {
-        payload.strategies = Array.from(new Set([...(payload.strategies || []), "ssh_host"]))
-        if (useSkills) {
-          payload.skills = Array.from(new Set([...(payload.skills || []), "inspect-ssh-host"]))
-        }
-        payload.ssh_hosts = [
-          {
-            asset_id: sshAssetId.trim(),
-            asset_name: sshAssetId.trim(),
-            asset_kind: "vm",
-            address: sshAddr.trim(),
-            ssh_user: sshUser.trim() || undefined,
-            port: Number(sshPort) || 22,
-          },
-        ]
-      }
       const res = await triggerMonitorRun(session, payload)
-      setNotice(`已向 ${res.run.total_targets} 个目标下发 Skill 巡检并完成收集（#${res.run.id}）`)
-      setSelectedRunId(res.run.id)
+      setNotice(`巡检已完成（#${res.run.id}），共生成 ${res.items.length} 份目标产物`)
+      openRun(res.run.id)
       reload()
     } catch (err) {
       setError((err as Error).message)
@@ -422,7 +402,7 @@ export function InspectionCenterPanel({
     setNotice("")
     try {
       const res = await triggerMonitorRun(session, { retest_run_id: runId })
-      setNotice(`已完成异常/离线项复检（#${res.run.id}）：${res.run.summary}`)
+      setNotice(`已完成异常项复检（#${res.run.id}）`)
       setSelectedRunId(res.run.id)
       reload()
     } catch (err) {
@@ -441,15 +421,24 @@ export function InspectionCenterPanel({
     })
   }, [runDetail, itemStatusFilter, itemStrategyFilter])
 
-  // ---------------- Run Detail Report View ----------------
+  function describeRunTitle(r: MonitorRunRecord): string {
+    if (r.schedule_name) return r.schedule_name
+    if (r.prompt) return r.prompt.split(/\r?\n/)[0].slice(0, 64)
+    if (r.skills && r.skills.length > 0) {
+      const first = skillBySlug.get(r.skills[0])?.name || r.skills[0]
+      return r.skills.length === 1 ? first : `${first} 等 ${r.skills.length} 个 Skill`
+    }
+    if (r.command) return "自定义命令巡检"
+    return "即时巡检"
+  }
+
+  // ---------------- Run Detail & Artifact View ----------------
   if (selectedRunId) {
     const run = runDetail?.run
     const st = describeMonitorStatus(run?.status || "running")
     const hasRetestable = (runDetail?.items ?? []).some((i) =>
       ["warning", "critical", "error", "offline"].includes(i.status),
     )
-
-    const aiReport = runDetail ? analyzeInspectionWithAi(runDetail) : null
 
     return (
       <Stack gap={4}>
@@ -462,39 +451,21 @@ export function InspectionCenterPanel({
                 onClearInitialRun?.()
               }}
             >
-              返回任务与记录
+              返回执行记录
             </Button>
             <h2 className="text-base font-semibold text-foreground">
-              巡检执行详情 <span className="font-mono text-sm text-muted-foreground">#{selectedRunId}</span>
+              巡检产物与详情 <span className="font-mono text-sm text-muted-foreground">#{selectedRunId}</span>
             </h2>
             {run && <Badge variant={st.variant}>{st.label}</Badge>}
           </div>
           <Inline gap={2} className="flex-wrap">
             {hasRetestable && (
               <Button size="sm" variant="primary" disabled={busy} onClick={() => void retestRun(selectedRunId)}>
-                {busy ? "复检中…" : "仅复检异常/离线项"}
+                {busy ? "复检中…" : "复检异常项"}
               </Button>
             )}
-            {runDetail && aiReport && (
+            {runDetail && (
               <>
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    const md = buildCustomReportMarkdown(
-                      {
-                        title: `智能巡检报告 #${selectedRunId}`,
-                        period: "7d",
-                        sections: ["inspection_vuln", "ai_remediation", "security_events"],
-                      },
-                      null,
-                      runDetail,
-                      aiReport,
-                    )
-                    downloadText(`inspection-${selectedRunId}.html`, buildCustomReportHtml(`智能巡检报告 #${selectedRunId}`, md), "text/html;charset=utf-8")
-                  }}
-                >
-                  导出 HTML 报告
-                </Button>
                 <Button
                   size="sm"
                   onClick={() => downloadText(`inspection-${selectedRunId}.csv`, buildRunReportCSV(runDetail), "text/csv;charset=utf-8")}
@@ -505,7 +476,7 @@ export function InspectionCenterPanel({
                   size="sm"
                   onClick={() => downloadText(`inspection-${selectedRunId}.json`, JSON.stringify(runDetail, null, 2), "application/json")}
                 >
-                  导出 JSON
+                  导出完整 JSON
                 </Button>
               </>
             )}
@@ -520,67 +491,62 @@ export function InspectionCenterPanel({
         {notice && <StatusBanner tone="info">{notice}</StatusBanner>}
 
         {detailLoading && !runDetail ? (
-          <p role="status" className="py-8 text-sm text-muted-foreground">正在加载巡检明细与证据…</p>
+          <p role="status" className="py-8 text-sm text-muted-foreground">正在加载巡检产物…</p>
         ) : runDetail && run ? (
           <>
-            {aiReport && (
-              <Card>
-                <CardContent className="space-y-3 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <SparkIcon width={15} height={15} className="text-primary" />
-                      <h3 className="text-sm font-semibold text-foreground">浙音大模型 · AI 巡检结果智能分析</h3>
-                      <Badge variant="primary">{aiReport.model}</Badge>
-                      <Badge variant={aiReport.score >= 85 ? "success" : aiReport.score >= 70 ? "warning" : "danger"}>
-                        态势评分 {aiReport.score} / 100
-                      </Badge>
-                    </div>
-                  </div>
-                  <p className="text-xs font-medium text-foreground">{aiReport.headline}</p>
-                  <p className="text-xs text-muted-foreground">{aiReport.correlationSummary}</p>
-                  {aiReport.findings.length > 0 && (
-                    <div className="divide-y rounded-md border bg-background/60 text-xs">
-                      {aiReport.findings.map((f, idx) => (
-                        <div key={`${f.priority}-${idx}`} className="space-y-1 p-2.5">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge variant={f.priority === "P0" ? "danger" : f.priority === "P1" ? "warning" : f.priority === "P2" ? "primary" : "outline"}>
-                              {f.priority} · {f.riskLevel}
-                            </Badge>
-                            <strong className="text-foreground">{f.title}</strong>
-                            <span className="text-muted-foreground">影响：{f.businessImpact}</span>
-                          </div>
-                          <div className="text-muted-foreground">根因分析：{f.rootCause}</div>
-                          <div className="font-mono text-2xs text-foreground">修复建议：{f.remediation}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
             <Card>
               <CardContent className="space-y-3 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                   <span>
-                    计划：<strong className="text-foreground">{run.schedule_name || "即时手动巡检"}</strong> · 触发：
+                    任务：<strong className="text-foreground">{describeRunTitle(run)}</strong> · 触发：
                     {TRIGGER_LABELS[run.trigger_kind] || run.trigger_kind} · 执行人：{run.triggered_by || "system"}
                   </span>
                   <span className="font-mono">
-                    {fmtStamp(run.started_at_ms)} · 耗时 {fmtDuration(run.duration_ms)} · 写入 {run.metrics_written} 条指标
+                    {fmtStamp(run.started_at_ms)} · 耗时 {fmtDuration(run.duration_ms)}
                   </span>
                 </div>
+
+                {(run.skills?.length || run.prompt || run.command) && (
+                  <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-xs">
+                    {run.skills && run.skills.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-muted-foreground">关联 Skill：</span>
+                        {run.skills.map((slug) => (
+                          <Badge key={slug} variant="primary">
+                            {skillBySlug.get(slug)?.name || slug}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {run.prompt && (
+                      <div className="space-y-0.5">
+                        <span className="text-muted-foreground">巡检提示词：</span>
+                        <p className="whitespace-pre-wrap text-foreground">{run.prompt}</p>
+                      </div>
+                    )}
+                    {run.command && (
+                      <div className="space-y-0.5">
+                        <span className="text-muted-foreground">执行命令：</span>
+                        <pre className="max-h-28 overflow-auto rounded border bg-background px-2 py-1.5 font-mono text-2xs text-foreground">
+                          {run.command}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {run.summary && <p className="text-sm font-medium text-foreground">{run.summary}</p>}
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                   <div className="rounded-md border bg-background/60 p-2.5">
-                    <div className="text-2xs text-muted-foreground">目标 / 资产项</div>
+                    <div className="text-2xs text-muted-foreground">目标 / 产物数</div>
                     <div className="font-mono text-base font-semibold">{run.total_targets} / {run.total_assets}</div>
                   </div>
                   <div className="rounded-md border bg-background/60 p-2.5">
-                    <div className="text-2xs text-muted-foreground">检查通过</div>
+                    <div className="text-2xs text-muted-foreground">通过</div>
                     <div className="font-mono text-base font-semibold text-success">{run.passed_checks}</div>
                   </div>
                   <div className="rounded-md border bg-background/60 p-2.5">
-                    <div className="text-2xs text-muted-foreground">告警项</div>
+                    <div className="text-2xs text-muted-foreground">告警</div>
                     <div className="font-mono text-base font-semibold text-warning">{run.warning_checks}</div>
                   </div>
                   <div className="rounded-md border bg-background/60 p-2.5">
@@ -588,48 +554,52 @@ export function InspectionCenterPanel({
                     <div className="font-mono text-base font-semibold text-destructive">{run.failed_checks}</div>
                   </div>
                   <div className="rounded-md border bg-background/60 p-2.5">
-                    <div className="text-2xs text-muted-foreground">离线目标 / 跳过项</div>
+                    <div className="text-2xs text-muted-foreground">离线 / 跳过</div>
                     <div className="font-mono text-base font-semibold">{run.offline_targets} / {run.skipped_checks}</div>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Select scale="sm" className="w-36" value={itemStatusFilter} onChange={(e) => setItemStatusFilter(e.target.value)}>
-                <option value="">全部状态</option>
-                <option value="critical">严重</option>
-                <option value="warning">告警</option>
-                <option value="offline">离线</option>
-                <option value="error">错误</option>
-                <option value="pass">通过</option>
-                <option value="skipped">跳过</option>
-              </Select>
-              <Select scale="sm" className="w-52" value={itemStrategyFilter} onChange={(e) => setItemStrategyFilter(e.target.value)}>
-                <option value="">全部策略 / Skill</option>
-                {Array.from(
-                  new Set([
-                    ...Object.keys(STRATEGY_LABELS),
-                    ...(runDetail.items || []).map((i) => i.strategy),
-                  ]),
-                ).map((k) => (
-                  <option key={k} value={k}>
-                    {k.startsWith("skill:") ? `Skill: ${k.slice(6)}` : STRATEGY_LABELS[k] || k}
-                  </option>
-                ))}
-              </Select>
-              <span className="text-xs text-muted-foreground">显示 {filteredItems.length} / {runDetail.items.length} 条资产策略结果</span>
-            </div>
+            {runDetail.items.length > 1 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Select scale="sm" className="w-36" value={itemStatusFilter} onChange={(e) => setItemStatusFilter(e.target.value)}>
+                  <option value="">全部状态</option>
+                  <option value="critical">严重</option>
+                  <option value="warning">告警</option>
+                  <option value="offline">离线</option>
+                  <option value="error">错误</option>
+                  <option value="pass">正常</option>
+                  <option value="skipped">跳过</option>
+                </Select>
+                <Select scale="sm" className="w-52" value={itemStrategyFilter} onChange={(e) => setItemStrategyFilter(e.target.value)}>
+                  <option value="">全部来源 / Skill</option>
+                  {Array.from(new Set(runDetail.items.map((i) => i.strategy))).map((k) => (
+                    <option key={k} value={k}>
+                      {k.startsWith("skill:") ? `Skill: ${k.slice(6)}` : STRATEGY_LABELS[k] || k}
+                    </option>
+                  ))}
+                </Select>
+                <span className="text-xs text-muted-foreground">显示 {filteredItems.length} / {runDetail.items.length} 份目标产物</span>
+              </div>
+            )}
 
             <Stack gap={3}>
               {filteredItems.map((it) => {
                 const itSt = describeMonitorStatus(it.status)
-                const m = it.metrics || {}
                 const drivenSkillSlug = it.strategy.startsWith("skill:")
                   ? it.strategy.slice(6)
                   : typeof it.evidence?.skill_slug === "string"
                     ? it.evidence.skill_slug
                     : ""
+                const hasNativeArtifact = Boolean(
+                  it.artifact_json !== undefined ||
+                    (it.artifact_markdown && it.artifact_markdown.trim()) ||
+                    (it.raw_output && it.raw_output.trim()),
+                )
+                const effectiveJson = hasNativeArtifact ? it.artifact_json : buildLegacyFallbackArtifact(it)
+                const effectiveFormat = hasNativeArtifact ? it.artifact_format : "json"
+
                 return (
                   <Card key={it.id}>
                     <CardContent className="space-y-3 p-4">
@@ -639,68 +609,21 @@ export function InspectionCenterPanel({
                           <strong className="text-sm text-foreground">{it.asset_name || it.asset_id}</strong>
                           <span className="font-mono text-xs text-muted-foreground">{it.cluster}/{it.instance}</span>
                           {drivenSkillSlug && <Badge variant="primary">Skill: {drivenSkillSlug}</Badge>}
-                          <Badge variant="outline">{ASSET_KIND_LABELS[it.asset_kind] || it.asset_kind}</Badge>
-                          <Badge variant="outline">
-                            {it.strategy.startsWith("skill:") ? "Agent Skill 驱动" : STRATEGY_LABELS[it.strategy] || it.strategy}
-                          </Badge>
                           <Badge variant="outline">{COLLECTOR_METHOD_LABELS[it.collector_method] || it.collector_method}</Badge>
+                          <Badge variant="outline">{ASSET_KIND_LABELS[it.asset_kind] || it.asset_kind}</Badge>
                         </div>
                         <span className="font-mono text-2xs text-muted-foreground">
                           耗时 {fmtDuration(it.duration_ms)}{it.reason ? ` · ${it.reason}` : ""}
                         </span>
                       </div>
 
-                      {(m.cpu_percent != null || m.memory_percent != null || m.disk_percent != null || m.response_time_ms != null || m.os_info) && (
-                        <div className="flex flex-wrap gap-3 rounded-md bg-muted/40 px-3 py-2 font-mono text-xs">
-                          {m.cpu_percent != null && <span>CPU {formatPercent(m.cpu_percent)}</span>}
-                          {m.memory_percent != null && (
-                            <span>
-                              内存 {formatPercent(m.memory_percent)} ({formatBytesCompact(m.memory_used_bytes)})
-                            </span>
-                          )}
-                          {m.disk_percent != null && <span>磁盘峰值 {formatPercent(m.disk_percent)}</span>}
-                          {m.disk_iops != null && <span>IOPS {m.disk_iops.toFixed(1)}</span>}
-                          {m.response_time_ms != null && <span>耗时 {m.response_time_ms.toFixed(1)} ms</span>}
-                          {m.os_info && <span className="text-muted-foreground">{m.os_info}</span>}
-                        </div>
-                      )}
-
-                      {it.checks?.length > 0 && (
-                        <Table wrapperClassName="rounded-md border">
-                          <TableHeader className="bg-muted/30">
-                            <TableRow>
-                              <TableHead>检查项</TableHead>
-                              <TableHead>结论</TableHead>
-                              <TableHead>实测值</TableHead>
-                              <TableHead>基线 / 阈值</TableHead>
-                              <TableHead>详情</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {it.checks.map((c) => {
-                              const cst = describeMonitorStatus(c.status)
-                              return (
-                                <TableRow key={c.id}>
-                                  <TableCell className="text-xs font-medium">{c.name}</TableCell>
-                                  <TableCell><Badge variant={cst.variant}>{cst.label}</Badge></TableCell>
-                                  <TableCell className="font-mono text-xs">{c.value || "—"}</TableCell>
-                                  <TableCell className="font-mono text-2xs text-muted-foreground">{c.threshold || "—"}</TableCell>
-                                  <TableCell className="text-xs text-muted-foreground">{c.detail || "—"}</TableCell>
-                                </TableRow>
-                              )
-                            })}
-                          </TableBody>
-                        </Table>
-                      )}
-
-                      {it.evidence && Object.keys(it.evidence).length > 0 && (
-                        <details className="text-xs">
-                          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">查看脱敏取证快照</summary>
-                          <pre className="mt-2 max-h-48 overflow-auto rounded-md border bg-background p-2 font-mono text-2xs">
-                            {JSON.stringify(it.evidence, null, 2)}
-                          </pre>
-                        </details>
-                      )}
+                      <InspectionArtifactViewer
+                        format={effectiveFormat}
+                        markdown={it.artifact_markdown}
+                        jsonData={effectiveJson}
+                        rawOutput={it.raw_output}
+                        filePrefix={`${selectedRunId}-${it.cluster}-${it.instance}-${it.asset_id}`}
+                      />
                     </CardContent>
                   </Card>
                 )
@@ -712,193 +635,63 @@ export function InspectionCenterPanel({
     )
   }
 
-  // ---------------- Schedules + Quick Dispatch + Run History View ----------------
-  return (
-    <Stack gap={4}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="space-y-0.5">
-          <h2 className="text-base font-semibold text-foreground">Skill 驱动巡检任务、定时调度与执行记录</h2>
-          <p className="text-xs text-muted-foreground">
-            巡检由系统驱动所选 Skill（内置系统 Skill + 自定义上传 Skill）执行：内置策略类走 Agent 原生高速只读探测，自定义/安全类自动同步至 Agent 并驱动执行。
-          </p>
-        </div>
-        <Inline gap={2}>
-          {onOpenSkills && (
-            <Button size="sm" onClick={onOpenSkills}>
-              + 上传 / 管理 Skill
-            </Button>
-          )}
-          {isAdmin && (
-            <Button size="sm" variant="primary" onClick={() => (formOpen ? setFormOpen(false) : openNewSchedule())}>
-              {formOpen ? "收起计划表单" : "新建定时任务"}
-            </Button>
-          )}
-          <Button size="sm" disabled={loading} onClick={reload}>
-            <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} />
-            刷新
-          </Button>
-        </Inline>
-      </div>
+  // ---------------- Schedules Tab View ----------------
+  if (mode === "schedules") {
+    const canSaveSchedule =
+      Boolean(schedName.trim()) &&
+      (selectedSkills.length > 0 || Boolean(schedPrompt.trim()) || Boolean(schedCommand.trim()))
 
-      {error && <StatusBanner tone="error">{error}</StatusBanner>}
-      {notice && <StatusBanner tone="info">{notice}</StatusBanner>}
-
-      {/* Quick Ad-hoc Dispatch Bar */}
-      <Card>
-        <CardContent className="space-y-3 p-4">
-          <form onSubmit={(e) => void runQuickDispatch(e)} className="space-y-3">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <div className="flex flex-wrap items-end gap-3">
-                <label className="text-xs text-muted-foreground">
-                  下发目标 Agent
-                  <Select scale="sm" className="mt-1 w-56" value={quickTarget} onChange={(e) => setQuickTarget(e.target.value)}>
-                    <option value="">全部在线目标 ({targets.filter((t) => t.status !== "offline").length})</option>
-                    {targets.map((t) => (
-                      <option key={t.key} value={t.key}>
-                        {t.cluster}/{t.instance}{t.status === "offline" ? "（离线）" : ""}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-                <Button type="button" size="sm" variant="ghost" onClick={() => setSshOpen(!sshOpen)}>
-                  {sshOpen ? "隐藏临时 SSH 主机" : "+ 附加 SSH 远程主机"}
-                </Button>
-              </div>
-              <Button
-                type="submit"
-                size="sm"
-                variant="primary"
-                disabled={busy || (platformSkills.length > 0 ? quickSkills.length === 0 : quickStrategies.length === 0)}
-              >
-                <RocketIcon width={14} height={14} />
-                {busy
-                  ? "下发执行中…"
-                  : platformSkills.length > 0
-                    ? `驱动所选 ${quickSkills.length} 个 Skill 立即巡检`
-                    : "立即下发 Agent 巡检"}
+    return (
+      <Stack gap={4}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm font-medium text-muted-foreground">
+            定时巡检计划 ({schedules.length})
+          </span>
+          <Inline gap={2}>
+            {isAdmin && (
+              <Button size="sm" variant="primary" onClick={() => (formOpen ? setFormOpen(false) : openNewSchedule())}>
+                {formOpen ? "收起表单" : "+ 新建定时计划"}
               </Button>
-            </div>
+            )}
+            <Button size="sm" disabled={loading} onClick={reload}>
+              <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} />
+              刷新
+            </Button>
+          </Inline>
+        </div>
 
-            {platformSkills.length > 0 ? (
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span>选择驱动本次巡检的 Skill（系统内置 + 自定义上传）：</span>
-                  <Inline gap={2}>
-                    <button
-                      type="button"
-                      className="text-primary hover:underline"
-                      onClick={() => setQuickSkills(enabledSkills.map((s) => s.slug))}
-                    >
-                      全选已启用 ({enabledSkills.length})
-                    </button>
-                    <button
-                      type="button"
-                      className="text-muted-foreground hover:underline"
-                      onClick={() => setQuickSkills([])}
-                    >
-                      清空
-                    </button>
-                  </Inline>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {platformSkills.map((sk) => (
-                    <label
-                      key={sk.slug}
-                      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs ${
-                        sk.enabled ? "bg-background" : "opacity-50"
-                      }`}
-                    >
-                      <Checkbox
-                        disabled={!sk.enabled}
-                        checked={quickSkills.includes(sk.slug)}
-                        onChange={() => setQuickSkills(toggleItem(quickSkills, sk.slug))}
-                      />
-                      <span className="font-medium text-foreground">{sk.name}</span>
-                      <Badge variant={sk.scope === "system" ? "outline" : "success"}>
-                        {sk.scope === "system" ? "系统" : "自定义"}
-                      </Badge>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-3">
-                {(strategies.length > 0 ? strategies : Object.entries(STRATEGY_LABELS).map(([id, name]) => ({ id, name }))).map((s) => (
-                  <label key={s.id} className="inline-flex items-center gap-1.5 text-xs">
-                    <Checkbox
-                      checked={quickStrategies.includes(s.id)}
-                      onChange={() => setQuickStrategies(toggleItem(quickStrategies, s.id))}
-                    />
-                    <span>{s.name}</span>
+        {error && <StatusBanner tone="error">{error}</StatusBanner>}
+        {notice && <StatusBanner tone="info">{notice}</StatusBanner>}
+
+        {formOpen && isAdmin && (
+          <Card>
+            <CardContent className="p-4">
+              <form onSubmit={(e) => void saveSchedule(e)} className="space-y-4">
+                <h3 className="text-sm font-semibold">{editingId ? "编辑定时计划" : "新建定时计划"}</h3>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <label className="text-xs text-muted-foreground">
+                    计划名称
+                    <Input scale="sm" required className="mt-1 w-full" placeholder="例如：主机每 5 分钟巡检" value={schedName} onChange={(e) => setSchedName(e.target.value)} />
                   </label>
-                ))}
-              </div>
-            )}
+                  <label className="text-xs text-muted-foreground">
+                    调度周期
+                    <Select scale="sm" className="mt-1 w-full" value={intervalSeconds} onChange={(e) => setIntervalSeconds(Number(e.target.value))}>
+                      {INTERVAL_PRESETS.map((p) => (
+                        <option key={p.value} value={p.value}>{p.label}</option>
+                      ))}
+                    </Select>
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    目标范围
+                    <Select scale="sm" className="mt-1 w-full" value={scopeMode} onChange={(e) => setScopeMode(e.target.value as "all_online" | "targets")}>
+                      <option value="all_online">全部在线目标</option>
+                      <option value="targets">指定 Agent 目标</option>
+                    </Select>
+                  </label>
+                </div>
 
-            {sshOpen && (
-              <div className="grid gap-2 rounded-md border bg-muted/30 p-3 sm:grid-cols-4">
-                <label className="text-xs text-muted-foreground">
-                  远程资产编号
-                  <Input scale="sm" className="mt-1" placeholder="如 vm-db-02" value={sshAssetId} onChange={(e) => setSshAssetId(e.target.value)} />
-                </label>
-                <label className="text-xs text-muted-foreground">
-                  主机 IP / 域名
-                  <Input scale="sm" className="mt-1" placeholder="如 10.0.1.25" value={sshAddr} onChange={(e) => setSshAddr(e.target.value)} />
-                </label>
-                <label className="text-xs text-muted-foreground">
-                  SSH 用户名（可选）
-                  <Input scale="sm" className="mt-1" placeholder="如 ops" value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
-                </label>
-                <label className="text-xs text-muted-foreground">
-                  端口
-                  <Input scale="sm" type="number" min={1} max={65535} className="mt-1" value={sshPort} onChange={(e) => setSshPort(e.target.value)} />
-                </label>
-              </div>
-            )}
-          </form>
-        </CardContent>
-      </Card>
-
-      {/* Create / Edit Periodic Schedule Form (Admin) */}
-      {formOpen && isAdmin && (
-        <Card>
-          <CardContent className="p-4">
-            <form onSubmit={(e) => void saveSchedule(e)} className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">{editingId ? "编辑定时巡检计划" : "新建定时采集与巡检计划"}</h3>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <label className="text-xs text-muted-foreground">
-                  计划名称
-                  <Input scale="sm" required className="mt-1" placeholder="例如：核心机房 5 分钟监控巡检" value={schedName} onChange={(e) => setSchedName(e.target.value)} />
-                </label>
-                <label className="text-xs text-muted-foreground">
-                  调度周期
-                  <Select scale="sm" className="mt-1" value={intervalSeconds} onChange={(e) => setIntervalSeconds(Number(e.target.value))}>
-                    {INTERVAL_PRESETS.map((p) => (
-                      <option key={p.value} value={p.value}>{p.label}</option>
-                    ))}
-                  </Select>
-                </label>
-                <label className="text-xs text-muted-foreground">
-                  作用范围
-                  <Select scale="sm" className="mt-1" value={scopeMode} onChange={(e) => setScopeMode(e.target.value as "all_online" | "targets" | "tags")}>
-                    <option value="all_online">全部活跃 / 在线 Agent</option>
-                    <option value="targets">指定 Agent 目标</option>
-                    <option value="tags">按机器标签筛选</option>
-                  </Select>
-                </label>
-              </div>
-
-              <label className="block text-xs text-muted-foreground">
-                说明（可选）
-                <Input scale="sm" className="mt-1" placeholder="记录巡检用途或值班分组" value={schedDesc} onChange={(e) => setSchedDesc(e.target.value)} />
-              </label>
-
-              {scopeMode === "targets" && (
-                <div className="space-y-1.5">
-                  <div className="text-xs font-medium text-muted-foreground">选择目标 Agent</div>
-                  <div className="flex flex-wrap gap-3">
+                {scopeMode === "targets" && (
+                  <div className="flex flex-wrap gap-3 rounded-md border bg-muted/20 p-2.5">
                     {targets.map((t) => (
                       <label key={t.key} className="inline-flex items-center gap-1.5 text-xs">
                         <Checkbox
@@ -909,158 +702,120 @@ export function InspectionCenterPanel({
                       </label>
                     ))}
                   </div>
-                </div>
-              )}
+                )}
 
-              {scopeMode === "tags" && (
-                <label className="block text-xs text-muted-foreground">
-                  机器标签（逗号分隔，支持 key=value）
-                  <Input scale="sm" className="mt-1" placeholder="例如 env=prod, 院系=计算机" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} />
-                </label>
-              )}
-
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-xs font-medium text-muted-foreground">
-                    绑定的巡检 Skill（支持系统内置 Skill 与用户自定义 Skill，按周期自动驱动执行）
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span>关联 Skill（已选 {selectedSkills.length}，可不选）</span>
+                    {onOpenSkills && (
+                      <button type="button" className="text-primary hover:underline" onClick={onOpenSkills}>
+                        管理 / 上传 Skill →
+                      </button>
+                    )}
                   </div>
-                  {onOpenSkills && (
-                    <button type="button" className="text-xs text-primary hover:underline" onClick={onOpenSkills}>
-                      去上传新 Skill →
-                    </button>
-                  )}
-                </div>
-                {platformSkills.length > 0 ? (
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="flex flex-wrap gap-2">
                     {platformSkills.map((sk) => (
                       <label
                         key={sk.slug}
-                        className={`flex items-start gap-2 rounded-md border p-2.5 text-xs ${sk.enabled ? "" : "opacity-55"}`}
+                        className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs ${sk.enabled ? "bg-background" : "opacity-50"}`}
                       >
                         <Checkbox
                           disabled={!sk.enabled}
                           checked={selectedSkills.includes(sk.slug)}
                           onChange={() => setSelectedSkills(toggleItem(selectedSkills, sk.slug))}
                         />
-                        <span className="min-w-0 space-y-0.5">
-                          <span className="flex flex-wrap items-center gap-1.5">
-                            <strong className="text-foreground">{sk.name}</strong>
-                            <Badge variant={sk.scope === "system" ? "outline" : "success"}>
-                              {sk.scope === "system" ? "系统" : "自定义"}
-                            </Badge>
-                          </span>
-                          <span className="block font-mono text-2xs text-muted-foreground">
-                            {sk.slug} · {SKILL_DRIVER_LABELS[sk.driver_mode]}
-                          </span>
-                          <span className="block text-2xs text-muted-foreground">{sk.description}</span>
-                        </span>
+                        <span className="font-medium text-foreground">{sk.name}</span>
+                        {sk.scope === "custom" && <Badge variant="success">自定义</Badge>}
                       </label>
                     ))}
                   </div>
-                ) : (
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {strategies.map((s) => (
-                      <label key={s.id} className="flex items-start gap-2 rounded-md border p-2.5 text-xs">
-                        <Checkbox
-                          checked={selectedStrategies.includes(s.id)}
-                          onChange={() => setSelectedStrategies(toggleItem(selectedStrategies, s.id))}
-                        />
-                        <span className="min-w-0">
-                          <strong className="block text-foreground">{s.name}</strong>
-                          <span className="text-2xs text-muted-foreground">{s.description}</span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
+                </div>
 
-              <div className="grid gap-2 sm:grid-cols-4">
-                <label className="text-xs text-muted-foreground">
-                  CPU 告警 / 严重 (%)
-                  <Inline gap={1} className="mt-1">
-                    <Input scale="sm" type="number" min={1} max={100} value={thresholds.cpu_warn_percent ?? 80} onChange={(e) => setThresholds({ ...thresholds, cpu_warn_percent: Number(e.target.value) })} />
-                    <Input scale="sm" type="number" min={1} max={100} value={thresholds.cpu_crit_percent ?? 90} onChange={(e) => setThresholds({ ...thresholds, cpu_crit_percent: Number(e.target.value) })} />
-                  </Inline>
+                <label className="block text-xs text-muted-foreground">
+                  巡检提示词（可选）
+                  <Textarea
+                    rows={2}
+                    className="mt-1 w-full text-xs"
+                    placeholder="描述检查内容与期望输出的 Markdown / JSON 结构"
+                    value={schedPrompt}
+                    onChange={(e) => setSchedPrompt(e.target.value)}
+                  />
                 </label>
-                <label className="text-xs text-muted-foreground">
-                  内存告警 / 严重 (%)
-                  <Inline gap={1} className="mt-1">
-                    <Input scale="sm" type="number" min={1} max={100} value={thresholds.mem_warn_percent ?? 80} onChange={(e) => setThresholds({ ...thresholds, mem_warn_percent: Number(e.target.value) })} />
-                    <Input scale="sm" type="number" min={1} max={100} value={thresholds.mem_crit_percent ?? 90} onChange={(e) => setThresholds({ ...thresholds, mem_crit_percent: Number(e.target.value) })} />
-                  </Inline>
-                </label>
-                <label className="text-xs text-muted-foreground">
-                  磁盘告警 / 严重 (%)
-                  <Inline gap={1} className="mt-1">
-                    <Input scale="sm" type="number" min={1} max={100} value={thresholds.disk_warn_percent ?? 85} onChange={(e) => setThresholds({ ...thresholds, disk_warn_percent: Number(e.target.value) })} />
-                    <Input scale="sm" type="number" min={1} max={100} value={thresholds.disk_crit_percent ?? 95} onChange={(e) => setThresholds({ ...thresholds, disk_crit_percent: Number(e.target.value) })} />
-                  </Inline>
-                </label>
-                <label className="text-xs text-muted-foreground">
-                  HTTPS 证书预警 (天)
-                  <Input scale="sm" type="number" min={1} max={365} className="mt-1" value={thresholds.cert_warn_days ?? 14} onChange={(e) => setThresholds({ ...thresholds, cert_warn_days: Number(e.target.value) })} />
-                </label>
-              </div>
 
-              <Inline gap={2}>
-                <Button
-                  type="submit"
-                  size="sm"
-                  variant="primary"
-                  disabled={busy || !schedName.trim() || (platformSkills.length > 0 ? selectedSkills.length === 0 : selectedStrategies.length === 0)}
-                >
-                  {busy ? "保存中…" : editingId ? "保存修改" : "创建并启用定时任务"}
-                </Button>
-                <Button type="button" size="sm" onClick={() => setFormOpen(false)}>取消</Button>
-              </Inline>
-            </form>
-          </CardContent>
-        </Card>
-      )}
+                <label className="block text-xs text-muted-foreground">
+                  直接执行命令（可选，任意 Shell 命令，输出 JSON 或 Markdown+JSON 将自动动态可视化）
+                  <Textarea
+                    rows={2}
+                    className="mt-1 w-full font-mono text-xs"
+                    placeholder="留空则由所选 Skill / 提示词驱动"
+                    value={schedCommand}
+                    onChange={(e) => setSchedCommand(e.target.value)}
+                  />
+                </label>
 
-      {/* Scheduled Jobs List */}
-      <Card>
-        <CardContent className="space-y-3 p-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-foreground">定时巡检计划 ({schedules.length})</h3>
-          </div>
-          {schedules.length === 0 ? (
-            <p className="py-4 text-xs text-muted-foreground">
-              尚未创建定时巡检任务。管理员点击右上角「新建定时任务」后，Gateway 后台调度器将按周期自动向在线 Agent 下发采集与巡检。
-            </p>
-          ) : (
-            <div className="space-y-2.5">
-              {schedules.map((s) => {
-                const lastSt = describeMonitorStatus(s.last_status || "")
-                return (
-                  <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
-                    <div className="min-w-0 space-y-1">
+                <Inline gap={2}>
+                  <Button type="submit" size="sm" variant="primary" disabled={busy || !canSaveSchedule}>
+                    {busy ? "保存中…" : editingId ? "保存修改" : "创建计划"}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setFormOpen(false)}>取消</Button>
+                </Inline>
+              </form>
+            </CardContent>
+          </Card>
+        )}
+
+        {schedules.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center text-xs text-muted-foreground">
+              暂无定时巡检计划。点击右上角「+ 新建定时计划」关联 Skill、提示词或命令。
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-2.5">
+            {schedules.map((s) => {
+              const lastSt = describeMonitorStatus(s.last_status || "")
+              const tags =
+                s.skills && s.skills.length > 0
+                  ? s.skills.map((slug) => ({
+                      key: slug,
+                      label: skillBySlug.get(slug)?.name || slug,
+                      custom: skillBySlug.get(slug)?.scope === "custom",
+                    }))
+                  : (s.strategies || []).map((stId) => ({
+                      key: stId,
+                      label: STRATEGY_LABELS[stId] || stId,
+                      custom: false,
+                    }))
+              const visibleTags = tags.slice(0, 4)
+              const extraTags = tags.length - visibleTags.length
+              return (
+                <Card key={s.id}>
+                  <CardContent className="flex flex-wrap items-center justify-between gap-3 p-3.5">
+                    <div className="min-w-0 flex-1 space-y-1.5">
                       <div className="flex flex-wrap items-center gap-2">
                         <strong className="text-sm text-foreground">{s.name}</strong>
                         <Badge variant={s.enabled ? "success" : "default"}>{s.enabled ? "运行中" : "已暂停"}</Badge>
                         <Badge variant="outline">{formatIntervalLabel(s.interval_seconds)}</Badge>
+                        {s.command && <Badge variant="primary">直接命令</Badge>}
                         {s.last_status && <Badge variant={lastSt.variant}>上次：{lastSt.label}</Badge>}
                       </div>
-                      {s.description && <p className="text-xs text-muted-foreground">{s.description}</p>}
-                      <div className="flex flex-wrap gap-1">
-                        {s.skills && s.skills.length > 0
-                          ? s.skills.map((slug) => {
-                              const sk = skillBySlug.get(slug)
-                              return (
-                                <Badge key={slug} variant={sk?.scope === "custom" ? "success" : "primary"}>
-                                  Skill: {sk?.name || slug}
-                                </Badge>
-                              )
-                            })
-                          : s.strategies.map((stId) => (
-                              <Badge key={stId} variant="outline">{STRATEGY_LABELS[stId] || stId}</Badge>
-                            ))}
-                      </div>
+                      {visibleTags.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {visibleTags.map((t) => (
+                            <Badge key={t.key} variant={t.custom ? "success" : "outline"}>{t.label}</Badge>
+                          ))}
+                          {extraTags > 0 && <Badge variant="outline">+{extraTags} 项</Badge>}
+                        </div>
+                      )}
+                      {s.prompt && (
+                        <p className="truncate text-xs text-muted-foreground" title={s.prompt}>
+                          提示词：{s.prompt}
+                        </p>
+                      )}
                       <p className="font-mono text-2xs text-muted-foreground">
-                        范围：{s.scope_mode === "all_online" ? "全部在线目标" : s.scope_mode === "tags" ? `标签 ${s.tags.join(",")}` : `${s.targets.length} 个目标`}
-                        {" · "}下次执行：{s.enabled ? fmtStamp(s.next_run_at_ms) : "已暂停"}
-                        {s.last_run_at_ms > 0 && ` · 上次执行：${fmtStamp(s.last_run_at_ms)}`}
+                        {s.scope_mode === "targets" ? `${s.targets.length} 个目标` : "全部在线目标"}
+                        {" · "}下次：{s.enabled ? fmtStamp(s.next_run_at_ms) : "已暂停"}
+                        {s.last_run_at_ms > 0 && ` · 上次：${fmtStamp(s.last_run_at_ms)}`}
                       </p>
                     </div>
                     <Inline gap={2} className="flex-wrap">
@@ -1068,14 +823,14 @@ export function InspectionCenterPanel({
                         立即执行
                       </Button>
                       {s.last_run_id && (
-                        <Button size="sm" onClick={() => setSelectedRunId(s.last_run_id!)}>
-                          上次报告
+                        <Button size="sm" onClick={() => openRun(s.last_run_id!)}>
+                          查看产物
                         </Button>
                       )}
                       {isAdmin && (
                         <>
-                          <Button size="sm" disabled={busy} onClick={() => openEditSchedule(s)}>编辑</Button>
-                          <Button size="sm" disabled={busy} onClick={() => void handleToggle(s)}>
+                          <Button size="sm" variant="ghost" disabled={busy} onClick={() => openEditSchedule(s)}>编辑</Button>
+                          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void handleToggle(s)}>
                             {s.enabled ? "暂停" : "启用"}
                           </Button>
                           <Button size="sm" variant="danger-outline" disabled={busy} onClick={() => void handleDelete(s)}>
@@ -1084,23 +839,162 @@ export function InspectionCenterPanel({
                         </>
                       )}
                     </Inline>
-                  </div>
-                )
-              })}
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        )}
+      </Stack>
+    )
+  }
+
+  // ---------------- Runs Tab View (Minimal Skill + Prompt + Direct Command Dispatch + History) ----------------
+  const canRunQuick =
+    quickSkills.length > 0 ||
+    Boolean(quickPrompt.trim()) ||
+    Boolean(commandOpen && quickCommand.trim())
+
+  return (
+    <Stack gap={3}>
+      {error && <StatusBanner tone="error">{error}</StatusBanner>}
+      {notice && <StatusBanner tone="info">{notice}</StatusBanner>}
+
+      <Card>
+        <CardContent className="p-3.5">
+          <form onSubmit={(e) => void runQuickDispatch(e)} className="space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Select
+                  scale="sm"
+                  aria-label="选择巡检目标"
+                  className="w-52"
+                  value={quickTarget}
+                  onChange={(e) => setQuickTarget(e.target.value)}
+                >
+                  <option value="">全部在线目标 ({targets.filter((t) => t.status !== "offline").length})</option>
+                  {targets.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.cluster}/{t.instance}{t.status === "offline" ? "（离线）" : ""}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={skillPickerOpen ? "primary" : "default"}
+                  onClick={() => setSkillPickerOpen((v) => !v)}
+                >
+                  关联 Skill ({quickSkills.length}/{enabledSkills.length}) {skillPickerOpen ? "▴" : "▾"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={commandOpen ? "primary" : "ghost"}
+                  onClick={() => setCommandOpen((v) => !v)}
+                >
+                  {commandOpen ? "收起命令" : "+ 直接执行命令"}
+                </Button>
+              </div>
+              <Inline gap={2}>
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="primary"
+                  disabled={busy || !canRunQuick}
+                >
+                  <RocketIcon width={14} height={14} />
+                  {busy ? "执行中…" : "立即巡检"}
+                </Button>
+                <Button type="button" size="sm" variant="ghost" disabled={loading} onClick={reload}>
+                  <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} />
+                </Button>
+              </Inline>
             </div>
-          )}
+
+            <Textarea
+              rows={2}
+              aria-label="巡检提示词"
+              className="w-full text-xs"
+              placeholder="输入巡检提示词（可选，如：检查磁盘、端口与进程并输出 Markdown + JSON 产物）"
+              value={quickPrompt}
+              onChange={(e) => setQuickPrompt(e.target.value)}
+            />
+
+            {skillPickerOpen && (
+              <div className="space-y-2 border-t pt-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>选择关联 Skill（可不选，仅凭提示词或命令执行）：</span>
+                  <Inline gap={2}>
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() => setQuickSkills(enabledSkills.map((s) => s.slug))}
+                    >
+                      全选 ({enabledSkills.length})
+                    </button>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:underline"
+                      onClick={() => setQuickSkills([])}
+                    >
+                      清空
+                    </button>
+                    {onOpenSkills && (
+                      <button type="button" className="text-primary hover:underline" onClick={onOpenSkills}>
+                        管理 / 上传 Skill →
+                      </button>
+                    )}
+                  </Inline>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {platformSkills.map((sk) => (
+                    <label
+                      key={sk.slug}
+                      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs ${
+                        sk.enabled ? "bg-background" : "opacity-45"
+                      }`}
+                    >
+                      <Checkbox
+                        disabled={!sk.enabled}
+                        checked={quickSkills.includes(sk.slug)}
+                        onChange={() => setQuickSkills(toggleItem(quickSkills, sk.slug))}
+                      />
+                      <span className="text-foreground">{sk.name}</span>
+                      {sk.scope === "custom" && <Badge variant="success">自定义</Badge>}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {commandOpen && (
+              <div className="space-y-1.5 border-t pt-2.5">
+                <span className="block text-xs text-muted-foreground">
+                  在目标 Agent 上直接执行任意命令（stdout 为 JSON 或 Markdown+JSON 时自动动态可视化）：
+                </span>
+                <Textarea
+                  rows={3}
+                  aria-label="直接执行命令"
+                  className="w-full font-mono text-xs"
+                  placeholder="输入任意 Shell 命令，例如：df -h 或输出 JSON / Markdown+JSON 的检查脚本"
+                  value={quickCommand}
+                  onChange={(e) => setQuickCommand(e.target.value)}
+                />
+              </div>
+            )}
+          </form>
         </CardContent>
       </Card>
 
-      {/* Run History Table */}
       <Card>
         <CardContent className="space-y-3 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <HistoryIcon width={15} height={15} className="text-muted-foreground" />
-              <h3 className="text-sm font-semibold text-foreground">巡检执行历史记录 ({runs.length})</h3>
+              <h2 className="text-sm font-semibold text-foreground">巡检执行与产物记录 ({runs.length})</h2>
             </div>
-            <Select scale="sm" className="w-36" value={runStatusFilter} onChange={(e) => setRunStatusFilter(e.target.value)}>
+            <Select scale="sm" className="w-32" value={runStatusFilter} onChange={(e) => setRunStatusFilter(e.target.value)}>
               <option value="">全部状态</option>
               <option value="success">正常</option>
               <option value="warning">告警</option>
@@ -1111,18 +1005,17 @@ export function InspectionCenterPanel({
           </div>
 
           {runs.length === 0 ? (
-            <p className="py-6 text-center text-xs text-muted-foreground">暂无巡检执行记录。使用上方「立即下发 Agent 巡检」即可生成首条记录。</p>
+            <p className="py-8 text-center text-xs text-muted-foreground">暂无巡检记录，选择 Skill 或输入提示词/命令后点击「立即巡检」。</p>
           ) : (
             <Table wrapperClassName="rounded-lg border">
               <TableHeader className="bg-muted/40">
                 <TableRow>
-                  <TableHead>执行编号 / 计划</TableHead>
-                  <TableHead>触发方式</TableHead>
-                  <TableHead>开始时间 / 耗时</TableHead>
-                  <TableHead>目标 / 资产</TableHead>
-                  <TableHead>通过 / 告警 / 严重 / 离线</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
+                  <TableHead>巡检任务 / 提示词</TableHead>
+                  <TableHead className="whitespace-nowrap">触发</TableHead>
+                  <TableHead className="whitespace-nowrap">时间 / 耗时</TableHead>
+                  <TableHead className="whitespace-nowrap">通过 / 告警 / 严重</TableHead>
+                  <TableHead className="whitespace-nowrap">状态</TableHead>
+                  <TableHead className="whitespace-nowrap text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1130,35 +1023,45 @@ export function InspectionCenterPanel({
                   const st = describeMonitorStatus(r.status)
                   return (
                     <TableRow key={r.id}>
-                      <TableCell>
-                        <button type="button" onClick={() => setSelectedRunId(r.id)} className="text-left font-medium text-primary hover:underline">
-                          {r.schedule_name || "即时手动巡检"}
+                      <TableCell className="max-w-[260px]">
+                        <button
+                          type="button"
+                          onClick={() => openRun(r.id)}
+                          title={describeRunTitle(r)}
+                          className="block max-w-full truncate text-left font-medium text-primary hover:underline"
+                        >
+                          {describeRunTitle(r)}
                         </button>
-                        <div className="font-mono text-2xs text-muted-foreground">{r.id}</div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-1 font-mono text-2xs text-muted-foreground">
+                          <span>{r.id}</span>
+                          <span>· {r.total_targets} 目标 / {r.total_assets} 产物</span>
+                          {r.command && <Badge variant="outline">命令</Badge>}
+                          {r.skills && r.skills.slice(0, 1).map((slug) => (
+                            <Badge key={slug} variant="outline">{slug}</Badge>
+                          ))}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-xs">
+                      <TableCell className="whitespace-nowrap text-xs">
                         <Badge variant="outline">{TRIGGER_LABELS[r.trigger_kind] || r.trigger_kind}</Badge>
                       </TableCell>
-                      <TableCell className="font-mono text-xs">
+                      <TableCell className="whitespace-nowrap font-mono text-xs">
                         <div>{fmtStamp(r.started_at_ms)}</div>
-                        <div className="text-2xs text-muted-foreground">{fmtDuration(r.duration_ms)} · {r.metrics_written} 指标</div>
+                        <div className="text-2xs text-muted-foreground">{fmtDuration(r.duration_ms)}</div>
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{r.total_targets} / {r.total_assets}</TableCell>
-                      <TableCell className="font-mono text-xs">
+                      <TableCell className="whitespace-nowrap font-mono text-xs">
                         <span className="text-success">{r.passed_checks}</span>
                         {" / "}
                         <span className="text-warning">{r.warning_checks}</span>
                         {" / "}
                         <span className="text-destructive">{r.failed_checks}</span>
-                        {" / "}
-                        <span className="text-muted-foreground">{r.offline_targets}</span>
+                        {r.offline_targets > 0 && <span className="text-muted-foreground"> · 离线 {r.offline_targets}</span>}
                       </TableCell>
-                      <TableCell><Badge variant={st.variant}>{st.label}</Badge></TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="whitespace-nowrap"><Badge variant={st.variant}>{st.label}</Badge></TableCell>
+                      <TableCell className="whitespace-nowrap text-right">
                         <Inline gap={2} className="justify-end">
-                          <Button size="sm" onClick={() => setSelectedRunId(r.id)}>查看明细</Button>
+                          <Button size="sm" onClick={() => openRun(r.id)}>查看产物</Button>
                           {(r.warning_checks > 0 || r.failed_checks > 0 || r.offline_targets > 0) && (
-                            <Button size="sm" disabled={busy} onClick={() => void retestRun(r.id)}>复检</Button>
+                            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void retestRun(r.id)}>复检</Button>
                           )}
                         </Inline>
                       </TableCell>

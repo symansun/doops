@@ -93,7 +93,7 @@ func callDoSQLTool(ctx context.Context, request k8sMCPRequest, boundSessionID st
 		return mcpErrorResponse(request.ID, -32602, "invalid tools/call params")
 	}
 	if !k8sMCPOperationAllowed(call.Arguments, doSQLReadOperations) {
-		return doSQLMCPErrorResponse(request.ID, -32602, "unsupported SQL operation")
+		return doSQLMCPErrorResponse(request.ID, -32602, "unsupported SQL operation"+mcpAllowedOperationsSuffix(doSQLReadOperations))
 	}
 	bound, err := bindK8SMCPSession(call.Arguments, boundSessionID)
 	if err != nil {

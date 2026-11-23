@@ -216,8 +216,9 @@ func TestK8SMCPStdioReadToolRejectsMutation(t *testing.T) {
 	); err != nil {
 		t.Fatalf("run MCP server: %v", err)
 	}
-	if !strings.Contains(output.String(), "read tool requires a read-only operation") {
-		t.Fatalf("read tool accepted mutation: %s", output.String())
+	if !strings.Contains(output.String(), "read tool requires a read-only operation") ||
+		!strings.Contains(output.String(), "allowed operations: get, describe") {
+		t.Fatalf("read tool accepted mutation or hid the allowed operations: %s", output.String())
 	}
 }
 

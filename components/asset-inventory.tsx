@@ -12,6 +12,7 @@ import { BusinessAssetsPanel } from "./business-assets-panel"
 import { SituationalDashboardPanel } from "./situational-dashboard-panel"
 import { InspectionWorkspacePanel } from "./inspection-workspace-panel"
 import { SkillRegistryPanel } from "./skill-registry-panel"
+import { MCPRegistryPanel } from "./mcp-registry-panel"
 
 import type { ComponentProps } from "react"
 import { PlatformAssetScope } from "./agent-asset-scope"
@@ -34,6 +35,7 @@ export type AssetPage =
   | { section: "situation"; clusterId?: string }
   | { section: "inspection"; runId?: string }
   | { section: "skills"; slug?: string }
+  | { section: "mcp" }
   | { section: "board"; clusterId?: string }
   | { section: "scope" }
   | LedgerPage
@@ -47,6 +49,7 @@ export function assetReturnLabel(page: AssetPage) {
   if (page.section === "situation") return "返回态势感知"
   if (page.section === "inspection") return "返回智能巡检"
   if (page.section === "skills") return "返回 Skill 管理"
+  if (page.section === "mcp") return "返回 MCP 管理"
   if (page.section === "board") return "返回平台监控"
   if (page.section === "scope") return "返回 Agent管理"
   return `返回${ASSET_LEDGER_SECTIONS.find(item => item.id === page.section)!.label}`
@@ -165,6 +168,7 @@ export function AssetInventory({ session, targets, selectedTarget, catalog, page
             onRunIdChange={(runId) => onPage(runId ? { section: "inspection", runId } : { section: "inspection" })}
             onOpenSituation={() => onPage({ section: "situation" })}
             onOpenSkills={() => onPage({ section: "skills" })}
+            onOpenMcp={() => onPage({ section: "mcp" })}
           />
         ) : page.section === "skills" ? (
           <SkillRegistryPanel
@@ -172,6 +176,14 @@ export function AssetInventory({ session, targets, selectedTarget, catalog, page
             targets={targets}
             initialSlug={page.slug}
             onOpenInspection={(runId) => onPage(runId ? { section: "inspection", runId } : { section: "inspection" })}
+            onOpenMcp={() => onPage({ section: "mcp" })}
+          />
+        ) : page.section === "mcp" ? (
+          <MCPRegistryPanel
+            session={session}
+            targets={targets}
+            onOpenSkills={() => onPage({ section: "skills" })}
+            onOpenInspection={() => onPage({ section: "inspection" })}
           />
         ) : page.section === "board" ? (
           <AssetPlatformPanel
