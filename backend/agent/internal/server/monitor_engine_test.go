@@ -267,4 +267,18 @@ func TestMonitorEngineRetiredInternalToolAbsent(t *testing.T) {
 	if _, ok := skillSlugForRetiredStrategy("unknown_strategy"); ok {
 		t.Fatal("unknown legacy strategy must not map to a skill")
 	}
+	// Nail down the mapping table: every target slug must still exist in the
+	// builtin package list, so a future rename cannot silently break retests.
+	builtin := map[string]bool{}
+	for _, spec := range builtinSystemSkills {
+		builtin[spec.Slug] = true
+	}
+	for legacy, slug := range retiredStrategySkillSlugs {
+		if !builtin[slug] {
+			t.Fatalf("legacy strategy %q maps to %q, which is not a builtin Skill package", legacy, slug)
+		}
+	}
+	if len(retiredStrategySkillSlugs) != 6 {
+		t.Fatalf("retired strategy mapping should cover 6 native collectors, got %d", len(retiredStrategySkillSlugs))
+	}
 }

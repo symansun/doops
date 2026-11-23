@@ -252,6 +252,7 @@ func (s *GatewayStore) migrate() error {
 			FOREIGN KEY(credential_id) REFERENCES credentials(id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_credential_bundle_items_resource ON credential_bundle_items(credential_id)`,
+		// monitor_schedules.strategies_json 已退役：SF-09 起不再读写，保留以兼容既有库（老库升级/冻结导出不删列）。
 		`CREATE TABLE IF NOT EXISTS monitor_schedules (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,

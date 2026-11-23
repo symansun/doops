@@ -103,6 +103,19 @@ required_mcp: doops
 
 历史兼容：早期 run 记录里的 `strategy` 值（`vm_host`、`ssh_host`、`k8s_cluster`、`container_runtime`、`app_service`、`database_service`）在重测（`retest_run_id`）时按上表映射到对应 Skill 包并重新执行；映射不到的历史资产保留为 `skipped` 项并给出 `legacy_strategy_retired` 原因，不静默丢失。
 
+#### 2.4.1 退役采集器的能力落点（D6：不静默删能力）
+
+六条原生采集器在 SF-09 退役，能力必须由 Skill 包承接。逐条核对如下；包内容欠账显式标注，不靠「已退役」掩盖能力消失。
+
+| 退役 strategy | 承接 Skill 包 | 覆盖状态 |
+|---|---|---|
+| `vm_host` | `inspect-vm-host` | 已覆盖：uptime、CPU/内存、磁盘容量（按底层设备去重）、进程/僵尸、sysctl 基线、登录安全基线。缺口：`host.disk_io`（磁盘 I/O 与延迟，旧采集器读 `/proc/diskstats` 并比对 `DiskLatencyWarnMs`）——**待补（owner: skill-dev-01）** |
+| `ssh_host` | `inspect-ssh-host` | 部分覆盖：包内契约已含 CPU/内存/磁盘/uptime/内核安全基线，但平台当前没有 AI 可见的受管 SSH 通道，只能如实上报 `managed_ssh_channel=unavailable`。能力缺口不在包内容，在 AI 工具白名单（另立任务，不在 SF-09/SF-13 范围） |
+| `k8s_cluster` | `inspect-k8s-cluster` | 已覆盖：apiserver 连通、节点/工作负载/Pod/PVC/事件。缺口：`k8s.metrics`（metrics-server 节点与 Pod 实时用量、`kubectl top` 桥接时序）——**待补（owner: skill-dev-01）** |
+| `container_runtime` | `inspect-container-runtime` | 已覆盖：runtime 可用性、容器内存上限与用量 |
+| `app_service` | `inspect-app-web` | 已覆盖：本机监听、Nginx 配置、HTTP 探活（状态码/延迟/证书剩余天数/安全响应头） |
+| `database_service` | `inspect-database` | 已覆盖：受管数据库只读连通性、活跃连接、锁等待与慢查询概况（AI 驱动，无确定性脚本） |
+
 ---
 
 ## 3. 巡检产物文件存储规范

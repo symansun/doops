@@ -377,7 +377,7 @@ so it keeps working with an air-gapped Gateway.
   `sandbox` 与 `default-src 'none'` 的 CSP；其他图片类型不受影响。HSTS 由终止 TLS 的
   Nginx 或入口网关设置，不在 Next.js 应用内设置（避免开发或内网 HTTP 访问被锁定）。
 - 模型密钥在凭证管理中录入、验证并启用。配置中心记录模型配置与凭证引用，打开时会清除旧浏览器配置里的 API 密钥字段。
-- 「平台监控」除原有的隧道、调用与 Token 视图外，提供「系统资源监控」（跨 Agent 全系统机器/K8s/容器/应用/数据库资源总览、趋势曲线、Top 排行、挂载点/磁盘 I/O/网卡/GPU/K8s 异常 Pod 展开明细与一键全量采集）与「巡检任务与记录」（定时计划管理、六类资产策略即时下发与临时 SSH 主机巡检、历史执行记录、单次明细报告、异常项复检及 CSV/JSON 导出）；「Agent 监控」支持对该目标一键触发全策略巡检采集。
+- 「平台监控」除原有的隧道、调用与 Token 视图外，提供「系统资源监控」（跨 Agent 全系统机器/K8s/容器/应用/数据库资源总览、趋势曲线、Top 排行、挂载点/磁盘 I/O/网卡/GPU/K8s 异常 Pod 展开明细与一键全量采集）与「巡检任务与记录」（定时计划管理、按 Skill 包即时下发巡检、历史执行记录、单次明细报告、异常项复检及 CSV/JSON 导出）；「Agent 监控」支持对该目标一键触发全 Skill 包巡检采集。
 
 ## Console layout and shared controls
 

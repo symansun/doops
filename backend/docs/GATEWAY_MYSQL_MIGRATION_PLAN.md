@@ -32,6 +32,16 @@ not supported.
    and verify health, authentication, credentials, target reconnects and audit
    reads. Keep the original SQLite DB and old binary for rollback.
 
+## 遗留列清单（保留结构，代码不再读写）
+
+下列列只保留在 DDL 与冻结导出里以兼容既有库升级，运行时代码不再读写。迁移和本计划后续的 schema 对齐都必须原样保留，不得因为「代码已经不用」而删列或改写默认值。
+
+| 表 | 列 | 状态 |
+|---|---|---|
+| `monitor_schedules` | `strategies_json` | SF-09 退役原生采集器后不再读；写入恒为 `[]`；列默认值仍保留历史 strategy 名单，仅用于老库升级 |
+| `platform_skills` | `driver_mode`、`strategy_id` | SF-02 拆除 `builtin_strategy` 双轨后不再读写；老行里的历史值原样保留，新行取 DDL 默认值 |
+| `monitor_run_items` | `strategy` | 历史记录只读展示；新 run 写 `skill:<slug>` / `command` / `custom_prompt` |
+
 ## Current evidence
 
 - Gateway host and `gw-edu-coder` can reach the RDS host on TCP/3306.

@@ -405,15 +405,6 @@ type MonitorInspectThresholds struct {
 	DeniedProcesses   []string `json:"denied_processes,omitempty"`
 }
 
-// MonitorInspectParams is the Gateway -> Agent RPC payload for doops_monitor_inspect.
-type MonitorInspectParams struct {
-	SessionID  string                   `json:"session_id"`
-	RunID      string                   `json:"run_id"`
-	Strategies []string                 `json:"strategies,omitempty"`
-	Assets     []MonitorInspectAsset    `json:"assets"`
-	Thresholds MonitorInspectThresholds `json:"thresholds,omitempty"`
-}
-
 // MonitorInspectCheck records one structured inspection verdict.
 type MonitorInspectCheck struct {
 	ID        string `json:"id"`
@@ -483,11 +474,4 @@ type MonitorInspectAssetResult struct {
 	Details         map[string]any              `json:"details,omitempty"`
 	Evidence        map[string]any              `json:"evidence,omitempty"`
 	SeriesPoints    []MonitorInspectSeriesPoint `json:"series_points,omitempty"`
-}
-
-// MonitorInspectResponse is the JSON payload returned by the Agent from doops_monitor_inspect.
-type MonitorInspectResponse struct {
-	RunID         string                      `json:"run_id"`
-	CollectedAtMs int64                       `json:"collected_at_ms"`
-	Results       []MonitorInspectAssetResult `json:"results"`
 }

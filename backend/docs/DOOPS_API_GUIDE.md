@@ -1232,12 +1232,12 @@ Job 的后续成功或失败终态证据才可删除。未知结果的保留规�
 
 ## 统一资源监控与策略巡检引擎（`/v1/monitor/*`）
 
-由 Gateway 统一调度并经内部只读工具 `doops_monitor_inspect` 下发到对应 Agent 执行，数据持久化至 `monitor_schedules`、`monitor_runs`、`monitor_run_items` 与 `monitor_resource_snapshots`，并在 `asset_monitor_series` 表存在时自动桥接写入监控时序与阈值告警。
+由 Gateway 统一调度，下发给目标 Agent 按 Skill 包执行（`scripts/` 入口脚本直跑或 AI 驱动），数据持久化至 `monitor_schedules`、`monitor_runs`、`monitor_run_items` 与 `monitor_resource_snapshots`，并在 `asset_monitor_series` 表存在时自动桥接写入监控时序与阈值告警。
 
 - `GET /v1/monitor/overview?range=1h|6h|24h|7d&cluster=<c>&kind=<k>&tag=<t>`：返回授权范围内的全系统资源概览（汇总 KPI、探针覆盖率、Top 资源消耗节点、分桶趋势、各资产最新快照与近期巡检运行记录）。
 - `GET /v1/monitor/resources/history?cluster=<c>&instance=<i>&asset_kind=<k>&asset_id=<a>&range=1h|6h|24h|7d`：返回单个资产的时序监控点及最新设备/K8s/容器结构化明细。
 - `GET /v1/monitor/schedules` / `POST /v1/monitor/schedules`：查询或维护定时采集与巡检计划（`action`: `create` / `update` / `toggle` / `delete`，写操作仅平台管理员可用；Gateway 进程通过 `-monitor-tick` 默认每 15 秒认领到期计划并推进 `next_run_at_ms`）。
-- `GET /v1/monitor/runs` / `GET /v1/monitor/runs/<run_id>` / `POST /v1/monitor/runs`：查看按目标授权过滤的巡检执行历史与明细，或立即触发手动巡检（`schedule_id`、指定 `targets`/`strategies`/`ssh_hosts` 或 `retest_run_id` 仅复检异常/离线项）。离线目标记录为 `status=offline`（`reason=target_offline`）并使整次运行标为 `partial` 或 `failed`。
+- `GET /v1/monitor/runs` / `GET /v1/monitor/runs/<run_id>` / `POST /v1/monitor/runs`：查看按目标授权过滤的巡检执行历史与明细，或立即触发手动巡检（`schedule_id`、指定 `targets`、`skills`（Skill slug 列表）或 `retest_run_id` 仅复检异常/离线项）。巡检能力只由 Skill 包提供：请求中仍携带 `strategies` 或 `ssh_hosts` 时返回 400（`strategies_removed` / `ssh_hosts_removed`），不再静默忽略；历史 run 的 `strategy` 字段只读展示，重测时按映射表转成 Skill 包执行。离线目标记录为 `status=offline`（`reason=target_offline`）并使整次运行标为 `partial` 或 `failed`。
 
 ## 错误码
 
