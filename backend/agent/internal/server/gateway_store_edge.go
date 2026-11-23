@@ -37,7 +37,14 @@ func (s *GatewayStore) migrateEdge() error {
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			version INTEGER NOT NULL
 		)`,
-		`INSERT OR IGNORE INTO edge_route_revision (id, version) VALUES (1, 1)`,
+		// id is pinned to 1 by the CHECK constraint and is the primary key, so the
+		// bootstrap row is inserted once and every later open leaves the revision
+		// counter alone.
+		gatewayUpsertSQL(gatewayUpsert{
+			insert:    `INSERT INTO edge_route_revision (id, version) VALUES (1, 1)`,
+			target:    []string{"id"},
+			doNothing: true,
+		}),
 		`CREATE TABLE IF NOT EXISTS edge_enrollments (
 			id TEXT PRIMARY KEY,
 			cluster TEXT NOT NULL,

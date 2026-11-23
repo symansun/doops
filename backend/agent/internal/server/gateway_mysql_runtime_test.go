@@ -47,9 +47,18 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 	// still fires for a raw literal (see the upsert sample in the dialect table)
 	// and TestGatewayMySQLUpsertsRenderForBothDialects proves the MySQL rendering
 	// is clean.
+	// INT-15: insert_or_ignore and sqlite_concat are absent on purpose. The four
+	// INSERT OR IGNORE statements render through gatewayUpsertSQL (DO NOTHING on
+	// the exact conflict key) and the three || concatenations render through
+	// gatewayAuditAppendErrorSQL/gatewayConcatSQL. The rules themselves stay in
+	// the table, so a raw literal reappearing fails here instead of passing
+	// green; TestGatewayMySQLRuntimeDialectExamples keeps proving they fire.
+	absent := map[gatewayMySQLRuntimeIssueCode]string{
+		gatewayMySQLIssueInsertOrIgnore: "the four sites render through gatewayUpsertSQL",
+		gatewayMySQLIssueSQLiteConcat:   "the three sites render through gatewayConcatSQL",
+	}
 	want := map[gatewayMySQLRuntimeIssueCode]int{
 		gatewayMySQLIssueNumberedParameter:   4,
-		gatewayMySQLIssueInsertOrIgnore:      4,
 		gatewayMySQLIssueUpdateOrIgnore:      1,
 		gatewayMySQLIssueJSONEach:            5,
 		gatewayMySQLIssueJSONAggregate:       2,
@@ -57,7 +66,6 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 		gatewayMySQLIssueJulianDay:           3,
 		gatewayMySQLIssueUnixEpoch:           4,
 		gatewayMySQLIssueMaterializedCTE:     1,
-		gatewayMySQLIssueSQLiteConcat:        3,
 		gatewayMySQLIssueNullSafeParameter:   1,
 		gatewayMySQLIssueSQLiteIntrospection: 8,
 		gatewayMySQLIssueSQLiteExplainPlan:   13,
@@ -67,12 +75,23 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 		gatewayMySQLIssuePartialIndex:        1,
 		gatewayMySQLIssueReservedUse:         12,
 	}
-	if len(counts) != len(want) {
-		t.Fatalf("MySQL runtime audit found issue categories %v, want %v", counts, want)
+	for code, found := range counts {
+		expected, wanted := want[code]
+		if !wanted {
+			if reason, intentional := absent[code]; intentional {
+				t.Errorf("MySQL runtime audit found %d %s findings at %s, want 0: %s", found, code, strings.Join(locations[code], ", "), reason)
+			} else {
+				t.Errorf("MySQL runtime audit found %d %s findings at %s, want none", found, code, strings.Join(locations[code], ", "))
+			}
+			continue
+		}
+		if found != expected {
+			t.Errorf("MySQL runtime audit found %d %s findings, want %d at %s", found, code, expected, strings.Join(locations[code], ", "))
+		}
 	}
 	for code, expected := range want {
-		if counts[code] != expected {
-			t.Errorf("MySQL runtime audit found %d %s findings, want %d at %s", counts[code], code, expected, strings.Join(locations[code], ", "))
+		if _, found := counts[code]; !found {
+			t.Errorf("MySQL runtime audit found 0 %s findings, want %d", code, expected)
 		}
 	}
 
@@ -695,20 +714,36 @@ var gatewayMySQLUpsertResidualKeys = map[string]string{
 	"grants":                      "the primary key id is assigned by AUTO_INCREMENT and never supplied by the insert, so it cannot collide",
 }
 
+// gatewayMySQLUpsertMigrationTables freezes the upsert sites whose target table
+// is created by a one-shot SQLite legacy migration instead of the frozen export.
+// The copy path treats such tables as transient; every entry is a reviewed
+// decision and an entry that stops being used fails the test below.
+var gatewayMySQLUpsertMigrationTables = map[string]string{
+	"grants_v2":                  "declared inside its migration with UNIQUE(user_id, cluster, instance); the copy path skips transient tables",
+	"credential_bundle_items_v2": "declared inside its migration with PRIMARY KEY(bundle_id, credential_id); the copy path skips transient tables",
+}
+
 func TestGatewayMySQLUpsertConflictTargetsMatchUniqueKeys(t *testing.T) {
 	keys, tables := gatewayMySQLTestUniqueKeys(t)
 	seenResidual := make(map[string]bool)
+	seenMigration := make(map[string]bool)
+	defer func() {
+		for table, reason := range gatewayMySQLUpsertMigrationTables {
+			if !seenMigration[table] {
+				t.Errorf("gatewayMySQLUpsertMigrationTables still lists %s (%s), but no upsert targets it", table, reason)
+			}
+		}
+	}()
 	for _, site := range gatewayMySQLUpsertSites(t) {
 		table := gatewayMySQLUpsertTable(site.upsert)
 		if table == "" {
 			t.Fatalf("%s: cannot name the target table", site.label())
 		}
 		if !tables[table] {
-			// grants_v2 exists only inside its migration, which declares
-			// UNIQUE(user_id, cluster, instance); the copy path skips transient tables.
-			if table != "grants_v2" {
+			if _, migration := gatewayMySQLUpsertMigrationTables[table]; !migration {
 				t.Fatalf("%s: table %s is absent from the frozen export", site.label(), table)
 			}
+			seenMigration[table] = true
 			continue
 		}
 		if len(site.upsert.target) == 0 {
@@ -1324,8 +1359,11 @@ func TestGatewayMySQLUpsertsExecuteOnMySQL(t *testing.T) {
 			table := gatewayMySQLUpsertTable(site.upsert)
 			tableColumns := columns[table]
 			if len(tableColumns) == 0 {
-				if table == "grants_v2" {
+				switch table {
+				case "grants_v2":
 					t.Skip("grants_v2 exists only inside its migration, which the copy path treats as transient")
+				case "credential_bundle_items_v2":
+					t.Skip("the INSERT ... SELECT lives inside a SQLite-only legacy migration; TestGatewayMySQLInsertIgnoreMigrationExecutes runs its MySQL rendering against fixture tables")
 				}
 				t.Fatalf("the native schema has no table %s", table)
 			}
@@ -1559,6 +1597,232 @@ func TestGatewayMySQLUniqueKeysEnforceConflicts(t *testing.T) {
 		if _, err := db.ExecContext(ctx, insert, 3000); err == nil || !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			t.Fatalf("the re-added key must reject a second open alert for a series, got: %v", err)
 		}
+	})
+}
+
+// gatewayMySQLTestFindUpsertSite returns the single gatewayUpsert declaration for
+// table, so the execution tests below run exactly the spec the store runs.
+func gatewayMySQLTestFindUpsertSite(t *testing.T, table string) gatewayMySQLUpsertSite {
+	t.Helper()
+	var found []gatewayMySQLUpsertSite
+	for _, site := range gatewayMySQLUpsertSites(t) {
+		if gatewayMySQLUpsertTable(site.upsert) == table {
+			found = append(found, site)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("want exactly one gatewayUpsert declaration for %s, found %d", table, len(found))
+	}
+	return found[0]
+}
+
+// TestGatewayMySQLInsertIgnoreMigrationExecutes covers the one INSERT OR IGNORE
+// site MySQL never reaches: credential_bundle_items_v2 is created by a SQLite
+// legacy migration, so there is no native table to run against the installed
+// schema. Building both fixture tables by hand lets the same declaration run on
+// both servers, which is what "the translation preserves the behaviour" means.
+func TestGatewayMySQLInsertIgnoreMigrationExecutes(t *testing.T) {
+	site := gatewayMySQLTestFindUpsertSite(t, "credential_bundle_items_v2")
+	if !site.upsert.doNothing {
+		t.Fatalf("%s turned INSERT OR IGNORE into an update, so a duplicate bundle item would be rewritten", site.label())
+	}
+	if !gatewayMySQLUpsertSameColumns(site.upsert.target, []string{"bundle_id", "credential_id"}) {
+		t.Fatalf("%s conflicts on %v, want the credential_bundle_items_v2 primary key (bundle_id, credential_id)", site.label(), site.upsert.target)
+	}
+	t.Run("sqlite rendering keeps the duplicates out", func(t *testing.T) {
+		db, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatalf("open the SQLite fixture: %v", err)
+		}
+		defer db.Close()
+		db.SetMaxOpenConns(1)
+		for _, statement := range []string{
+			"CREATE TABLE credential_bundle_items (bundle_id TEXT NOT NULL, credential_id TEXT NOT NULL)",
+			"CREATE TABLE credential_bundle_items_v2 (bundle_id TEXT NOT NULL, credential_id TEXT NOT NULL, PRIMARY KEY (bundle_id, credential_id))",
+			"INSERT INTO credential_bundle_items (bundle_id, credential_id) VALUES ('b1', 'c1'), ('b1', 'c2'), ('b1', 'c1')",
+		} {
+			if _, err := db.Exec(statement); err != nil {
+				t.Fatalf("prepare the SQLite fixture: %v (%s)", err, statement)
+			}
+		}
+		query := site.upsert.render(gatewayDialectSQLite)
+		if !strings.Contains(query, "ON CONFLICT(bundle_id,credential_id) DO NOTHING") {
+			t.Fatalf("the SQLite rendering of %s no longer pins the conflict key the migration relied on: %s", site.label(), query)
+		}
+		for pass := 1; pass <= 2; pass++ {
+			if _, err := db.Exec(query); err != nil {
+				t.Fatalf("pass %d of the migration insert on SQLite: %v (%s)", pass, err, query)
+			}
+		}
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM credential_bundle_items_v2").Scan(&count); err != nil {
+			t.Fatalf("read the SQLite fixture back: %v", err)
+		}
+		if count != 2 {
+			t.Fatalf("the SQLite migration inserted %d bundle items, want 2", count)
+		}
+		t.Logf("SQLite: %s inserted 2 of 3 rows twice, %s", site.label(), query)
+	})
+	t.Run("mysql rendering keeps the duplicates out", func(t *testing.T) {
+		db := gatewayMySQLTestOpenEmpty(t)
+		db.SetMaxOpenConns(1)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		for _, statement := range []string{
+			"CREATE TABLE credential_bundle_items (bundle_id VARCHAR(64) NOT NULL, credential_id VARCHAR(64) NOT NULL)",
+			"CREATE TABLE credential_bundle_items_v2 (bundle_id VARCHAR(64) NOT NULL, credential_id VARCHAR(64) NOT NULL, PRIMARY KEY (bundle_id, credential_id))",
+			"INSERT INTO credential_bundle_items (bundle_id, credential_id) VALUES ('b1', 'c1'), ('b1', 'c2'), ('b1', 'c1')",
+		} {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("prepare the MySQL fixture: %v (%s)", err, statement)
+			}
+		}
+		query := site.upsert.render(gatewayDialectMySQL)
+		if !strings.Contains(query, "ON DUPLICATE KEY UPDATE") {
+			t.Fatalf("the MySQL rendering of %s is not an upsert: %s", site.label(), query)
+		}
+		for pass := 1; pass <= 2; pass++ {
+			if _, err := db.ExecContext(ctx, query); err != nil {
+				t.Fatalf("pass %d of the migration insert on MySQL 8.4: %v (%s)", pass, err, query)
+			}
+		}
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM credential_bundle_items_v2").Scan(&count); err != nil {
+			t.Fatalf("read the MySQL fixture back: %v", err)
+		}
+		if count != 2 {
+			t.Fatalf("the MySQL migration inserted %d bundle items, want 2", count)
+		}
+		t.Logf("MySQL 8.4: %s inserted 2 of 3 rows twice, %s", site.label(), query)
+	})
+}
+
+// TestGatewayMySQLConcatRendersForBothDialects pins the two spellings and proves
+// the sqlite_concat audit rule still fires on the SQLite form, so the zero
+// finding in TestGatewayMySQLRuntimeSQLAudit is a rendering result and not a
+// way to hide the operator.
+func TestGatewayMySQLConcatRendersForBothDialects(t *testing.T) {
+	sqliteSQL := gatewayAuditAppendErrorSQL(gatewayDialectSQLite)
+	mysqlSQL := gatewayAuditAppendErrorSQL(gatewayDialectMySQL)
+	if sqliteSQL != "error || '; ' || ?" {
+		t.Fatalf("the SQLite concatenation changed to %q, but the interrupted-execution statements were written against error || '; ' || ?", sqliteSQL)
+	}
+	if mysqlSQL != "CONCAT(error, '; ', ?)" {
+		t.Fatalf("the MySQL concatenation is %q, want CONCAT(error, '; ', ?)", mysqlSQL)
+	}
+	if strings.Contains(mysqlSQL, "||") || strings.Contains(strings.ToUpper(mysqlSQL), "CONCAT_WS") {
+		t.Fatalf("the MySQL concatenation %q uses the SQLite operator or CONCAT_WS, which drops NULLs", mysqlSQL)
+	}
+	if strings.Count(sqliteSQL, "?") != strings.Count(mysqlSQL, "?") {
+		t.Fatalf("the two renderings bind different parameter counts: %q vs %q", sqliteSQL, mysqlSQL)
+	}
+	hasConcat := func(query string) bool {
+		for _, issue := range gatewayMySQLRuntimeIssues(query) {
+			if issue.code == gatewayMySQLIssueSQLiteConcat {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasConcat(sqliteSQL) {
+		t.Fatalf("the sqlite_concat audit rule no longer matches %q, so its zero finding proves nothing", sqliteSQL)
+	}
+	if hasConcat(mysqlSQL) {
+		t.Fatalf("the sqlite_concat audit rule still matches the MySQL rendering %q", mysqlSQL)
+	}
+}
+
+func TestGatewayMySQLConcatKeepsNullSemantics(t *testing.T) {
+	// The interrupted-execution statements keep the first error and append the
+	// second with "error || '; ' || ?" on SQLite. The MySQL rendering must agree
+	// row for row: appending to a NULL error stays NULL instead of becoming a
+	// silent partial string, and an empty error yields the new text alone.
+	type probe struct {
+		id   int
+		want string
+	}
+	before := []probe{{1, "prior; next"}, {2, "<NULL>"}, {3, "; next"}}
+	after := []probe{{1, "prior; next"}, {2, "<NULL>"}, {3, "next"}}
+	render := func(stored sql.NullString) string {
+		if !stored.Valid {
+			return "<NULL>"
+		}
+		return stored.String
+	}
+	check := func(t *testing.T, db *sql.DB, dialect gatewaySQLDialect) {
+		t.Helper()
+		primaryKey := "INTEGER PRIMARY KEY"
+		if dialect == gatewayDialectMySQL {
+			primaryKey = "INT PRIMARY KEY"
+		}
+		for _, statement := range []string{
+			"CREATE TABLE int15_concat (id " + primaryKey + ", error TEXT NULL)",
+			"INSERT INTO int15_concat (id, error) VALUES (1, 'prior'), (2, NULL), (3, '')",
+		} {
+			if _, err := db.Exec(statement); err != nil {
+				t.Fatalf("prepare the %s concatenation fixture: %v (%s)", dialect, err, statement)
+			}
+		}
+		expression := gatewayAuditAppendErrorSQL(dialect)
+		query := "SELECT error, " + expression + " FROM int15_concat WHERE id = ?"
+		for _, want := range before {
+			var (
+				stored   sql.NullString
+				appended sql.NullString
+			)
+			if err := db.QueryRow(query, "next", want.id).Scan(&stored, &appended); err != nil {
+				t.Fatalf("%s could not evaluate %s: %v", dialect, expression, err)
+			}
+			if got := render(appended); got != want.want {
+				t.Fatalf("%s appended the error for id=%d as %s, want %s (stored error %s)", dialect, want.id, got, want.want, render(stored))
+			}
+			t.Logf("%s: stored=%s %s -> %s", dialect, render(stored), expression, render(appended))
+		}
+		update := "UPDATE int15_concat SET error = CASE WHEN error = '' THEN ? ELSE " + expression + " END WHERE id = ?"
+		for _, want := range after {
+			if _, err := db.Exec(update, "next", "next", want.id); err != nil {
+				t.Fatalf("%s could not run the interrupted-execution update: %v (%s)", dialect, err, update)
+			}
+			var stored sql.NullString
+			if err := db.QueryRow("SELECT error FROM int15_concat WHERE id = ?", want.id).Scan(&stored); err != nil {
+				t.Fatalf("%s could not read back id=%d: %v", dialect, want.id, err)
+			}
+			if got := render(stored); got != want.want {
+				t.Fatalf("%s left error=%s for id=%d after the update, want %s", dialect, got, want.id, want.want)
+			}
+			t.Logf("%s: the update left id=%d error=%s", dialect, want.id, render(stored))
+		}
+	}
+	t.Run("sqlite", func(t *testing.T) {
+		db, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatalf("open the SQLite concatenation fixture: %v", err)
+		}
+		defer db.Close()
+		db.SetMaxOpenConns(1)
+		check(t, db, gatewayDialectSQLite)
+	})
+	t.Run("mysql", func(t *testing.T) {
+		db := gatewayMySQLTestOpenEmpty(t)
+		db.SetMaxOpenConns(1)
+		check(t, db, gatewayDialectMySQL)
+	})
+	t.Run("mysql distinguishes CONCAT from CONCAT_WS", func(t *testing.T) {
+		db := gatewayMySQLTestOpenEmpty(t)
+		var (
+			concatenated sql.NullString
+			separated    sql.NullString
+		)
+		if err := db.QueryRow("SELECT CONCAT('a', NULL), CONCAT_WS('; ', 'a', NULL)").Scan(&concatenated, &separated); err != nil {
+			t.Fatalf("probe MySQL 8.4 for the two concatenation functions: %v", err)
+		}
+		if concatenated.Valid {
+			t.Fatalf("CONCAT('a', NULL) returned %q instead of NULL, so the NULL assertion above proves nothing", concatenated.String)
+		}
+		if !separated.Valid || separated.String != "a" {
+			t.Fatalf("CONCAT_WS('; ', 'a', NULL) returned %v, so this probe cannot tell CONCAT from CONCAT_WS", separated)
+		}
+		t.Logf("MySQL 8.4: CONCAT('a', NULL) IS NULL, CONCAT_WS('; ', 'a', NULL) = %q", separated.String)
 	})
 }
 

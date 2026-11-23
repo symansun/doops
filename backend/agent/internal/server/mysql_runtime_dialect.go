@@ -58,7 +58,7 @@ var gatewayMySQLRuntimeIssueRules = []gatewayMySQLRuntimeIssueRule{
 	{
 		code:        gatewayMySQLIssueInsertOrIgnore,
 		description: "SQLite INSERT OR IGNORE syntax is not MySQL syntax",
-		replacement: "Use an explicit ON DUPLICATE KEY UPDATE no-op for the intended key",
+		replacement: "Express the statement as a gatewayUpsert with doNothing and the exact conflict key the SQLite statement relied on, then render it with gatewayUpsertSQL",
 		pattern:     regexp.MustCompile(`(?i)\bINSERT\s+OR\s+IGNORE\b`),
 	},
 	{
@@ -106,7 +106,7 @@ var gatewayMySQLRuntimeIssueRules = []gatewayMySQLRuntimeIssueRule{
 	{
 		code:        gatewayMySQLIssueSQLiteConcat,
 		description: "SQLite || string concatenation is logical OR under the default MySQL mode",
-		replacement: "Use CONCAT with the same operands",
+		replacement: "Use gatewayConcatSQL: SQLite || and MySQL CONCAT() both return NULL when any operand is NULL, unlike CONCAT_WS which drops NULLs",
 		pattern:     regexp.MustCompile(`\|\|`),
 	},
 	{
@@ -216,6 +216,29 @@ type gatewayUpsert struct {
 // gatewayUpsertSQL renders an upsert for the dialect the live store speaks.
 func gatewayUpsertSQL(upsert gatewayUpsert) string {
 	return upsert.render(gatewayDialectStore)
+}
+
+// gatewayConcatSQL renders a string concatenation of SQL operands for the
+// dialect the live store speaks.
+//
+// SQLite spells concatenation with the || operator, MySQL with the CONCAT()
+// function; the two agree on the property the Gateway relies on, that one NULL
+// operand makes the whole result NULL. CONCAT_WS is not equivalent and must not
+// be substituted: it skips NULLs and would turn a missing value into a silent
+// partial string. TestGatewayMySQLConcatKeepsNullSemantics proves the shared
+// behaviour on both servers.
+func gatewayConcatSQL(operands ...string) string {
+	return gatewayConcatFor(gatewayDialectStore, operands...)
+}
+
+func gatewayConcatFor(dialect gatewaySQLDialect, operands ...string) string {
+	if len(operands) == 0 {
+		panic("gatewayConcat needs at least one operand")
+	}
+	if dialect == gatewayDialectMySQL {
+		return "CONCAT(" + strings.Join(operands, ", ") + ")"
+	}
+	return strings.Join(operands, " || ")
 }
 
 func (upsert gatewayUpsert) render(dialect gatewaySQLDialect) string {
@@ -329,11 +352,20 @@ func gatewayMySQLUpsertMentions(predicate, column string) bool {
 	return pattern.MatchString(predicate)
 }
 
+// gatewayMySQLUpsertSelect detects an INSERT ... SELECT, whose ON DUPLICATE KEY
+// UPDATE assignments cannot use a bare column name: the source table carries the
+// same name, so MySQL rejects the statement with ERROR 1052.
+var gatewayMySQLUpsertSelect = regexp.MustCompile("(?is)\\bSELECT\\b")
+
 func gatewayMySQLUpsertNoOpColumn(upsert gatewayUpsert) string {
 	match := gatewayMySQLUpsertInsertHead.FindStringSubmatch(strings.TrimSpace(upsert.insert))
 	if match != nil {
 		columns := strings.Split(match[3], ",")
-		return gatewayMySQLIdentifier(strings.TrimSpace(columns[0]))
+		column := gatewayMySQLIdentifier(strings.TrimSpace(columns[0]))
+		if gatewayMySQLUpsertSelect.MatchString(upsert.insert) {
+			return gatewayMySQLIdentifier(match[2]) + "." + column
+		}
+		return column
 	}
 	if len(upsert.target) > 0 {
 		return gatewayMySQLIdentifier(upsert.target[0])

@@ -48,6 +48,17 @@ func (s *GatewayStore) MarkExecutionUncertain(id int64) error {
 	return nil
 }
 
+// gatewayAuditAppendErrorSQL renders the "keep the first error and append the
+// second" expression the three interrupted-execution statements share. The
+// active dialect decides between SQLite's || operator and MySQL's CONCAT(); both
+// return NULL when either operand is NULL, so a NULL append can never turn a
+// stored error into a silent partial string. gatewayAuditAppendErrorSQL is
+// exposed to the tests as a function so the NULL check runs the same expression
+// the store runs, not a copy.
+func gatewayAuditAppendErrorSQL(dialect gatewaySQLDialect) string {
+	return gatewayConcatFor(dialect, "error", "'; '", "?")
+}
+
 // FinalizeExecution closes an operation that still owns a lease after the
 // normal audit write failed. A dispatched operation is conservatively unknown;
 // an undispatched admission record is a definitive failure.
@@ -60,7 +71,7 @@ func (s *GatewayStore) FinalizeExecution(id int64) error {
 
 	result, err := s.db.Exec(`UPDATE audit_events
 		SET status = 'error',
-			error = CASE WHEN error = '' THEN ? ELSE error || '; ' || ? END,
+			error = CASE WHEN error = '' THEN ? ELSE `+gatewayAuditAppendErrorSQL(gatewayDialectStore)+` END,
 			ended_at = ?
 		WHERE id = ? AND status = 'running'`,
 		interruptedAdmissionError, interruptedAdmissionError, formatTime(time.Now().UTC()), id)
@@ -87,7 +98,7 @@ func (s *GatewayStore) FinalizeExecution(id int64) error {
 func (s *GatewayStore) RecoverInterruptedExecutions() error {
 	if _, err := s.db.Exec(`UPDATE audit_events
 		SET status = 'outcome_unknown',
-			error = CASE WHEN error = '' THEN ? ELSE error || '; ' || ? END,
+			error = CASE WHEN error = '' THEN ? ELSE `+gatewayAuditAppendErrorSQL(gatewayDialectStore)+` END,
 			ended_at = ?
 		WHERE status = 'executing'`,
 		interruptedExecutionError, interruptedExecutionError, formatTime(time.Now().UTC())); err != nil {
@@ -95,7 +106,7 @@ func (s *GatewayStore) RecoverInterruptedExecutions() error {
 	}
 	if _, err := s.db.Exec(`UPDATE audit_events
 		SET status = 'error',
-			error = CASE WHEN error = '' THEN ? ELSE error || '; ' || ? END,
+			error = CASE WHEN error = '' THEN ? ELSE `+gatewayAuditAppendErrorSQL(gatewayDialectStore)+` END,
 			ended_at = ?
 		WHERE status = 'running'`,
 		interruptedAdmissionError, interruptedAdmissionError, formatTime(time.Now().UTC())); err != nil {

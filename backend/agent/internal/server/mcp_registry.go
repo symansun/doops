@@ -78,10 +78,17 @@ func (s *GatewayStore) SeedBuiltinSystemMCPServers(ctx context.Context) error {
 			continue
 		}
 		argsJSON, _ := json.Marshal(spec.Args)
-		_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO platform_mcp_servers (
+		_, err := s.db.ExecContext(ctx, gatewayUpsertSQL(gatewayUpsert{
+			insert: `INSERT INTO platform_mcp_servers (
 			slug, name, description, scope, transport, command, args_json, url, env_json, headers_json,
 			enabled, auto_start, tool_timeout_secs, tools_json, owner_id, owner_name, last_probe_error, created_at_ms, updated_at_ms
 		) VALUES (?, ?, ?, 'system', ?, ?, ?, '', '{}', '{}', 1, 1, ?, '[]', 'system', 'system', '', ?, ?)`,
+			// The caller skipped the insert when the slug already exists, so slug
+			// (the table's primary key) is the only conflict INSERT OR IGNORE had
+			// to absorb; an existing row must stay exactly as stored.
+			target:    []string{"slug"},
+			doNothing: true,
+		}),
 			spec.Slug, spec.Name, spec.Description, spec.Transport, spec.Command, string(argsJSON), spec.ToolTimeoutSecs, nowMs, nowMs,
 		)
 		if err != nil {

@@ -252,11 +252,17 @@ func (s *GatewayStore) SeedBuiltinSystemSkills(ctx context.Context) error {
 			raw, _ := json.Marshal(effectiveFiles)
 			dbFilesJSON = string(raw)
 		}
-		_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO platform_skills (
+		_, err = s.db.ExecContext(ctx, gatewayUpsertSQL(gatewayUpsert{
+			insert: `INSERT INTO platform_skills (
 			slug, name, description, scope, category,
 			enabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,
 			created_at_ms, updated_at_ms, last_run_at_ms, run_count
 		) VALUES (?, ?, ?, 'system', ?, 1, ?, ?, ?, ?, ?, 'system', 'DoOps 系统内置', ?, ?, 0, 0)`,
+			// slug is the primary key; the follow-up UPDATE is what refreshes a row
+			// seeded by an older build, so a duplicate here must not be rewritten.
+			target:    []string{"slug"},
+			doNothing: true,
+		}),
 			spec.Slug, spec.Name, spec.Description, spec.Category,
 			dbSkillMD, dbFilesJSON, fileCount, storageDir, sha, nowMs, nowMs)
 		if err != nil {

@@ -79,8 +79,22 @@ func (s *GatewayStore) migrateCredentialBundleItems() error {
 	)`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO credential_bundle_items_v2 (bundle_id, credential_id)
-		SELECT bundle_id, credential_id FROM credential_bundle_items`); err != nil {
+	// A one-shot SQLite legacy migration: the surrounding CREATE TABLE ... RENAME
+	// TO never runs on MySQL, so this statement is translated for the same reason
+	// the rest of the dialect layer exists, not because MySQL reaches it. The
+	// conflict key is the primary key of credential_bundle_items_v2, the only
+	// unique constraint the copy can hit, so DO NOTHING keeps INSERT OR IGNORE's
+	// "insert what is new, leave duplicates alone" behaviour on both dialects.
+	if _, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{
+		// WHERE 1 is not a filter: SQLite refuses to parse a trailing ON CONFLICT
+		// after an INSERT ... SELECT that has no WHERE clause, because the ON can
+		// also start a join constraint. The constant predicate keeps the copy
+		// identical and lets one declaration render for both dialects.
+		insert: `INSERT INTO credential_bundle_items_v2 (bundle_id, credential_id)
+			SELECT bundle_id, credential_id FROM credential_bundle_items WHERE 1`,
+		target:    []string{"bundle_id", "credential_id"},
+		doNothing: true,
+	})); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_credential_bundle_items_resource`); err != nil {
