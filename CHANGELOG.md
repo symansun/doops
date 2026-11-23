@@ -21,7 +21,7 @@
 
 ### Removed
 
-- 移除内置原生策略采集器（`vm_host`、`ssh_host`、`k8s_cluster`、`container_runtime`、`app_service`、`database_service`）与 `doops_monitor_inspect` 工具，巡检能力改由对应 Skill 包提供（磁盘 I/O 与 Kubernetes 资源用量两项指标正在补齐）。
+- 移除内置原生策略采集器（`vm_host`、`ssh_host`、`k8s_cluster`、`container_runtime`、`app_service`、`database_service`）与 `doops_monitor_inspect` 工具，巡检能力改由对应 Skill 包提供（磁盘 I/O 与 Kubernetes 资源用量两项指标已随 Skill 包补齐，采集口径与降级行为见巡检设计文档）。
 
 ### Fixed
 

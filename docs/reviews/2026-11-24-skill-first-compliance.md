@@ -166,3 +166,22 @@ lib/demo.ts: 类型定义与 20+ 处 demo 数据/渲染
 - Spec: backend/docs/design/SKILL_FIRST_INSPECTION_SPEC.md §1-§5
 - Tests: `env -u GOROOT go test ./internal/server -run 'TestSF06|TestBuiltinSkill|TestAllBuiltinSkillsProduceRunnableItems|TestMonitorArtifact' -v` → 10 PASS / 0 FAIL；`sh backend/agent/internal/server/testdata/skills_builtin_verify/verify.sh` → 20 PASS / 0 FAIL（`SB-01 VERIFY_ALL_PASS`）
 - Co-Authored-By: qa-skill-01
+
+---
+
+## 七、lead 复核（2026-11-24 03:00，HEAD 2a29ed67）
+
+本报告证据绑定在 282d338c（11-23 傍晚），之后 SF-05/SF-09/SF-17 与外部会话的提交已进 main。逐项在 2a29ed67 上复核：
+
+| 原编号 | 复核结论 | 证据 |
+|---|---|---|
+| #1 前端 `builtin_strategy`/`strategy_id` 死开关 | **仍在，但只剩一个文件** | `components/skill-registry-panel.tsx`、`lib/demo.ts` 已无命中；仅 `lib/skills-registry.ts:16`:17（类型字段）：57-59（`SKILL_DRIVER_LABELS`）：219-220（upsert payload）。后端 `grep driver_mode backend/agent/internal/server` 零命中 → 纯死代码。已派 **SF-21**（dev-viewer-01）清理并加「旧概念不得复活」静态守卫 |
+| #2 legacy native strategy 兼容路径可达 | **已消除** | `monitor_engine_agent.go` 文件不存在；`grep 'plan.Strategies\|monitorStrategyCatalog'` 零命中；只剩 `gateway_store_schema.go:255` 的退役注释、`:264` 的 DDL 默认值，以及 `monitor_engine_store.go` 把 `strategies_json` 当退役列原样读写（不参与分派） |
+| #3 spec↔code 环境变量名不一致 | **已修正** | spec 第 83/84 行为 `DOOPS_TARGET_CLUSTER` / `DOOPS_TARGET_INSTANCE`，与注入/脚本消费一致 |
+| #4a proxy-evasion 端口超集（20171） | **已消除** | `skills_builtin/inspect-proxy-evasion/scripts/inspect.sh:109` 的 `PROXY_PORTS` = {1080,3128,7890,7891,8118,10808,20170}，与 spec 第 118 行七端口逐项一致 |
+| #4b ssh-host 未指名受管通道 | **已补齐** | `skills_builtin/inspect-ssh-host/SKILL.md` 指名 `doops_ssh`（clientCallable）为唯一受管通道、白名单当前仅 `mcp_doops_k8s_read`/`mcp_dosql_read`、退化分支写 `managed_ssh_channel=unavailable`；spec 第 132 行记该能力缺口并注明另立任务 |
+| #18 §4.4 可视化器 | **基本闭环** | SF-05 的「与上次对比」「历史趋势」与 SF-17 的 `artifact_state=missing` 已进 main；`components/inspection-artifact-viewer.tsx:546` 有内联 SVG 趋势线。仍缺「charts 原语抽象」这一层，如实保留为欠账，不与本轮混做 |
+| #19 §5 红线5 真实隧道 e2e | **仍未覆盖** | 需真实 target + canary 凭据（SF-11 / D8），本机无隧道 |
+
+结论修正：原报 6 项「部分符合」中，**4 项（#2/#3/#4a/#4b）在当前 HEAD 已消除**，#1 收敛为单文件死代码并转 SF-21，#18 基本闭环仅剩 charts 抽象。真正未覆盖的只剩「真实 Gateway↔Agent 隧道端到端」一项，卡在凭据而非代码。
+

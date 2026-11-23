@@ -10,7 +10,8 @@
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
 | SF-18 | evidence 记录真实调度结果（声明 `exec_mode` vs 实际 `dispatch_mode`），老 run 兼容 + 前端可读 | integrator-e2e-01 | `internal/server/*.go`（不含 skills_builtin/**）、spec、API 文档 | 02:49 | 运行中（INT-10 后续，由它报的证据不真实问题立项） |
-| SF-17 | 前端消费 `artifact_state`：missing 时正文区中文明示、指标/趋势照常、纯函数三态 + 接线锁 | dev-viewer-01 | `components/inspection-artifact-viewer.tsx` 等 viewer 文件 | 02:30 | 运行中 |
+| SF-21 | 清掉 `lib/skills-registry.ts` 里 `driver_mode`/`strategy_id`/`SKILL_DRIVER_LABELS` 死代码 + 「旧概念不得复活」静态守卫 | dev-viewer-01 | `lib/skills-registry.ts` 及其测试 | 03:00 | 运行中（合规复核第七节 #1 的唯一残留） |
+| QA-04 | clean tree 分片跑完 `internal/server` 全量 + `go test -list` 集合比对 + Top10 慢测试归因 + clean tree 的 `test:console`/`pnpm build` | qa-skill-01 | 只新增 `docs/reviews/2026-11-24-main-full-suite-baseline.md` | 02:53 | 运行中（40 分钟硬上限） |
 | QA-03 | 对抗性复核 6 条反向实验（SF-08 x2 / INT-08 / SF-16 / SF-15 / 审计 cutoff F5），干净树重做、破坏只在 /tmp | qa-recheck-01 | 只新增 `docs/reviews/2026-11-24-adversarial-recheck.md` | 02:38 | 运行中 |
 
 ## 待办（排队/待决策）
@@ -25,6 +26,7 @@
 
 | 编号 | 任务 | 提交 | 结论摘要 |
 |---|---|---|---|
+| SF-17 | 前端消费 `artifact_state`：missing 时正文区中文明示、指标/趋势照常、纯函数三态 + 接线锁 | 0e749395 | 新增 `describeArtifactState()`/`ARTIFACT_MISSING_NOTICE`（missing 只把正文换成清理说明，diff/趋势/指标照常；present+truncated 仍是 present 子态）；tsc 0、node --test 17/17、pnpm build 0；反向实验两组红（判定恒 present、删接线锁）；ego-browser `PORT=3011 pnpm dev` + `/console?demo=1` 两态截图实测 |
 | SB-02 | 补回 `host.disk_io`（inspect-vm-host）与 `k8s.metrics`（inspect-k8s-cluster）+ verify.sh 覆盖 + 反向实验 | a7a4a84e、e03d8439、2dfbf26b | `host.disk_io` 读 `/proc/diskstats` 只留整盘（排除分区与 `loop`/`dm-`/`md` 等虚拟设备），延迟阈值 50/200ms 对齐 `DiskLatencyWarnMs`，不可读时 `warning` + detail 说明缺口；`k8s.metrics` 走 `kubectl top`，metrics-server 不可用时该 check 记 `warning` 而集群 `status` 不变；verify.sh 34→39 项全绿（新增 capability 5 个真跑夹具），`SB01_NO_PRIVILEGED=1` 32 通过 7 降级；反向实验两处红：diskstats 字段偏移改错 → `指标 disk_io_reads=0 期望 4000`，吞掉 `kubectl top` 失败 → `检查项 k8s.metrics status='pass' 期望 'warning'`；spec §2.4.1 两行改「已覆盖」 |
 | INT-09 | 把 SQLite 迁移独建的表纳入 MySQL：守卫改扫 `backend/docs/migrations/*.sql`（先红，红名单正好 8 表），DDL+冻导补 8 表（69 表/54 索引/22 触发器/43 FK，含 4 个 catalog 部分索引 enforcer 触发器），`gatewayMySQLUnmigratedTables` 清零；`*_v2`/`asset_monitor_series_new` 仅 migrate* 函数内豁免 | ac191ff6 | 红→绿对照：扩扫描后 `export=[8 表] ddl=[同 8 表]`，补表后全绿；census 未变；真机 mysql:8.4 八表逐一真实 INSERT 回读（`catalog_pending_identity` 第二次被 `Error 1644 (45000)` 拒）；4 组反向实验全红（删表/删默认/删列/把 `grants_v2` INSERT 挪出 migrate*）；干净树 build/vet/`-run GatewayMySQL`(真机)/`-run 'Resource\|Agent\|Registry'` 全绿；无运行时 Go 改动；导出仍外科式补（重抓会删生产遗留索引） |
 | SF-14 | 把 `verify.sh`（34 项真跑）接进 CI：新增 `skills-packages` job（apt shellcheck + 现场 build `sb01-inspect-test:ci` + 预拉 `alpine:3` + 跑 verify.sh）、`SB01_NO_PRIVILEGED` 显式降级分支（4 个特权场景记 WARN、不删场景）、`BUILD_DEPLOY_SOP.md` 第五节第 8 条 | 686b2076、70a7727e | [CI run 45239179874](https://github.com/symansun/doops/actions/runs/45239179874) 该 job 2m27s 绿（verify step 110s）、34/34 PASS、降级 0；首跑红因 verify.sh 把缺镜像当硬失败而 CI 未预拉 `alpine:3`，补 pull 步骤后绿（反向实验：`docker rmi alpine:3` 后 28/29 复现同一红）；本地干净树 `git archive 686b2076` 34/34、257s；`SB01_NO_PRIVILEGED=1` 30 通过 4 降级 |
