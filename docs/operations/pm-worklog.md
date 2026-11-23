@@ -80,3 +80,11 @@
 - 质量亮点：SF-12 拒绝了我建议的"排序键换成 `i.started_at_ms`"——它核实写路径里 item 与 run 的 `started_at_ms` 不是同一值，两次运行重叠时会选出另一个前驱、改变 `previous_run_id`；改为在保持 `(run.started_at_ms DESC, item.id DESC)` 语义前提下重写查询走 `idx_monitor_runs_started`+`EXISTS` 探测，EXPLAIN 断言无 TEMP B-TREE，并做了反向实验。D2 判定"不改 schema"，把代价写进函数注释。这正是闭环标准要的行为。
 - INT-05 的 `archived_at` 缺默认值已修（`gateway_mysql_schema.sql:308` `DEFAULT ('')`），列级守卫与新增真实 INSERT 形状测试待其回报确认。
 
+
+## 01:55 巡检（定时，第 8 轮）
+
+- 在跑 5：dev-sf-01/SF-13、skill-dev-01/SF-08、dev-artifact-01/SF-05、qa-skill-01/QA-02、integrator-ars/INT-05 收尾；integrator-gm 空闲（SF-12 已交付 243be1c7）；无后台 job。
+- 主干：`998e536c fix(gateway-mysql): default archived_at as VARCHAR so the copier accepts it`（INT-05 收尾提交）本地领先 1，先 `git archive 998e536c` 干净树 `go build ./...` rc=0，再 push，现 `ahead=0`。
+- 工作区 14 项在改 = SF-05（前端 3+2 文件）与 SF-08（6 个 inspect.sh）半成品，符合预期。
+- 未派新活：SF-11 卡真实 target/凭据、INT-06 卡 SF-05、CHANGELOG 被前端会话占用；并发 5，有 1 个空位但无满足依赖的任务，按规则不空转派活。
+
