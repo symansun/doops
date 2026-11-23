@@ -317,3 +317,11 @@
 
 - 03:45 第 29 轮：仅 integrator-gm 在跑 INT-13，正在改 24 个 .go（含 gateway_mysql_runtime_test.go），无后台 job，HEAD c850b63e 干净推送，无新任务可派。
 - 03:55 第 30 轮：integrator-gm 仍在跑 INT-13（已建 gatewayMySQLUpsertSites 抽象，21 文件在改）；发现两件事并已直接通知它——(a) 工作树多出 scratch 文件 backend/agent/internal/server/zz_peek_test.go，会往固定 /tmp/int13-render.txt 写文件，要求提交前删除或改造成真断言测试；(b) 外部 Devin 会话 03:46:55/03:48:44 并发推了 2d5e0492、d7c2bcf1，动过它清单里的 agent_resource_execution.go（该文件 ON CONFLICT 现为 0，即 31 处里可能已有 1 处被别人消掉）并同时在写 CHANGELOG，要求它先 fetch 再 rebase、报告里区分「起始数/自己改的/别人改的」，不得硬覆盖。origin/main=d7c2bcf1。
+
+## 03:59–04:03 第 31 轮巡检：INT-13 收口（31 处 ON CONFLICT 落地），我独立复验时抓到「假绿」并派 INT-14
+
+- **INT-13 完成**（`524a69bd`，25 文件 +1518/−147）。它的核心不是「把 SQLite 语法翻译成 MySQL 语法」，而是建了一层 upsert 抽象（`gatewayUpsert{insert,target,doNothing,set,where}` + `gatewayUpsertSQL`）：31 处全部按原冲突目标改写，9 处 `DO NOTHING`、6 处显式目标、16 处 `DO UPDATE`，冲突键一律沿用原语句（没换键），`max()/min()` 的 6 条 SET 改 `GREATEST/LEAST`。有两处判断值得记：① 唯一带谓词的 `asset_monitor_store.go:91` 用 `IF(谓词,新,旧)` 且**谓词列放最后赋值**——放前面会让后续赋值看到新值，把本该继续更新的行冻住；② 拒绝用行别名 `AS new`，因为 ODKU 里裸列名会报 `ERROR 1052 ambiguous`，而谓词是调用方写的 SQLite SQL 不能跟着改。
+- **我独立复验，不是抄它的数字**：`git archive 524a69bd` → /tmp/int13v-lead，`env -u GOROOT go build ./...`/`go vet` rc=0；`grep ON CONFLICT`（排除测试与方言文件）= **0**；`TestGatewayMySQLUpsertsRenderForBothDialects` 31/31 PASS；起 mysql:8.4.13 后 `TestGatewayMySQLUpsertsExecuteOnMySQL` **27 PASS + 1 SKIP**（`gateway_store_grants.go:136` 的 `grants_v2` 只在迁移里存在，跳过并说明）；审计总数 102。
+- **复验过程本身抓到一个缺陷（重要）**：第一次跑真机测试时，`mysqladmin ping` 已通但 TCP 连接拿到 EOF，测试没有失败，而是**静默 SKIP**——因为 `gateway_mysql_runtime_test.go:262`/`:1283` 把「连不上」一律当 `Skipf("disposable MySQL 8.4 server is unavailable")`。后果是：环境变量明明设了、CI 明明打了「有真机覆盖」，实际一条都没执行。等容器真正可查询后重跑才拿到 27 PASS。这类「设了变量却跳过」的假绿与之前 INT-11 处理的 skip 性质相同，必须修成 fail-closed。
+- 据此派 **INT-14** 给 integrator-gm（同一个人，文件上下文已在手）：(a) 补齐原生 DDL 缺的 6 个唯一键（`credential_grants`、`credential_versions`、`credential_verifications`、`credential_materializations`、`inventory_resource_catalog`、`asset_monitor_alerts`）——缺键时 MySQL 路径的冲突分支永不触发，等于这套 upsert 在真库上白做；`inspection_runs(plan_id,due,(trigger_kind='manual'))` 是 MySQL 表达不了的 partial/expression 键，保持触发器形式并记录；(b) 把「环境变量已设但连不上」从 SKIP 改成失败，保留「未设变量才跳过」。
+- CHANGELOG 补一条 Fixed（MySQL 后端重复写入冲突处理此前直接报错，现按原语义生成 `ON DUPLICATE KEY UPDATE`，SQLite 路径不变）。
