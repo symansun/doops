@@ -33,3 +33,12 @@
 - 同步发现并已修的反向问题（84b57653）：我 04:01 给 INT-13 补的「MySQL 冲突处理改 ON DUPLICATE KEY UPDATE」那条 Fixed，被我写进当时最上面的 ## [0.3.30]，而 0.3.30 的 tag（03:48）与 INT-13 的代码（524a69bd，04:16）时间错位——那条说明描述的是**不在 0.3.30 里**的代码，下一个版本还会静默继承它。已原样移回 ## [Unreleased]。教训：往 CHANGELOG 顶部追加条目前必须确认该版本标题对应的 tag 尚不存在（git tag --list v<版本>、git tag --contains），否则整条都应进 [Unreleased]。
 - 因此选项 ③ 已部分失效（0.3.30 已发、巡检代码已在两版镜像里）。剩下的现实选择是①（认账，巡检改造算下个版本内容，并在下个版本条目里一次写全）；② 已不可能（0.3.30 已发布，不能回改其条目）。建议按①，切下个版本时把 [Unreleased] 整段收成该版本条目——仍需你点头。
 
+## D12 MySQL 存储模式还没接线：剩余的方言改写要不要继续做？
+
+- 事实（已核实，不是推测）：`backend/agent/internal/server/gateway_store_mysql.go:18-19` 的注释明写 `It does not select an alternate store for the running Gateway`；`openGatewayMySQL`（同文件 :75）除测试外没有任何运行期调用方；`OpenGatewayStore`（`backend/agent/internal/server/gateway_store.go:32`）只打开 SQLite。也就是说 MySQL 目前只服务**离线迁移工具**（导出/搬运/schema 校验），运行中的 Gateway 永远走 SQLite。
+- 含义：INT-13/14/15 已改的 42 处、以及 INT-16 分类出的剩余 95 处，**今天没有一行在 MySQL 上跑**。这些改动的价值是「将来接线时不会出错」，不是「现在正在出错」。INT-16 的 95 条分类里真正今天会执行的是 0 条。
+- 因此我暂停了 INT-16 计划里的四批（3A 时间/授权 7 处、3D 引号/守卫、3C 参数重排、3B JSON），没有派活——避免在没有落点的路径上继续堆改动与测试。
+- 需要你定的：① 继续做（认为 MySQL 存储迟早接线，先把 dialect 层铺平，成本是每批 0.5–1 小时）；② 暂停方言层，只在真接线时再做（风险：接线那天会一次面对 95 处 + 已改 42 处的回归面）；③ 干脆不做 MySQL 存储，把 `gateway_store_mysql.go` 与相关迁移脚本标注为实验性/冻结，并从 backlog 移除这类任务。
+- 我的建议：②，但加一个低成本护栏——保留现有 golden 审计与 parity 守卫（它们已在 CI 里，零额外成本），不再新增方言改动。理由是已经改的 42 处已经有守卫兜住，剩下 95 处接线时可一次性处理，而且接线本身会带来一轮必须做的真机验收（那时才是有意义的验证时机）。
+- 未决期间：不再派 MySQL 方言批次；`docs/reviews/2026-11-24-mysql-dialect-batch-plan.md` 保留作为接线时的施工图。
+
