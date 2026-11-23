@@ -314,3 +314,5 @@
 - 状态核对：11 个子会话全部 inactive，无后台 job，工作树干净，`origin/main = e91c6b90` ahead/behind 0。原待办只剩 SF-11/D8、INT-06（都要真实 target + canary 凭据）与 D11/D9/D2（要你拍板），没有可开工项。
 - **不空转，改从已记账的欠账里取活**：`backend/docs/GATEWAY_MYSQL_MIGRATION_PLAN.md:54` 明确记着 31 处 `ON CONFLICT`（含 agent resource sync 新增的两处）属「审计记录、不重写生产查询」的欠账，INT-12 的报告也重新点了这批。按 closure-standard 第 6 条（缺陷当轮修或进 backlog 带 owner + 验收条件），这批既有 owner 缺失又边界清楚，正好派出去：**INT-13 = 把 ON CONFLICT 语义落到 MySQL 可执行路径**。
 - 派活要点：拥有 `mysql_runtime_dialect.go`、`gateway_mysql_runtime_test.go` 与承载 ON CONFLICT 的运行期 `.go`；禁碰 `components/`、`lib/`、`package.json`、`pnpm-lock.yaml`、`CHANGELOG.md`、`skills_builtin/**`。验收不是「改完了」而是三条：golden `gatewayMySQLRuntimeIssueOnConflict` 从 31 归 0，**或者**逐点给出「不可安全翻译」的理由并把冻结数降到可解释的新值（`DO NOTHING` 语义、动态拼接、跨语句事务这几种允许保留但必须逐条列名）；真机 mysql:8.4 跑通被改语句；反向实验证明守卫会红。
+
+- 03:45 第 29 轮：仅 integrator-gm 在跑 INT-13，正在改 24 个 .go（含 gateway_mysql_runtime_test.go），无后台 job，HEAD c850b63e 干净推送，无新任务可派。
