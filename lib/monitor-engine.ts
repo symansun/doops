@@ -20,15 +20,6 @@ export const INTERVAL_PRESETS: { value: number; label: string }[] = [
   { value: 604800, label: "每周（7 天）" },
 ]
 
-export interface MonitorStrategyMeta {
-  id: string
-  name: string
-  description: string
-  asset_kinds: string[]
-  collector_method: string
-  checks: string[]
-}
-
 export interface MonitorTargetRef {
   cluster: string
   instance: string
@@ -57,7 +48,6 @@ export interface MonitorScheduleRecord {
   scope_mode: "all_online" | "targets" | "tags"
   targets: MonitorTargetRef[]
   tags: string[]
-  strategies: string[]
   skills?: string[]
   prompt?: string
   command?: string
@@ -259,7 +249,6 @@ export interface MonitorOverviewData {
   trends: MonitorTrendBucket[]
   threshold_alerts?: MonitorThresholdAlert[]
   recent_runs: MonitorRunRecord[]
-  strategies: MonitorStrategyMeta[]
 }
 
 export interface MonitorHistoryData {
@@ -276,14 +265,12 @@ export interface MonitorHistoryData {
 
 export interface MonitorSchedulesData {
   schedules: MonitorScheduleRecord[]
-  strategies: MonitorStrategyMeta[]
   defaults: MonitorThresholds
 }
 
 export interface MonitorRunDetailData {
   run: MonitorRunRecord
   items: MonitorRunItemRecord[]
-  strategies: MonitorStrategyMeta[]
 }
 
 export const ASSET_KIND_LABELS: Record<string, string> = {
@@ -426,7 +413,9 @@ async function monitorRequest<T>(session: Session, path: string, body?: object, 
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(data.message || data.error || `监控接口返回 HTTP ${res.status}`)
+    const err = new Error(data.message || data.error || `监控接口返回 HTTP ${res.status}`) as Error & { code?: string }
+    err.code = data.code || data.error
+    throw err
   }
   return data as T
 }
@@ -470,7 +459,7 @@ export function fetchMonitorRuns(
   session: Session,
   opts: { scheduleId?: string; status?: string; limit?: number } = {},
   signal?: AbortSignal,
-): Promise<{ runs: MonitorRunRecord[]; strategies: MonitorStrategyMeta[] }> {
+): Promise<{ runs: MonitorRunRecord[] }> {
   const qs = new URLSearchParams()
   if (opts.scheduleId) qs.set("schedule_id", opts.scheduleId)
   if (opts.status) qs.set("status", opts.status)
@@ -491,12 +480,10 @@ export function triggerMonitorRun(
     scope_mode?: string
     targets?: MonitorTargetRef[]
     tags?: string[]
-    strategies?: string[]
     skills?: string[]
     prompt?: string
     command?: string
     thresholds?: MonitorThresholds
-    ssh_hosts?: { asset_id: string; asset_name?: string; asset_kind?: string; address: string; port?: number; ssh_user?: string }[]
   },
 ): Promise<{ run: MonitorRunRecord; items: MonitorRunItemRecord[] }> {
   return monitorRequest(session, "runs", body)

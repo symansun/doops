@@ -1,6 +1,23 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import type { Session } from "@/lib/client"
+import {
+  MONITOR_METRIC_RANGES,
+  buildTrendGeometry,
+  deltaDirection,
+  diffHasChanges,
+  fetchMonitorMetricSeries,
+  formatDeltaPercent,
+  formatMetricNumber,
+  formatMetricValue,
+  formatSignedNumber,
+  pickTrendSeries,
+  summarizeRunDiff,
+  type MonitorMetricRange,
+  type MonitorMetricSeriesResponse,
+  type MonitorRunDiff,
+} from "@/lib/monitor-metrics"
 import { Markdown } from "./markdown"
 import {
   Badge,
@@ -345,21 +362,233 @@ function DynamicJsonNode({ data, depth = 0 }: { data: unknown; depth?: number })
   )
 }
 
+
+function diffStatusVariant(status?: string): "success" | "warning" | "danger" | "outline" {
+  const variant = statusBadgeVariant(status || "")
+  return variant === "primary" ? "success" : variant || "outline"
+}
+
+function DiffCheckBadge({ status, label }: { status?: string; label: string }) {
+  return <Badge variant={diffStatusVariant(status)}>{label}</Badge>
+}
+
+function RunDiffSection({ diff }: { diff: MonitorRunDiff | null }) {
+  if (diff === null) {
+    return (
+      <div className="rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+        首次运行，无对比基线
+      </div>
+    )
+  }
+  const summary = summarizeRunDiff(diff)
+  const metrics = diff.metric_deltas || []
+  const added = diff.added_checks || []
+  const resolved = diff.resolved_checks || []
+  const changed = diff.changed_checks || []
+  return (
+    <div className="space-y-2 rounded-md border bg-muted/20 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="font-semibold text-foreground">与上次对比</span>
+        <span className="font-mono text-2xs text-muted-foreground">
+          #{diff.previous_run_id}
+          {diff.previous_at_ms ? ` · ${new Date(diff.previous_at_ms).toLocaleString("zh-CN", { hour12: false })}` : ""}
+        </span>
+        {diff.previous_status && <Badge variant={diffStatusVariant(diff.previous_status)}>上次 {diff.previous_status}</Badge>}
+        {diff.status_changed && <DiffCheckBadge status={diff.previous_status} label="状态变化" />}
+        {!diffHasChanges(diff) && <Badge variant="outline">与上次一致</Badge>}
+      </div>
+
+      {metrics.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {metrics.map((m) => {
+            const direction = deltaDirection(m.delta)
+            const tone = direction === "up" ? "danger" : direction === "down" ? "success" : "outline"
+            const arrow = direction === "up" ? "▲" : direction === "down" ? "▼" : "■"
+            const pct = formatDeltaPercent(m.delta_pct)
+            return (
+              <span
+                key={m.key}
+                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 font-mono text-2xs"
+                title={`${m.key}: ${formatMetricValue(m.previous, m.unit)} → ${formatMetricValue(m.current, m.unit)}`}
+              >
+                <Badge variant={tone}>{arrow}</Badge>
+                <span className="text-muted-foreground">{m.label || m.key}</span>
+                <span className="tabular-nums text-foreground">
+                  {formatMetricNumber(m.previous)} → {formatMetricValue(m.current, m.unit)}
+                </span>
+                <span className="tabular-nums text-muted-foreground">
+                  （{formatSignedNumber(m.delta)}{pct ? ` / ${pct}` : " / 新增"}）
+                </span>
+              </span>
+            )
+          })}
+        </div>
+      )}
+
+      {(added.length > 0 || resolved.length > 0 || changed.length > 0) && (
+        <div className="space-y-1.5">
+          {added.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <Badge variant="warning">新增 {added.length}</Badge>
+              {added.map((c, idx) => (
+                <Badge key={`a-${c.id || c.name || idx}`} variant={diffStatusVariant(c.status)}>
+                  {c.name || c.id || "未命名检查项"}
+                </Badge>
+              ))}
+            </div>
+          )}
+          {resolved.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <Badge variant="success">已恢复 {resolved.length}</Badge>
+              {resolved.map((c, idx) => (
+                <Badge key={`r-${c.id || c.name || idx}`} variant="outline">
+                  {c.name || c.id || "未命名检查项"}
+                </Badge>
+              ))}
+            </div>
+          )}
+          {changed.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <Badge variant="danger">状态变化 {changed.length}</Badge>
+              {changed.map((c, idx) => (
+                <span key={`c-${c.id || c.name || idx}`} className="inline-flex items-center gap-1 text-2xs text-muted-foreground">
+                  <span className="text-foreground">{c.name || c.id || "未命名检查项"}</span>
+                  <Badge variant={diffStatusVariant(c.previous_status)}>{c.previous_status}</Badge>
+                  <span>→</span>
+                  <Badge variant={diffStatusVariant(c.current_status)}>{c.current_status}</Badge>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {summary.improved + summary.degraded > 0 && metrics.length === 0 && (
+        <p className="text-2xs text-muted-foreground">
+          指标上升 {summary.degraded} 项、下降 {summary.improved} 项
+        </p>
+      )}
+    </div>
+  )
+}
+
+type TrendState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; data: MonitorMetricSeriesResponse }
+
+function TrendSection({
+  session,
+  skill,
+  cluster,
+  instance,
+}: {
+  session: Session
+  skill: string
+  cluster: string
+  instance: string
+}) {
+  const [range, setRange] = useState<MonitorMetricRange>("24h")
+  const [state, setState] = useState<TrendState>({ status: "loading" })
+  const [revision, setRevision] = useState(0)
+
+  useEffect(() => {
+    const ctrl = new AbortController()
+    setState({ status: "loading" })
+    fetchMonitorMetricSeries(session, { skill, cluster, instance, range }, ctrl.signal)
+      .then((data) => setState({ status: "ready", data }))
+      .catch((err: unknown) => {
+        if (ctrl.signal.aborted) return
+        setState({ status: "error", message: err instanceof Error ? err.message : "指标加载失败" })
+      })
+    return () => ctrl.abort()
+  }, [session, skill, cluster, instance, range, revision])
+
+  const series = state.status === "ready" ? pickTrendSeries(state.data.series) : null
+  const geometry = series ? buildTrendGeometry(series.points, 100, 36, 4) : null
+
+  return (
+    <div className="space-y-2 rounded-md border bg-muted/20 px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="font-semibold text-foreground">历史趋势</span>
+          <span className="font-mono text-2xs text-muted-foreground">{skill}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <select
+            className="h-7 rounded-md border bg-background px-1.5 text-2xs text-foreground"
+            value={range}
+            onChange={(e) => setRange(e.target.value as MonitorMetricRange)}
+            aria-label="趋势时间范围"
+          >
+            {MONITOR_METRIC_RANGES.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+          <Button size="sm" variant="ghost" onClick={() => setRevision((n) => n + 1)}>
+            重试
+          </Button>
+        </div>
+      </div>
+
+      {state.status === "loading" && <p className="text-2xs text-muted-foreground">正在读取指标时序…</p>}
+      {state.status === "error" && (
+        <p className="text-2xs text-destructive">趋势加载失败：{state.message}（可点「重试」）</p>
+      )}
+      {state.status === "ready" && !series && (
+        <p className="text-2xs text-muted-foreground">暂无多点指标时序；同一 Skill 连续执行两次后自动出现趋势。</p>
+      )}
+      {state.status === "ready" && series && geometry && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-40 flex-1">
+            <svg viewBox="0 0 100 36" preserveAspectRatio="none" className="h-12 w-full text-primary" role="img" aria-label={`${series.label || series.key} 趋势`}>
+              <path d={geometry.areaPath} fill="currentColor" opacity={0.12} />
+              <path d={geometry.path} fill="none" stroke="currentColor" strokeWidth={1.2} vectorEffect="non-scaling-stroke" />
+            </svg>
+          </div>
+          <div className="space-y-0.5 text-2xs text-muted-foreground">
+            <div className="font-mono text-xs text-foreground">{series.label || series.key}</div>
+            <div>
+              最新 <span className="font-mono text-foreground">{formatMetricValue(series.points[series.points.length - 1]?.value, series.unit)}</span>
+              <span className="ml-2">区间 {formatMetricValue(geometry.min, series.unit)} ~ {formatMetricValue(geometry.max, series.unit)}</span>
+            </div>
+            <div>{series.points.length} 个采样点</div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function InspectionArtifactViewer({
   format,
   markdown,
   jsonData,
   rawOutput,
   filePrefix = "artifact",
+  diff,
+  session,
+  trendSkill,
+  trendCluster,
+  trendInstance,
 }: {
   format?: string
   markdown?: string
   jsonData?: unknown
   rawOutput?: string
   filePrefix?: string
+  /** 跨次对比结果；显式传 null 表示首次运行（渲染空态），不传则不渲染该区块。 */
+  diff?: MonitorRunDiff | null
+  /** 指标时序取数用的会话；与 trendSkill/trendCluster/trendInstance 同时存在才渲染趋势。 */
+  session?: Session
+  trendSkill?: string
+  trendCluster?: string
+  trendInstance?: string
 }) {
   const hasJson = jsonData !== undefined && jsonData !== null
   const hasMarkdown = Boolean(markdown && markdown.trim())
+  const showTrend = Boolean(session && trendSkill && trendCluster && trendInstance)
   const [view, setView] = useState<ArtifactViewMode>("visual")
   const [copied, setCopied] = useState(false)
 
@@ -369,7 +598,7 @@ export function InspectionArtifactViewer({
     [hasMarkdown, hasJson, markdown],
   )
 
-  if (!hasJson && !hasMarkdown && !rawOutput) {
+  if (!hasJson && !hasMarkdown && !rawOutput && diff === undefined && !showTrend) {
     return null
   }
 
@@ -469,6 +698,15 @@ export function InspectionArtifactViewer({
 
       {view === "visual" && (
         <div className="space-y-3">
+          {diff !== undefined && <RunDiffSection diff={diff} />}
+          {showTrend && session && trendSkill && trendCluster && trendInstance && (
+            <TrendSection
+              session={session}
+              skill={trendSkill}
+              cluster={trendCluster}
+              instance={trendInstance}
+            />
+          )}
           {visualProse && (
             <div className="rounded-md border bg-background px-3.5 py-2.5 text-xs">
               <Markdown content={visualProse} variant="compact" />

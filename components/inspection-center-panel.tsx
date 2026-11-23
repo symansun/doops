@@ -64,6 +64,18 @@ function downloadText(filename: string, content: string, mime: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
+function describeMonitorError(err: unknown): string {
+  const message = (err as Error)?.message || "巡检请求失败"
+  const code = (err as { code?: string })?.code || ""
+  if (code === "strategies_removed" || message.includes("strategies_removed") || message.includes("strategies 已移除")) {
+    return "巡检能力已改为由 Skill 包提供，请刷新后重新发起"
+  }
+  if (code === "ssh_hosts_removed" || message.includes("ssh_hosts_removed") || message.includes("ssh_hosts 已移除")) {
+    return "SSH 主机巡检已改为由 inspect-ssh-host Skill 包提供，请刷新后重新发起"
+  }
+  return message
+}
+
 function buildLegacyFallbackArtifact(item: MonitorRunItemRecord): Record<string, unknown> {
   const out: Record<string, unknown> = {
     asset_id: item.asset_id,
@@ -192,7 +204,7 @@ export function InspectionCenterPanel({
       })
       .catch((err) => {
         if (!ctrl.signal.aborted) {
-          setError((err as Error).message)
+          setError(describeMonitorError(err))
           setLoading(false)
         }
       })
@@ -216,7 +228,7 @@ export function InspectionCenterPanel({
       })
       .catch((err) => {
         if (!ctrl.signal.aborted) {
-          setError((err as Error).message)
+          setError(describeMonitorError(err))
           setDetailLoading(false)
         }
       })
@@ -233,17 +245,6 @@ export function InspectionCenterPanel({
   }, [platformSkills])
 
   const enabledSkills = useMemo(() => platformSkills.filter((s) => s.enabled), [platformSkills])
-
-  function strategiesFromSkills(slugs: string[]): string[] {
-    const set = new Set<string>()
-    for (const slug of slugs) {
-      const sk = skillBySlug.get(slug)
-      if (sk?.driver_mode === "builtin_strategy" && sk.strategy_id) {
-        set.add(sk.strategy_id)
-      }
-    }
-    return Array.from(set)
-  }
 
   function openNewSchedule() {
     setEditingId("")
@@ -265,16 +266,7 @@ export function InspectionCenterPanel({
     setSchedCommand(s.command || "")
     setScopeMode(s.scope_mode === "targets" ? "targets" : "all_online")
     setSelectedTargetKeys((s.targets || []).map((t) => `${t.cluster}/${t.instance}`))
-    if (s.skills && s.skills.length > 0) {
-      setSelectedSkills(s.skills)
-    } else if (!s.prompt && !s.command) {
-      const inferred = platformSkills
-        .filter((sk) => sk.strategy_id && (s.strategies || []).includes(sk.strategy_id))
-        .map((sk) => sk.slug)
-      setSelectedSkills(inferred)
-    } else {
-      setSelectedSkills([])
-    }
+    setSelectedSkills(s.skills && s.skills.length > 0 ? s.skills : [])
     setIntervalSeconds(s.interval_seconds || 300)
     setFormOpen(true)
   }
@@ -299,7 +291,6 @@ export function InspectionCenterPanel({
         enabled: true,
         scope_mode: scopeMode,
         targets: scopeMode === "targets" ? targetRefs : [],
-        strategies: strategiesFromSkills(selectedSkills),
         skills: selectedSkills,
         interval_seconds: intervalSeconds,
       })
@@ -307,7 +298,7 @@ export function InspectionCenterPanel({
       setNotice(editingId ? "定时巡检计划已更新" : "定时巡检计划已创建")
       reload()
     } catch (err) {
-      setError((err as Error).message)
+      setError(describeMonitorError(err))
     } finally {
       setBusy(false)
     }
@@ -322,7 +313,7 @@ export function InspectionCenterPanel({
       setNotice(`已${s.enabled ? "暂停" : "启用"}定时任务「${s.name}」`)
       reload()
     } catch (err) {
-      setError((err as Error).message)
+      setError(describeMonitorError(err))
     } finally {
       setBusy(false)
     }
@@ -337,7 +328,7 @@ export function InspectionCenterPanel({
       setNotice(`已删除定时任务「${s.name}」`)
       reload()
     } catch (err) {
-      setError((err as Error).message)
+      setError(describeMonitorError(err))
     } finally {
       setBusy(false)
     }
@@ -354,7 +345,7 @@ export function InspectionCenterPanel({
       openRun(res.run.id)
       reload()
     } catch (err) {
-      setError((err as Error).message)
+      setError(describeMonitorError(err))
     } finally {
       setBusy(false)
     }
@@ -372,8 +363,6 @@ export function InspectionCenterPanel({
       const payload: Parameters<typeof triggerMonitorRun>[1] = {}
       if (quickSkills.length > 0) {
         payload.skills = quickSkills
-        const derived = strategiesFromSkills(quickSkills)
-        if (derived.length > 0) payload.strategies = derived
       }
       if (promptText) payload.prompt = promptText
       if (commandText) payload.command = commandText
@@ -389,7 +378,7 @@ export function InspectionCenterPanel({
       openRun(res.run.id)
       reload()
     } catch (err) {
-      setError((err as Error).message)
+      setError(describeMonitorError(err))
     } finally {
       setBusy(false)
     }
@@ -406,7 +395,7 @@ export function InspectionCenterPanel({
       setSelectedRunId(res.run.id)
       reload()
     } catch (err) {
-      setError((err as Error).message)
+      setError(describeMonitorError(err))
     } finally {
       setBusy(false)
     }
@@ -774,18 +763,11 @@ export function InspectionCenterPanel({
           <div className="space-y-2.5">
             {schedules.map((s) => {
               const lastSt = describeMonitorStatus(s.last_status || "")
-              const tags =
-                s.skills && s.skills.length > 0
-                  ? s.skills.map((slug) => ({
-                      key: slug,
-                      label: skillBySlug.get(slug)?.name || slug,
-                      custom: skillBySlug.get(slug)?.scope === "custom",
-                    }))
-                  : (s.strategies || []).map((stId) => ({
-                      key: stId,
-                      label: STRATEGY_LABELS[stId] || stId,
-                      custom: false,
-                    }))
+              const tags = (s.skills || []).map((slug) => ({
+                key: slug,
+                label: skillBySlug.get(slug)?.name || slug,
+                custom: skillBySlug.get(slug)?.scope === "custom",
+              }))
               const visibleTags = tags.slice(0, 4)
               const extraTags = tags.length - visibleTags.length
               return (

@@ -1512,15 +1512,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
   const tagFilter = parsed.searchParams.get("tag") || ""
   const statusFilter = parsed.searchParams.get("status") || ""
 
-  const strategies = [
-    { id: "vm_host", name: "虚机 / 物理机本机策略", description: "直采 CPU、内存、磁盘 I/O、网络、GPU 及 M1–M5 机器安全巡检。", asset_kinds: ["vm", "physical"], collector_method: "agent_local", checks: ["M1", "M2", "M3", "M4", "M5"] },
-    { id: "ssh_host", name: "SSH 远程主机策略", description: "经结构化只读 SSH 采集无 Agent 主机指标、补丁基线与巡检项。", asset_kinds: ["vm", "physical"], collector_method: "ssh", checks: ["SSH连通性", "M1", "M2", "磁盘容量"] },
-    { id: "k8s_cluster", name: "Kubernetes 集群策略", description: "采集节点健康、Pod 异常、副本、PVC 与 Warning 事件。", asset_kinds: ["k8s"], collector_method: "k8s_api", checks: ["节点健康", "Pod状态", "控制器副本"] },
-    { id: "container_runtime", name: "容器运行时策略", description: "采集 Docker/nerdctl/Podman 容器 CPU 与内存限额。", asset_kinds: ["container"], collector_method: "agent_local", checks: ["运行时可用性", "内存限额"] },
-    { id: "app_service", name: "应用 / 漏洞 / Web / API 策略", description: "采集应用可用性、流量异常、Web安全、API接口及应用漏洞补丁核查。", asset_kinds: ["app"], collector_method: "http_probe", checks: ["A1可用性", "流量异常", "Web安全", "API巡检", "漏洞补丁"] },
-    { id: "database_service", name: "数据库运行状态与性能策略", description: "探测数据库连通性、连接数、查询性能、事务处理 TPS 与锁等待。", asset_kinds: ["database"], collector_method: "tcp_probe", checks: ["连接数", "查询性能", "事务TPS", "锁等待"] },
-  ]
-
   const allResources = [
     {
       id: 1, cluster: "prod-cn", instance: "web-01", asset_id: "vm-web-01", asset_name: "教务门户节点 01", asset_kind: "vm",
@@ -1669,7 +1660,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       id: "sched_demo01", name: "全校核心基础设施 5 分钟自动巡检",
       description: "由系统内置巡检 Skill 驱动，覆盖机器(M1–M5)、GPU物理机、SSH远程主机、K8s、容器、漏洞补丁、Web/API与数据库全策略巡检",
       enabled: true, scope_mode: "all_online", targets: [], tags: [],
-      strategies: ["vm_host", "ssh_host", "k8s_cluster", "container_runtime", "app_service", "database_service"],
       skills: ["inspect-vm-host", "inspect-ssh-host", "inspect-k8s-cluster", "inspect-container-runtime", "inspect-app-web", "inspect-database", "inspect-proxy-evasion"],
       thresholds: defaultThresholds,
       interval_seconds: 300, next_run_at_ms: now + 240_000, last_run_at_ms: now - 60_000, last_run_id: "run_demo04", last_status: "warning",
@@ -1679,7 +1669,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       id: "sched_demo04", name: "全校每周安全漏洞与合规自动化巡检",
       description: "满足每周至少一次全维度自动化巡检要求：驱动系统安全 Skill 完成应用漏洞、补丁基线及 M4/M5 合规检查并输出报告",
       enabled: true, scope_mode: "all_online", targets: [], tags: [],
-      strategies: ["vm_host", "ssh_host", "app_service", "database_service"],
       skills: ["inspect-vm-host", "inspect-ssh-host", "inspect-app-web", "inspect-database", "inspect-package-vuln"],
       thresholds: defaultThresholds,
       interval_seconds: 604800, next_run_at_ms: now + 4 * 86400_000, last_run_at_ms: now - 3 * 86400_000, last_run_id: "run_demo03", last_status: "warning",
@@ -1689,7 +1678,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       id: "sched_demo02", name: "重点门户站点、API 与数据库 15 分钟拨测",
       description: "专注 HTTPS 可用性、流量异常、安全头、API 契约与 PostgreSQL 连接/TPS/锁等待监测",
       enabled: true, scope_mode: "targets", targets: [{ cluster: "prod-cn", instance: "web-01" }, { cluster: "staging", instance: "db-01" }], tags: [],
-      strategies: ["app_service", "database_service"],
       skills: ["inspect-app-web", "inspect-database"],
       thresholds: { ...defaultThresholds, latency_warn_ms: 300, cert_warn_days: 30 },
       interval_seconds: 900, next_run_at_ms: now + 540_000, last_run_at_ms: now - 360_000, last_run_id: "run_demo02", last_status: "pass",
@@ -1699,7 +1687,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       id: "sched_demo03", name: "GPU 算力节点每小时深度巡检",
       description: "针对带 gpu=a100 标签的高密度算力物理机核查双卡 GPU 显存温度、NVMe I/O 与进程合规",
       enabled: false, scope_mode: "tags", targets: [], tags: ["gpu=a100"],
-      strategies: ["vm_host", "container_runtime"],
       skills: ["inspect-vm-host", "inspect-container-runtime"],
       thresholds: defaultThresholds,
       interval_seconds: 3600, next_run_at_ms: 0, last_run_at_ms: now - 4 * 3600_000, last_run_id: "run_demo01", last_status: "critical",
@@ -1946,7 +1933,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       }),
       recent_runs: demoMonitorRunsStore.slice(0, 8),
       threshold_alerts: thresholdAlerts,
-      strategies,
     }
   }
   if (route === "resources/history") {
@@ -1989,11 +1975,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       }
       const nextSkills = Array.isArray(body.skills) ? (body.skills as string[]).filter(Boolean) : []
       ensureDemoSkillsSeeded()
-      const derivedStrategies = Array.isArray(body.strategies) && body.strategies.length
-        ? (body.strategies as string[])
-        : nextSkills
-          .map((slug) => demoSkillsStore.find((sk) => sk.slug === slug)?.strategy_id || "")
-          .filter(Boolean)
       const next = {
         ...seedSchedules[0],
         id: String(body.id || `sched_demo_${Math.floor(now / 1000)}`),
@@ -2004,7 +1985,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
         targets: Array.isArray(body.targets) ? body.targets : [],
         tags: Array.isArray(body.tags) ? body.tags : [],
         interval_seconds: Number(body.interval_seconds || 300),
-        strategies: derivedStrategies.length ? derivedStrategies : (nextSkills.length || body.prompt || body.command ? [] : seedSchedules[0].strategies),
         skills: nextSkills,
         prompt: String(body.prompt || ""),
         command: String(body.command || ""),
@@ -2018,28 +1998,101 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
     }
     return {
       schedules: [...demoMonitorSchedulesStore],
-      strategies,
       defaults: defaultThresholds,
+    }
+  }
+  if (route === "metrics") {
+    const skill = parsed.searchParams.get("skill") || "inspect-vm-host"
+    const target = parsed.searchParams.get("target") || "prod-cn/web-01"
+    const [cluster, instance] = target.split("/")
+    const range = parsed.searchParams.get("range") || "24h"
+    const spanMs =
+      ({ "1h": 3_600_000, "6h": 6 * 3_600_000, "24h": 24 * 3_600_000, "7d": 7 * 86_400_000, "30d": 30 * 86_400_000 } as Record<string, number>)[range] || 3_600_000
+    const count = 24
+    const toMs = now
+    const fromMs = toMs - spanMs
+    const makeSeries = (key: string, label: string, unit: string, base: number, amp: number, phase: number) => ({
+      key,
+      label,
+      unit,
+      points: Array.from({ length: count }, (_, i) => {
+        const at = Math.round(fromMs + (spanMs * i) / (count - 1))
+        const value = Number((base + Math.sin((i / count) * Math.PI * 2 + phase) * amp).toFixed(2))
+        return { at_ms: at, value, status: value > base + amp * 0.9 ? "warning" : "pass", run_id: `run_demo_hist_${i}` }
+      }),
+    })
+    return {
+      skill,
+      cluster,
+      instance,
+      range,
+      from_ms: fromMs,
+      to_ms: toMs,
+      series: [
+        makeSeries("cpu_percent", "CPU 使用率", "%", 28, 14, 0),
+        makeSeries("memory_percent", "内存使用率", "%", 52, 9, 0.8),
+        makeSeries("load_1m", "1 分钟负载", "", 1.2, 0.6, 1.6),
+        makeSeries("error_rate", "错误率", "%", 0.4, 0.3, 2.2),
+      ],
     }
   }
   if (route.startsWith("runs/")) {
     const runId = route.slice("runs/".length)
     const run = demoMonitorRunsStore.find((r) => r.id === runId) || demoMonitorRunsStore[0]
     const items = demoMonitorRunItemsMap.get(String(run.id)) || buildStandardItems(String(run.id), now - 60_000)
-    return { run, strategies, items }
+    const prevRun = demoMonitorRunsStore
+      .filter((r) => r.id !== run.id && r.status !== "running" && Number(r.started_at_ms) < Number(run.started_at_ms))
+      .sort((a, b) => Number(b.started_at_ms) - Number(a.started_at_ms))[0]
+    const prevItems: Array<Record<string, unknown>> = prevRun ? demoMonitorRunItemsMap.get(String(prevRun.id)) || [] : []
+    const unitFor = (key: string) => (key.endsWith("_percent") || key === "error_rate" ? "%" : key.endsWith("_bytes") ? "B" : key.endsWith("_ms") ? "ms" : key.endsWith("_seconds") ? "s" : "")
+    const checkId = (c: Record<string, unknown>) => String(c.id || c.name || "")
+    const withDiff = items.map((item) => {
+      const prev = prevItems.find((p) => p.cluster === item.cluster && p.instance === item.instance && String(p.strategy) === String(item.strategy))
+      if (!prev) return { ...item, diff: null }
+      const prevMetrics = (prev.metrics || {}) as Record<string, unknown>
+      const currMetrics = (item.metrics || {}) as Record<string, unknown>
+      const metricDeltas = Object.keys(currMetrics)
+        .filter((key) => typeof currMetrics[key] === "number" && typeof prevMetrics[key] === "number")
+        .map((key) => {
+          const previous = Number(prevMetrics[key])
+          const current = Number(currMetrics[key])
+          const delta = Number((current - previous).toFixed(4))
+          return { key, label: key, unit: unitFor(key), previous, current, delta, delta_pct: previous !== 0 ? Number(((delta / previous) * 100).toFixed(2)) : null }
+        })
+        .filter((d) => Math.abs(d.delta) > 1e-9)
+        .sort((a, b) => a.key.localeCompare(b.key))
+      const prevChecks = (prev.checks || []) as Array<Record<string, unknown>>
+      const currChecks = (item.checks || []) as Array<Record<string, unknown>>
+      const prevMap = new Map(prevChecks.map((c) => [checkId(c), c]))
+      const currMap = new Map(currChecks.map((c) => [checkId(c), c]))
+      return {
+        ...item,
+        diff: {
+          previous_run_id: String(prevRun?.id || ""),
+          previous_at_ms: Number(prevRun?.started_at_ms || 0),
+          previous_status: String(prevRun?.status || ""),
+          status_changed: Boolean(prevRun && String(prevRun.status) !== String(run.status)),
+          metric_deltas: metricDeltas,
+          added_checks: currChecks.filter((c) => !prevMap.has(checkId(c))),
+          resolved_checks: prevChecks.filter((c) => !currMap.has(checkId(c))),
+          changed_checks: currChecks
+            .filter((c) => prevMap.has(checkId(c)) && String(prevMap.get(checkId(c))?.status) !== String(c.status))
+            .map((c) => ({ id: c.id, name: c.name, category: c.category, previous_status: prevMap.get(checkId(c))?.status, current_status: c.status })),
+        },
+      }
+    })
+    return { run, items: withDiff }
   }
   if (body) {
     demoInspectionWave += 1
     demoLastCollectedMs = now
     const newId = `run_demo_${Math.floor(now / 1000)}_${demoInspectionWave}`
     const sched = body.schedule_id ? demoMonitorSchedulesStore.find((s) => s.id === body.schedule_id) : null
-    const reqStrategies = Array.isArray(body.strategies) && body.strategies.length ? (body.strategies as string[]) : null
     const reqMcps = Array.isArray(body.mcp_services) && body.mcp_services.length ? (body.mcp_services as string[]) : null
     const reqSkills = Array.isArray(body.skills) && body.skills.length
       ? (body.skills as string[])
       : (sched && Array.isArray(sched.skills) && sched.skills.length ? (sched.skills as string[]) : null)
     const reqTargets = Array.isArray(body.targets) ? (body.targets as Array<{ cluster: string; instance: string }>) : []
-    const sshHosts = Array.isArray(body.ssh_hosts) ? (body.ssh_hosts as Array<Record<string, unknown>>) : []
     const reqPrompt = String(body.prompt || (sched?.prompt ?? "")).trim()
     const reqCommand = String(body.command || (sched?.command ?? "")).trim()
 
@@ -2100,34 +2153,20 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       }
     } else if (reqSkills && reqSkills.length > 0) {
       ensureDemoSkillsSeeded()
-      const strategyToSkill = new Map<string, string>()
       const promptSkills: DemoPlatformSkill[] = []
       for (const slug of reqSkills) {
         const sk = demoSkillsStore.find((item) => item.slug === slug)
         if (!sk) continue
         sk.run_count += 1
         sk.last_run_at_ms = now
-        if (sk.driver_mode === "builtin_strategy" && sk.strategy_id) {
-          strategyToSkill.set(sk.strategy_id, sk.slug)
-        } else {
-          promptSkills.push(sk)
-        }
+        promptSkills.push(sk)
       }
-      const allowedStrategies = new Set<string>([...strategyToSkill.keys(), ...(reqStrategies || [])])
-      const filteredBuiltin = generatedItems
-        .filter((it) => allowedStrategies.has(String(it.strategy)))
-        .filter((it) => reqTargets.length === 0 || reqTargets.some((t) => t.cluster === it.cluster && t.instance === it.instance))
-        .map((it) => {
-          const skillSlug = strategyToSkill.get(String(it.strategy))
-          if (!skillSlug) return it
-          return {
-            ...it,
-            evidence: { ...(it.evidence as Record<string, unknown>), skill_slug: skillSlug, driver_mode: "builtin_strategy" },
-          }
-        })
+      const filteredBuiltin: Array<Record<string, unknown>> = []
       const targetCluster = reqTargets[0]?.cluster || "prod-cn"
       const targetInstance = reqTargets[0]?.instance || "web-01"
       const skillItems: Array<Record<string, unknown>> = []
+      // 每执行一次试跑就让基础水位小幅变化，便于演示跨次 diff 的指标增减。
+      const runPhase = demoMonitorRunsStore.length
       for (const sk of promptSkills) {
         if (sk.slug === "inspect-proxy-evasion") {
           const baseEvasion = generatedItems.find((it) => it.strategy === "proxy_evasion")
@@ -2150,7 +2189,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
               ...((baseEvasion?.evidence as Record<string, unknown>) || {}),
               skill_slug: sk.slug,
               skill_scope: sk.scope,
-              driver_mode: "agent_prompt",
               synced_path: `/root/.agent/skills/${sk.slug}/SKILL.md`,
             },
           })
@@ -2177,7 +2215,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
             evidence: {
               skill_slug: sk.slug,
               skill_scope: sk.scope,
-              driver_mode: "agent_prompt",
               synced_path: `/root/.agent/skills/${sk.slug}/SKILL.md`,
               upgradable_security_packages: ["nginx-common", "libssl3"],
             },
@@ -2204,7 +2241,11 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
             started_at_ms: now - 980,
             finished_at_ms: now - 420,
             duration_ms: 560,
-            metrics: {},
+            metrics: {
+              cpu_percent: Number((28 + (runPhase % 5) * 3.5).toFixed(1)),
+              memory_percent: Number((54 + (runPhase % 4) * 2.5).toFixed(1)),
+              load_1m: Number((1.1 + (runPhase % 3) * 0.4).toFixed(2)),
+            },
             checks: [
               {
                 id: `${sk.slug}.sync`,
@@ -2228,7 +2269,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
             evidence: {
               skill_slug: sk.slug,
               skill_scope: sk.scope,
-              driver_mode: sk.driver_mode,
               synced_path: `/root/.agent/skills/${sk.slug}/SKILL.md`,
               attached_files: sk.files.map((f) => f.path),
               sha256: sk.sha256,
@@ -2291,34 +2331,6 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
           reqTargets.some((t) => t.cluster === it.cluster && t.instance === it.instance),
         )
       }
-      if (reqStrategies) {
-        generatedItems = generatedItems.filter((it) => reqStrategies.includes(String(it.strategy)))
-      }
-      for (const h of sshHosts) {
-        const addr = String(h.address || "10.0.9.50")
-        const aid = String(h.asset_id || addr)
-        generatedItems.push({
-          id: generatedItems.length + 1,
-          run_id: newId,
-          cluster: reqTargets[0]?.cluster || "prod-cn",
-          instance: reqTargets[0]?.instance || "web-01",
-          asset_id: aid,
-          asset_name: `${aid} (临时 SSH)`,
-          asset_kind: "vm",
-          strategy: "ssh_host",
-          collector_method: "ssh",
-          status: "pass",
-          started_at_ms: now - 1600,
-          finished_at_ms: now - 400,
-          duration_ms: 1200,
-          metrics: { cpu_percent: 19.4, memory_percent: 48.2, disk_percent: 54.0, os_info: "Ubuntu 22.04 LTS" },
-          checks: [
-            { id: "ssh.reachability", name: "只读 SSH 连通性", category: "availability", status: "pass", value: `reachable (${addr}:${Number(h.port) || 22})`, threshold: "BatchMode=yes", detail: "临时只读 SSH 巡检采集成功" },
-            { id: "ssh.resource", name: "远程主机 CPU/内存/磁盘", category: "resource", status: "pass", value: "CPU 19.4% / 内存 48.2% / 盘 54.0%", threshold: "<80%", detail: "水位正常" },
-          ],
-          evidence: { collector: "ssh_batch_readonly", address: addr },
-        })
-      }
       if (generatedItems.length === 0) {
         generatedItems = buildStandardItems(newId, now - 1800, false, false).slice(0, 2)
       }
@@ -2372,7 +2384,7 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
   const filteredRuns = statusFilter
     ? demoMonitorRunsStore.filter((r) => r.status === statusFilter)
     : [...demoMonitorRunsStore]
-  return { runs: filteredRuns, strategies }
+  return { runs: filteredRuns }
 }
 
 // ===================== 平台 Skill 仓库演示数据（系统内置 + 自定义上传） =====================
@@ -2383,8 +2395,6 @@ interface DemoPlatformSkill {
   description: string
   scope: "system" | "custom"
   category: "inspection" | "security" | "ops"
-  driver_mode: "builtin_strategy" | "agent_prompt"
-  strategy_id?: string
   enabled: boolean
   skill_md: string
   files: Array<{ path: string; content: string }>
@@ -2413,9 +2423,7 @@ function makeSystemSeed(
   name: string,
   description: string,
   category: "inspection" | "security" | "ops",
-  driver_mode: "builtin_strategy" | "agent_prompt",
   skill_md: string,
-  strategy_id?: string,
   run_count = 12,
 ): DemoPlatformSkill {
   const baseMs = Date.now() - 14 * 86400_000
@@ -2425,8 +2433,6 @@ function makeSystemSeed(
     description,
     scope: "system",
     category,
-    driver_mode,
-    strategy_id,
     enabled: true,
     skill_md,
     files: [],
@@ -2446,7 +2452,6 @@ const DEMO_SYSTEM_SKILL_SEEDS: DemoPlatformSkill[] = [
     "虚机与物理机系统巡检 Skill",
     "通过 Agent 本机只读探测 CPU、内存、内核、磁盘容量与 I/O、网卡流量、NVIDIA GPU 及 M1–M5 主机安全基线。",
     "inspection",
-    "builtin_strategy",
     `---
 name: inspect-vm-host
 description: 虚拟机与物理机系统及 M1–M5 安全基线巡检 Skill
@@ -2468,7 +2473,6 @@ description: 虚拟机与物理机系统及 M1–M5 安全基线巡检 Skill
 ## 执行约束
 只读采集，不修改宿主机配置、不读取凭据载荷。
 `,
-    "vm_host",
     42,
   ),
   makeSystemSeed(
@@ -2476,7 +2480,6 @@ description: 虚拟机与物理机系统及 M1–M5 安全基线巡检 Skill
     "无 Agent 远程主机 SSH 巡检 Skill",
     "由在线 Agent 通过结构化只读 BatchMode SSH 远程采集无 Agent 主机的资源水位与系统安全基线。",
     "inspection",
-    "builtin_strategy",
     `---
 name: inspect-ssh-host
 description: 无 Agent 远程 Linux 主机结构化只读 SSH 巡检 Skill
@@ -2492,7 +2495,6 @@ description: 无 Agent 远程 Linux 主机结构化只读 SSH 巡检 Skill
 2. **资源水位**：采集远程 CPU 差值、内存（MemTotal/MemAvailable/Slab）、磁盘挂载点（\`df -P -k\`）与网卡吞吐。
 3. **进程与内核基线**：统计僵尸进程并核验 4 项 Linux sysctl 安全参数。
 `,
-    "ssh_host",
     28,
   ),
   makeSystemSeed(
@@ -2500,7 +2502,6 @@ description: 无 Agent 远程 Linux 主机结构化只读 SSH 巡检 Skill
     "Kubernetes 容器集群巡检 Skill",
     "通过 Agent 内置只读 kubectl 巡检 K8s 节点健康压力、异常/高重启 Pod、控制器副本、PVC 绑定、Warning 事件及资源水位。",
     "inspection",
-    "builtin_strategy",
     `---
 name: inspect-k8s-cluster
 description: Kubernetes 集群健康、工作负载与资源水位巡检 Skill
@@ -2515,7 +2516,6 @@ description: Kubernetes 集群健康、工作负载与资源水位巡检 Skill
 4. **PVC 与事件**：检查未 Bound 的 PVC 与近 15 分钟集群 Warning 事件。
 5. **节点与 Pod 资源指标**：若部署 metrics-server，采集实时 CPU/内存并桥接时序库。
 `,
-    "k8s_cluster",
     36,
   ),
   makeSystemSeed(
@@ -2523,7 +2523,6 @@ description: Kubernetes 集群健康、工作负载与资源水位巡检 Skill
     "容器运行时巡检 Skill",
     "自动识别 Docker / nerdctl / Podman，采集运行中容器 CPU、内存与内存上限（memory_limit）占比。",
     "inspection",
-    "builtin_strategy",
     `---
 name: inspect-container-runtime
 description: Docker / nerdctl / Podman 运行态容器资源与限额巡检 Skill
@@ -2536,7 +2535,6 @@ description: Docker / nerdctl / Podman 运行态容器资源与限额巡检 Skil
 2. **容器内存上限水位**：对比容器内存用量与 memory_limit，识别接近 OOM 风险的容器。
 3. **时序同步**：写入 \`type=container\` 的 cpu / memory / memory_limit 指标供控制台监控展示。
 `,
-    "container_runtime",
     31,
   ),
   makeSystemSeed(
@@ -2544,7 +2542,6 @@ description: Docker / nerdctl / Podman 运行态容器资源与限额巡检 Skil
     "应用服务与 Web 安全巡检 Skill",
     "探测已登记站点 HTTP/HTTPS 可用性、响应延迟、错误率、TLS 证书剩余天数、安全响应头及本机 Nginx 并发请求速率。",
     "inspection",
-    "builtin_strategy",
     `---
 name: inspect-app-web
 description: Web 应用可用性、响应延迟、TLS 证书与安全响应头巡检 Skill
@@ -2558,7 +2555,6 @@ description: Web 应用可用性、响应延迟、TLS 证书与安全响应头�
 3. **Web 安全与证书 (A4)**：校验 HTTPS 证书剩余有效期（默认 <14 天告警）、HSTS 与 X-Content-Type-Options。
 4. **Nginx 并发与请求速率**：当本机开放回环 \`stub_status\` 时采集活跃连接数与 req/s。
 `,
-    "app_service",
     45,
   ),
   makeSystemSeed(
@@ -2566,7 +2562,6 @@ description: Web 应用可用性、响应延迟、TLS 证书与安全响应头�
     "数据库运行与连通性巡检 Skill",
     "探测已登记数据库实例（PostgreSQL / MySQL / Redis 等）的 TCP 连通性与建连延迟，识别实例不可达或高延迟风险。",
     "inspection",
-    "builtin_strategy",
     `---
 name: inspect-database
 description: 数据库实例连通性、建连延迟与只读状态巡检 Skill
@@ -2579,7 +2574,6 @@ description: 数据库实例连通性、建连延迟与只读状态巡检 Skill
 2. **建连延迟**：监控 TCP 握手耗时并与延迟阈值对比。
 3. **安全边界**：巡检探活阶段不暴露凭据载荷；需要深度 SQL 诊断时经由 DoSql 受管只读凭据执行。
 `,
-    "database_service",
     39,
   ),
   makeSystemSeed(
@@ -2587,7 +2581,6 @@ description: 数据库实例连通性、建连延迟与只读状态巡检 Skill
     "主机违规代理与内网穿透巡检 Skill",
     "由系统驱动 Agent Skill 检查主机是否存在未备案代理/翻墙/穿透进程（clash、v2ray、xray、frpc、trojan 等）及异常监听端口。",
     "security",
-    "agent_prompt",
     `---
 name: inspect-proxy-evasion
 description: 主机违规代理、翻墙软件与内网穿透进程只读安全巡检 Skill
@@ -2600,7 +2593,6 @@ description: 主机违规代理、翻墙软件与内网穿透进程只读安全�
 2. 检查常见代理本地监听端口（7890、7891、1080、10808、20171 等）是否存在未备案监听。
 3. 禁止终止进程或修改网络配置，仅汇总真实观测证据并输出结构化 JSON 结论。
 `,
-    undefined,
     18,
   ),
   makeSystemSeed(
@@ -2608,7 +2600,6 @@ description: 主机违规代理、翻墙软件与内网穿透进程只读安全�
     "主机软件包与补丁基线巡检 Skill",
     "由系统驱动 Agent Skill 只读盘点本机已安装关键软件包版本（OpenSSL、OpenSSH、Nginx、内核等）与待更新安全补丁概况。",
     "security",
-    "agent_prompt",
     `---
 name: inspect-package-vuln
 description: 主机关键软件组件版本与安全补丁状态只读盘点 Skill
@@ -2621,7 +2612,6 @@ description: 主机关键软件组件版本与安全补丁状态只读盘点 Ski
 2. 若本地存在缓存升级索引，只读统计待升级安全补丁数量，不执行安装或变更。
 3. 按要求输出结构化 JSON 巡检结果，未观测到的项标记为 \`skipped\`，不得编造 CVE 编号。
 `,
-    undefined,
     14,
   ),
 ]
@@ -2676,8 +2666,6 @@ export async function demoSkillsRequest(
       description: sk.description,
       scope: sk.scope,
       category: sk.category,
-      driver_mode: sk.driver_mode,
-      ...(sk.strategy_id ? { strategy_id: sk.strategy_id } : {}),
       enabled: sk.enabled,
       ...(includeBody ? { skill_md: sk.skill_md, files: sk.files.map((f) => ({ ...f })) } : {}),
       file_count: sk.files.length,
@@ -2725,22 +2713,12 @@ export async function demoSkillsRequest(
       const description = String(body.description || "").trim() || fm.description || existing?.description || ""
       const category = (["inspection", "security", "ops"].includes(String(body.category)) ? body.category : existing?.category || "inspection") as DemoPlatformSkill["category"]
       const scope: "system" | "custom" = existing ? existing.scope : requestedScope
-      const driver_mode = (
-        body.driver_mode === "builtin_strategy" && scope === "system"
-          ? "builtin_strategy"
-          : existing?.driver_mode === "builtin_strategy" && !body.driver_mode
-            ? "builtin_strategy"
-            : "agent_prompt"
-      ) as DemoPlatformSkill["driver_mode"]
-      const strategy_id = driver_mode === "builtin_strategy" ? (String(body.strategy_id || "").trim() || existing?.strategy_id) : undefined
       const next: DemoPlatformSkill = {
         slug,
         name,
         description,
         scope,
         category,
-        driver_mode,
-        strategy_id,
         enabled: body.enabled !== undefined ? Boolean(body.enabled) : (existing ? existing.enabled : true),
         skill_md: skillMD,
         files,

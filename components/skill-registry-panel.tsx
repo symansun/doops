@@ -14,9 +14,10 @@ import {
   Upload,
 } from "lucide-react"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
+import type { MonitorRunDiff } from "@/lib/monitor-metrics"
 import {
-  STRATEGY_LABELS,
   describeMonitorStatus,
+  fetchMonitorRunDetail,
   formatBytesCompact,
   triggerMonitorRun,
   type MonitorRunItemRecord,
@@ -24,7 +25,6 @@ import {
 } from "@/lib/monitor-engine"
 import {
   SKILL_CATEGORY_LABELS,
-  SKILL_DRIVER_LABELS,
   deletePlatformSkill,
   extractSkillZipFile,
   fetchPlatformSkillDetail,
@@ -124,8 +124,6 @@ export function SkillRegistryPanel({
   const [formDesc, setFormDesc] = useState("")
   const [formScope, setFormScope] = useState<"system" | "custom">("custom")
   const [formCategory, setFormCategory] = useState<"inspection" | "security" | "ops">("inspection")
-  const [formDriverMode, setFormDriverMode] = useState<"builtin_strategy" | "agent_prompt">("agent_prompt")
-  const [formStrategyId, setFormStrategyId] = useState("")
   const [formEnabled, setFormEnabled] = useState(true)
   const [formSkillMD, setFormSkillMD] = useState("")
   const [formFiles, setFormFiles] = useState<PlatformSkillFile[]>([])
@@ -203,8 +201,6 @@ export function SkillRegistryPanel({
         setFormDesc(skill.description || "")
         setFormScope(skill.scope)
         setFormCategory(skill.category)
-        setFormDriverMode(skill.driver_mode)
-        setFormStrategyId(skill.strategy_id || "")
         setFormEnabled(skill.enabled)
         setFormSkillMD(skill.skill_md || "")
         setFormFiles(skill.files || [])
@@ -233,8 +229,6 @@ export function SkillRegistryPanel({
     setFormDesc("")
     setFormScope(isAdmin ? presetScope : "custom")
     setFormCategory("inspection")
-    setFormDriverMode("agent_prompt")
-    setFormStrategyId("")
     setFormEnabled(true)
     setFormSkillMD(CUSTOM_SKILL_TEMPLATE)
     setFormFiles([])
@@ -326,8 +320,6 @@ export function SkillRegistryPanel({
         description: formDesc.trim(),
         scope: editingExisting ? editingExisting.scope : formScope,
         category: formCategory,
-        driver_mode: formDriverMode,
-        strategy_id: formDriverMode === "builtin_strategy" ? formStrategyId.trim() : "",
         enabled: formEnabled,
         skill_md: formSkillMD,
         files: formFiles,
@@ -467,11 +459,7 @@ export function SkillRegistryPanel({
     if (!testTarget && onlineTargets.length > 0) {
       setTestTarget(onlineTargets[0].key)
     }
-    setTestPrompt(
-      sk.driver_mode === "agent_prompt"
-        ? `请按 Skill「${sk.slug}」执行一次只读核查，并用 Markdown + JSON 输出结构化结果。`
-        : "",
-    )
+    setTestPrompt(`请按 Skill「${sk.slug}」执行一次只读核查，并用 Markdown + JSON 输出结构化结果。`)
   }
 
   async function executeSkillTestRun(e: FormEvent) {
@@ -493,7 +481,14 @@ export function SkillRegistryPanel({
         skills: [testSkill.slug],
         prompt: testPrompt.trim() || undefined,
       })
-      setTestResult(res)
+      // 试跑接口只返回本次结果；再取一次运行详情，才能拿到后端计算的跨次 diff（无前次运行时为 null）。
+      let detail: { run: MonitorRunRecord; items: MonitorRunItemRecord[] } | null = null
+      try {
+        detail = await fetchMonitorRunDetail(session, res.run.id)
+      } catch {
+        detail = null
+      }
+      setTestResult(detail ?? res)
       setLastRunId(res.run.id)
       reload()
     } catch (err) {
@@ -644,7 +639,6 @@ export function SkillRegistryPanel({
                   在线试跑验证：{testSkill.name}
                 </h2>
                 <Badge variant="outline" className="font-mono">{testSkill.slug}</Badge>
-                <Badge variant="outline">{SKILL_DRIVER_LABELS[testSkill.driver_mode] || testSkill.driver_mode}</Badge>
               </div>
               <Button size="sm" variant="ghost" onClick={() => { setTestSkill(null); setTestResult(null); setTestError("") }}>
                 关闭
@@ -713,7 +707,11 @@ export function SkillRegistryPanel({
                     {testResult.run.summary && <span className="text-foreground">{testResult.run.summary}</span>}
                   </div>
                 </div>
-                {testResult.items.map((item) => (
+                {testResult.items.map((item) => {
+                  // 详情接口为每个 item 返回 diff：null=首次运行（渲染空态），未返回=不渲染该区块。
+                  const hasDiff = Object.prototype.hasOwnProperty.call(item, "diff")
+                  const itemDiff = hasDiff ? ((item as { diff?: MonitorRunDiff | null }).diff ?? null) : undefined
+                  return (
                   <div key={`${item.cluster}-${item.instance}-${item.asset_id}-${item.id}`} className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <span className="font-mono font-medium text-foreground">
@@ -730,9 +728,15 @@ export function SkillRegistryPanel({
                       jsonData={item.artifact_json}
                       rawOutput={item.raw_output}
                       filePrefix={`${testSkill.slug}-${item.cluster}-${item.instance}`}
+                      diff={itemDiff}
+                      session={session}
+                      trendSkill={testSkill.slug}
+                      trendCluster={item.cluster}
+                      trendInstance={item.instance}
                     />
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </CardContent>
@@ -877,52 +881,17 @@ export function SkillRegistryPanel({
                 </label>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-3">
-                <label className="text-xs text-muted-foreground sm:col-span-2">
-                  简介说明
-                  <Input
-                    scale="sm"
-                    disabled={editorReadOnly}
-                    className="mt-1"
-                    placeholder="一句话描述该 Skill 的检查目标、适用范围与只读约束"
-                    value={formDesc}
-                    onChange={(e) => setFormDesc(e.target.value)}
-                  />
-                </label>
-                <label className="text-xs text-muted-foreground">
-                  巡检驱动引擎
-                  <Select
-                    scale="sm"
-                    className="mt-1"
-                    disabled={editorReadOnly || formScope !== "system"}
-                    value={formDriverMode}
-                    onChange={(e) => setFormDriverMode(e.target.value as "builtin_strategy" | "agent_prompt")}
-                  >
-                    <option value="agent_prompt">Agent Skill 驱动（同步至 Agent 执行）</option>
-                    {formScope === "system" && <option value="builtin_strategy">内置策略直采（Go 原生高速采集）</option>}
-                  </Select>
-                </label>
-              </div>
-
-              {formDriverMode === "builtin_strategy" && formScope === "system" && (
-                <label className="block max-w-xs text-xs text-muted-foreground">
-                  绑定内置采集策略
-                  <Select
-                    scale="sm"
-                    className="mt-1"
-                    disabled={editorReadOnly}
-                    value={formStrategyId}
-                    onChange={(e) => setFormStrategyId(e.target.value)}
-                  >
-                    <option value="">请选择内置策略</option>
-                    {Object.entries(STRATEGY_LABELS).map(([id, label]) => (
-                      <option key={id} value={id}>
-                        {label} ({id})
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-              )}
+              <label className="block text-xs text-muted-foreground">
+                简介说明
+                <Input
+                  scale="sm"
+                  disabled={editorReadOnly}
+                  className="mt-1"
+                  placeholder="一句话描述该 Skill 的检查目标、适用范围与只读约束"
+                  value={formDesc}
+                  onChange={(e) => setFormDesc(e.target.value)}
+                />
+              </label>
 
               <label className="block text-xs text-muted-foreground">
                 SKILL.md 规范正文（遵循 YAML Frontmatter + Markdown 指令规范）
@@ -1088,7 +1057,6 @@ export function SkillRegistryPanel({
                               {sk.scope === "system" ? "系统 Skill" : "自定义 Skill"}
                             </Badge>
                             <Badge variant="outline">{SKILL_CATEGORY_LABELS[sk.category] || sk.category}</Badge>
-                            <Badge variant="outline">{SKILL_DRIVER_LABELS[sk.driver_mode] || sk.driver_mode}</Badge>
                           </div>
                           <button
                             type="button"
@@ -1113,7 +1081,6 @@ export function SkillRegistryPanel({
                           <h3 className="text-sm font-semibold text-foreground">{sk.name}</h3>
                           <div className="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-2xs text-muted-foreground">
                             <span>{sk.slug}</span>
-                            {sk.strategy_id && <span>→ {STRATEGY_LABELS[sk.strategy_id] || sk.strategy_id}</span>}
                           </div>
                         </div>
 
