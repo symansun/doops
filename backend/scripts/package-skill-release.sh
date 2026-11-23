@@ -24,6 +24,7 @@ mkdir -p "${staging}/skills" "${staging}/docs/migrations" "${staging}/scripts"
 cp "${ROOT_DIR}/backend/skills/SKILL.md" "${staging}/skills/SKILL.md"
 cp "${ROOT_DIR}"/backend/docs/*.md "${staging}/docs/"
 cp "${ROOT_DIR}/backend/docs/migrations/"{machine_inventory,cluster_inventory,inventory_node_links}.sql "${staging}/docs/migrations/"
+cp "${ROOT_DIR}/backend/docs/migrations/agent_resource_sync.sql" "${staging}/docs/migrations/"
 cp "${ROOT_DIR}/scripts/install.sh" "${staging}/scripts/install.sh"
 
 # Do not add macOS AppleDouble (._*) metadata entries to the portable bundle.

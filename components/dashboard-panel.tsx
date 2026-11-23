@@ -12,6 +12,7 @@ import {
 import { listInstances } from "@/lib/admin"
 import { commandPreview, summarizeInstanceScope, type InstanceScope } from "@/lib/admin-views"
 import { emptyTargetsCopy } from "@/lib/empty-targets"
+import { targetModeLabel } from "@/lib/gateway"
 import { greeting } from "@/lib/session-display"
 import {
   ServerIcon,
@@ -247,6 +248,7 @@ export function CurrentMachineSection({ selected }: { selected: Target }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-semibold text-foreground">{selected.instance}</h3>
+            <Badge>{targetModeLabel(selected.mode)}</Badge>
             <StatusPill busy={selected.busy} activeOps={selected.active_ops} status={selected.status} />
           </div>
           <p className="mt-0.5 font-mono text-xs text-muted-foreground">{selected.cluster}</p>

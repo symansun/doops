@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react"
 import type { Target } from "@/lib/client"
 import { targetSwitcherEmptyCopy } from "@/lib/empty-targets"
+import { targetModeLabel } from "@/lib/gateway"
 import { ServerIcon, RefreshIcon, ChevronDownIcon, CheckIcon } from "./icons"
-import { Button } from "./ui"
+import { Badge, Button } from "./ui"
 
 function statusDot(t: Target): string {
   if (t.status === "offline") return "bg-muted-foreground/50"
@@ -92,6 +93,7 @@ export function TargetSwitcher({
         <span className="hidden truncate font-mono text-sm text-muted-foreground sm:inline">
           {current?.cluster}
         </span>
+        {current && <Badge>{targetModeLabel(current.mode)}</Badge>}
         {targets.length > 1 && (
           <span className="rounded-full bg-background px-1.5 text-sm text-muted-foreground">
             {targets.length}
@@ -150,6 +152,7 @@ export function TargetSwitcher({
                     {t.cluster} · {statusLabel(t)}
                   </span>
                 </span>
+                <Badge>{targetModeLabel(t.mode)}</Badge>
                 {active && <CheckIcon width={14} height={14} className="shrink-0 text-primary" />}
               </button>
             )

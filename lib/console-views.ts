@@ -106,8 +106,9 @@ const NAV: ConsoleNavEntry[] = [
 
 // The admin entries only decide what is shown; the Gateway still checks every
 // admin request.
-export function consoleNavEntries(isAdmin: boolean): ConsoleNavEntry[] {
-  return NAV.filter(entry => !entry.admin || isAdmin)
+export function consoleNavEntries(isAdmin: boolean, kubernetesAvailable?: boolean): ConsoleNavEntry[] {
+  return NAV.filter(entry => (!entry.admin || isAdmin) &&
+    (kubernetesAvailable !== false || (entry.id !== "k8s" && entry.id !== "deploy-workload")))
 }
 
 export function targetTabLabel(tab: TargetTab): string {

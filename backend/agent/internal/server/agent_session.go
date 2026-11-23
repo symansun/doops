@@ -34,6 +34,8 @@ type GatewayAgent struct {
 	Generation             uint64    `json:"generation"`
 	RuntimeID              string    `json:"runtime_id,omitempty"`
 	ReleaseCommit          string    `json:"release_commit,omitempty"`
+	Mode                   string    `json:"mode,omitempty"`
+	KubernetesAvailable    *bool     `json:"kubernetes_available,omitempty"`
 	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
 	StructuredSSH          bool      `json:"structured_ssh,omitempty"`
 	ExecutionLifecycle     bool      `json:"execution_lifecycle,omitempty"`
@@ -41,6 +43,7 @@ type GatewayAgent struct {
 	RegistryAuthfile       bool      `json:"registry_authfile,omitempty"`
 	COSSnapshotExecutable  bool      `json:"cos_snapshot_executable,omitempty"`
 	ToolDeadline           bool      `json:"tool_deadline,omitempty"`
+	AgentResourceSync      bool      `json:"target_manifest_supported,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
 	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
@@ -72,6 +75,7 @@ type GatewayAgent struct {
 	closed           chan struct{}
 	reqID            int64
 	modelVersionID   string
+	resourceSync     gatewayAgentResourceSync
 }
 
 type agentResourceSlot struct {
@@ -96,9 +100,12 @@ type GatewayTarget struct {
 	QueuedOps     int       `json:"queued_ops"`
 	// Enrolled reports whether the live session authenticated with a target
 	// enrollment token. The token and its ID never leave the Gateway.
-	Enrolled  bool     `json:"enrolled"`
-	Resources []string `json:"resources,omitempty"`
-	Sessions  []string `json:"sessions,omitempty"`
+	Enrolled            bool     `json:"enrolled"`
+	Resources           []string `json:"resources,omitempty"`
+	Sessions            []string `json:"sessions,omitempty"`
+	Mode                string   `json:"mode,omitempty"`
+	KubernetesAvailable *bool    `json:"kubernetes_available,omitempty"`
+	ManifestRevision    uint64   `json:"manifest_revision,omitempty"`
 }
 
 func newGatewayAgentSession(
@@ -126,6 +133,7 @@ func newGatewayAgentSession(
 		messageBudget:   messageBudget,
 		closed:          make(chan struct{}),
 		stateChanged:    make(chan struct{}),
+		resourceSync:    gatewayAgentResourceSync{changed: make(chan struct{}, 1)},
 	}
 	return agent
 }
@@ -179,6 +187,16 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 		releaseCommit = ""
 	}
 	a.ReleaseCommit = releaseCommit
+	if mode, ok := result["targetMode"].(string); ok && validAgentResourceMode(mode) {
+		a.Mode = mode
+	} else {
+		a.Mode = ""
+	}
+	if available, ok := result["kubernetesAvailable"].(bool); ok {
+		a.KubernetesAvailable = &available
+	} else {
+		a.KubernetesAvailable = nil
+	}
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, ok := capabilities["protocols"].(map[string]interface{})
 	a.ExecutionLifecycle = executionLifecycleCapabilityCompatible(protocols[executionLifecycleProtocol])
@@ -190,6 +208,7 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 	// Only an Agent that declares this understands a timeout_ms tools/call
 	// field and replies with agent_tool_timeout when its own deadline fires.
 	a.ToolDeadline = toolDeadlineCapabilityCompatible(protocols[toolDeadlineProtocol])
+	a.AgentResourceSync, _ = protocols[agentResourceSyncProtocol].(bool)
 	if !ok {
 		return
 	}
@@ -447,15 +466,20 @@ func (a *GatewayAgent) runtimeState() targetRuntimeState {
 func (a *GatewayAgent) snapshot() GatewayTarget {
 	a.stateMu.RLock()
 	target := GatewayTarget{
-		Cluster:       a.Cluster,
-		Instance:      a.Instance,
-		Key:           a.Key,
-		Remote:        a.Remote,
-		TokenID:       a.TokenID,
-		Enrolled:      a.TokenID != "",
-		ReleaseCommit: a.ReleaseCommit,
-		ConnectedAt:   a.ConnectedAt,
-		LastSeen:      a.LastSeen,
+		Cluster:             a.Cluster,
+		Instance:            a.Instance,
+		Key:                 a.Key,
+		Remote:              a.Remote,
+		TokenID:             a.TokenID,
+		Enrolled:            a.TokenID != "",
+		ReleaseCommit:       a.ReleaseCommit,
+		Mode:                a.Mode,
+		KubernetesAvailable: a.KubernetesAvailable,
+		ConnectedAt:         a.ConnectedAt,
+		LastSeen:            a.LastSeen,
+	}
+	if manifest := a.resourceSync.manifest; manifest.Revision != 0 {
+		target.ManifestRevision = manifest.Revision
 	}
 	a.stateMu.RUnlock()
 	state := a.runtimeState()

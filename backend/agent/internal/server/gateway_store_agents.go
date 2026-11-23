@@ -15,18 +15,20 @@ var (
 )
 
 type AgentStatus struct {
-	Cluster       string
-	Instance      string
-	TokenID       string
-	Remote        string
-	ReleaseCommit string
-	Status        string
-	Generation    uint64
-	ConnectedAt   time.Time
-	LastSeen      time.Time
-	UpdatedAt     time.Time
-	ArchivedAt    time.Time
-	ArchivedBy    string
+	Cluster             string
+	Instance            string
+	TokenID             string
+	Remote              string
+	ReleaseCommit       string
+	Status              string
+	Generation          uint64
+	Mode                string
+	KubernetesAvailable *bool
+	ConnectedAt         time.Time
+	LastSeen            time.Time
+	UpdatedAt           time.Time
+	ArchivedAt          time.Time
+	ArchivedBy          string
 }
 
 type AgentConnectionEvent struct {
@@ -64,22 +66,28 @@ func (s *GatewayStore) MarkAgentOnline(agent AgentStatus) error {
 		agent.LastSeen = now
 	}
 	connectedUTC := agent.ConnectedAt.UTC()
+	var kubernetesAvailable any
+	if agent.KubernetesAvailable != nil {
+		kubernetesAvailable = *agent.KubernetesAvailable
+	}
 	_, err := s.db.Exec(`INSERT INTO agent_status
-		(cluster, instance, token_id, remote, release_commit, status, generation, connected_at, last_seen, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'online', ?, ?, ?, ?)
+		(cluster, instance, token_id, remote, release_commit, status, generation, mode, kubernetes_available, connected_at, last_seen, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'online', ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(cluster, instance) DO UPDATE SET
 			token_id = excluded.token_id,
 			remote = excluded.remote,
 			release_commit = CASE WHEN excluded.release_commit = '' THEN agent_status.release_commit ELSE excluded.release_commit END,
 			status = 'online',
 			generation = excluded.generation,
+			mode = excluded.mode,
+			kubernetes_available = excluded.kubernetes_available,
 			connected_at = excluded.connected_at,
 			last_seen = excluded.last_seen,
 			updated_at = excluded.updated_at,
 			archived_at = '',
 			archived_by = ''`,
 		agent.Cluster, agent.Instance, agent.TokenID, agent.Remote, agent.ReleaseCommit, agent.Generation,
-		formatTime(connectedUTC), formatTime(agent.LastSeen.UTC()), formatTime(now))
+		agent.Mode, kubernetesAvailable, formatTime(connectedUTC), formatTime(agent.LastSeen.UTC()), formatTime(now))
 	if err != nil {
 		return err
 	}
@@ -195,15 +203,21 @@ func (s *GatewayStore) TouchAgentsContext(ctx context.Context, updates []AgentHe
 	return tx.Commit()
 }
 
-const agentStatusColumns = `cluster, instance, token_id, remote, release_commit, status, generation, connected_at, last_seen, updated_at,
+const agentStatusColumns = `cluster, instance, token_id, remote, release_commit, status, generation, mode, kubernetes_available, connected_at, last_seen, updated_at,
 	archived_at, archived_by`
 
 func scanAgentStatus(row interface{ Scan(dest ...any) error }) (AgentStatus, error) {
 	var agent AgentStatus
-	var connected, lastSeen, updated, archived string
+	var connected, lastSeen, updated, archived, mode string
+	var kubernetesAvailable sql.NullBool
 	if err := row.Scan(&agent.Cluster, &agent.Instance, &agent.TokenID, &agent.Remote, &agent.ReleaseCommit,
-		&agent.Status, &agent.Generation, &connected, &lastSeen, &updated, &archived, &agent.ArchivedBy); err != nil {
+		&agent.Status, &agent.Generation, &mode, &kubernetesAvailable, &connected, &lastSeen, &updated, &archived, &agent.ArchivedBy); err != nil {
 		return AgentStatus{}, err
+	}
+	agent.Mode = mode
+	if kubernetesAvailable.Valid {
+		value := kubernetesAvailable.Bool
+		agent.KubernetesAvailable = &value
 	}
 	if connected != "" {
 		agent.ConnectedAt, _ = parseTime(connected)

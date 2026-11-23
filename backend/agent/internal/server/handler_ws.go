@@ -25,6 +25,8 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	defer conn.Close()
 	conn.SetReadLimit(maxWebSocketMessageBytes())
 	connectionCtx, cancelConnection := context.WithCancel(context.Background())
+	manifestDir, _ := agentManifestDirectory()
+	var resourceSession *agentResourceSession
 
 	// per-connection 写互斥锁（gorilla/websocket 不允许并发写）
 	var connMu sync.Mutex
@@ -144,6 +146,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 
 		if req.Method == "initialize" {
 			// 处理初始化握手
+			runtime := currentTargetRuntime(connectionCtx)
 			writeJSON(api.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
@@ -154,7 +157,9 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 						"version":       release.Version,
 						"releaseCommit": release.Commit,
 					},
-					"runtimeId": agentProcessRuntimeID,
+					"runtimeId":           agentProcessRuntimeID,
+					"targetMode":          runtime.mode(),
+					"kubernetesAvailable": runtime.Kubernetes,
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
 						"protocols": map[string]interface{}{
@@ -165,7 +170,8 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 							registryAuthfileProtocol:      registryAuthfileCapability(),
 							cosSnapshotExecutableProtocol: cosSnapshotExecutableCapability(),
 							toolDeadlineProtocol:          toolDeadlineCapability(),
-			knowledgeBaseProtocol:         knowledgeBaseCapability(),
+							knowledgeBaseProtocol:         knowledgeBaseCapability(),
+							agentResourceSyncProtocol:     onReady != nil && manifestDir != "",
 						},
 					},
 				},
@@ -174,8 +180,23 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 		}
 		if req.Method == "gateway/registered" {
 			if onReady != nil {
-				readyOnce.Do(onReady)
+				readyOnce.Do(func() {
+					var target targetManifestTarget
+					if json.Unmarshal(req.Params, &target) == nil && target.Cluster != "" && target.Instance != "" {
+						resourceSession = &agentResourceSession{target: target, dir: manifestDir}
+					}
+					onReady()
+				})
 			}
+			continue
+		}
+		if req.Method == agentResourceObserveMethod || req.Method == agentResourceApplyMethod {
+			if resourceSession == nil {
+				writeJSON(buildErrorResponse(req.ID, -32601, "target_resource_sync_requires_gateway"))
+				continue
+			}
+			session := resourceSession
+			go session.handle(connectionCtx, req, writeJSON)
 			continue
 		}
 
@@ -381,6 +402,23 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 				continue
 			}
 
+			session := resourceSession
+			run := func(ctx context.Context) {
+				if len(params.TargetManifest) != 0 {
+					if session == nil {
+						writeJSON(buildErrorResponse(req.ID, -32602, "target_resource_sync_requires_gateway"))
+						return
+					}
+					pinned, err := session.pinExecution(ctx, params)
+					if err != nil {
+						writeJSON(buildErrorResponse(req.ID, -32603, err.Error()))
+						return
+					}
+					ctx = pinned
+				}
+				gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.TimeoutMS, writeJSON)
+			}
+
 			// 异步处理实际的 tool 执行
 			ctx, cancel := context.WithCancel(connectionCtx)
 			if id, ok := numericID(req.ID); ok {
@@ -400,7 +438,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 						activeToolMu.Unlock()
 						cancel()
 					}()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.TimeoutMS, writeJSON)
+					run(ctx)
 				}()
 			} else {
 				inFlightToolCalls.Add(1)
@@ -409,7 +447,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					defer executionWG.Done()
 					defer inFlightToolCalls.Add(-1)
 					defer cancel()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.TimeoutMS, writeJSON)
+					run(ctx)
 				}()
 			}
 		}

@@ -154,14 +154,16 @@ func (r *AgentRegistry) RegisterWithEnrollment(agent *GatewayAgent, enrollmentID
 	}
 	agent.Generation = generation
 	if err := r.store.MarkAgentOnline(AgentStatus{
-		Cluster:       agent.Cluster,
-		Instance:      agent.Instance,
-		TokenID:       agent.TokenID,
-		Remote:        agent.Remote,
-		ReleaseCommit: agent.ReleaseCommit,
-		Generation:    agent.Generation,
-		ConnectedAt:   agent.ConnectedAt,
-		LastSeen:      agent.LastSeen,
+		Cluster:             agent.Cluster,
+		Instance:            agent.Instance,
+		TokenID:             agent.TokenID,
+		Remote:              agent.Remote,
+		ReleaseCommit:       agent.ReleaseCommit,
+		Generation:          agent.Generation,
+		Mode:                agent.Mode,
+		KubernetesAvailable: agent.KubernetesAvailable,
+		ConnectedAt:         agent.ConnectedAt,
+		LastSeen:            agent.LastSeen,
 	}); err != nil {
 		return fmt.Errorf("persist agent online: %w", err)
 	}
@@ -397,4 +399,19 @@ func (r *AgentRegistry) notifyLocked(key string) {
 		close(ch)
 	}
 	r.changed[key] = make(chan struct{})
+}
+
+// resourceSyncAgents returns the live sessions that declared the target
+// manifest protocol. Callers use it to fan observation refreshes out without
+// holding the registry lock across RPCs.
+func (r *AgentRegistry) resourceSyncAgents() []*GatewayAgent {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agents := make([]*GatewayAgent, 0, len(r.sessions))
+	for _, agent := range r.sessions {
+		if agent.AgentResourceSync {
+			agents = append(agents, agent)
+		}
+	}
+	return agents
 }

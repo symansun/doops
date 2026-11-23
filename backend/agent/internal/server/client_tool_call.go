@@ -27,6 +27,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
 		return nil
 	}
+	if len(params.TargetManifest) != 0 {
+		writeJSON(buildErrorResponse(req.ID, -32602, "target_manifest_is_gateway_managed"))
+		return nil
+	}
 	spec := gatewayToolIndex[params.Name]
 	if spec.visibility == gatewayInternal && spec.publicDenial != "" {
 		writeJSON(buildErrorResponse(req.ID, -32003, spec.publicDenial))
@@ -331,6 +335,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			finishAudit("canceled", "operation_canceled", "", 0)
 			writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))
 		}
+		return nil
+	}
+	if err := h.hub.pinExecutionManifest(opCtx, agent, auditID, &params); err != nil {
+		finishAudit("blocked", err.Error(), "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32603, err.Error()))
 		return nil
 	}
 	guarded := requiresExecutionOutcomeGuard(action, params.Name, params.Arguments, resourceKey)

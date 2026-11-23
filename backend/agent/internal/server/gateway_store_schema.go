@@ -463,6 +463,12 @@ func (s *GatewayStore) migrate() error {
 	if err := s.ensureColumn("agent_status", "release_commit", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("agent_status", "mode", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("agent_status", "kubernetes_available", "INTEGER"); err != nil {
+		return err
+	}
 	for _, column := range []struct {
 		name       string
 		definition string

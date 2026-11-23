@@ -69,6 +69,17 @@ const operationsPrompts = [
   },
 ] satisfies readonly AgentStartPromptGroup[]
 
-export const doopsStartPromptGroups = {
+const doopsStartPromptGroups = {
   work: operationsPrompts,
 } satisfies AgentStartPromptGroups
+
+const nonKubernetesStartPromptGroups = {
+  work: operationsPrompts.filter(group => group.id !== "delivery").map(group => ({
+    ...group,
+    prompts: group.prompts.filter(prompt => prompt.id !== "kubernetes-triage"),
+  })),
+} satisfies AgentStartPromptGroups
+
+export function startPromptGroupsForTarget(kubernetesAvailable?: boolean): AgentStartPromptGroups {
+  return kubernetesAvailable === false ? nonKubernetesStartPromptGroups : doopsStartPromptGroups
+}

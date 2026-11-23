@@ -10,32 +10,34 @@ import (
 )
 
 type AuditEvent struct {
-	ID              int64
-	UserID          string
-	TokenID         string
-	Cluster         string
-	Instance        string
-	CredentialID    string
-	VersionID       string
-	GrantID         string
-	Scope           *CredentialGrantScope
-	ResourceVersion string
-	Digest          string
-	CorrelationID   string
-	Action          GatewayAction
-	Session         string
-	CommandSummary  string
-	Status          string
-	Error           string
-	Tail            string
-	BytesIn         int64
-	BytesOut        int64
-	Model           string
-	InputTokens     int64
-	OutputTokens    int64
-	TotalTokens     int64
-	StartedAt       time.Time
-	EndedAt         time.Time
+	ID               int64
+	ManifestRevision uint64
+	ResourceRefs     []string
+	UserID           string
+	TokenID          string
+	Cluster          string
+	Instance         string
+	CredentialID     string
+	VersionID        string
+	GrantID          string
+	Scope            *CredentialGrantScope
+	ResourceVersion  string
+	Digest           string
+	CorrelationID    string
+	Action           GatewayAction
+	Session          string
+	CommandSummary   string
+	Status           string
+	Error            string
+	Tail             string
+	BytesIn          int64
+	BytesOut         int64
+	Model            string
+	InputTokens      int64
+	OutputTokens     int64
+	TotalTokens      int64
+	StartedAt        time.Time
+	EndedAt          time.Time
 }
 
 type AuditFinish struct {

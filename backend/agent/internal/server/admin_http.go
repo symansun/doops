@@ -41,24 +41,26 @@ type adminInstanceRequest struct {
 }
 
 type adminInstanceInfo struct {
-	Cluster     string    `json:"cluster"`
-	Instance    string    `json:"instance"`
-	Status      string    `json:"status"`
-	Remote      string    `json:"remote,omitempty"`
-	Busy        bool      `json:"busy"`
-	ActiveOps   int       `json:"active_ops"`
-	QueuedOps   int       `json:"queued_ops"`
-	ConnectedAt time.Time `json:"connected_at,omitempty"`
-	LastSeen    time.Time `json:"last_seen,omitempty"`
-	Archived    bool      `json:"archived"`
-	ArchivedAt  time.Time `json:"archived_at,omitempty"`
-	ArchivedBy  string    `json:"archived_by,omitempty"`
+	Cluster             string    `json:"cluster"`
+	Instance            string    `json:"instance"`
+	Status              string    `json:"status"`
+	Remote              string    `json:"remote,omitempty"`
+	Busy                bool      `json:"busy"`
+	ActiveOps           int       `json:"active_ops"`
+	QueuedOps           int       `json:"queued_ops"`
+	ConnectedAt         time.Time `json:"connected_at,omitempty"`
+	LastSeen            time.Time `json:"last_seen,omitempty"`
+	Mode                string    `json:"mode,omitempty"`
+	KubernetesAvailable *bool     `json:"kubernetes_available,omitempty"`
+	Archived            bool      `json:"archived"`
+	ArchivedAt          time.Time `json:"archived_at,omitempty"`
+	ArchivedBy          string    `json:"archived_by,omitempty"`
 }
 
 func adminInstanceStatus(st AgentStatus) adminInstanceInfo {
 	return adminInstanceInfo{
 		Cluster: st.Cluster, Instance: st.Instance, Status: "offline", Remote: st.Remote,
-		ConnectedAt: st.ConnectedAt, LastSeen: st.LastSeen,
+		ConnectedAt: st.ConnectedAt, LastSeen: st.LastSeen, Mode: st.Mode, KubernetesAvailable: st.KubernetesAvailable,
 		Archived: !st.ArchivedAt.IsZero(), ArchivedAt: st.ArchivedAt, ArchivedBy: st.ArchivedBy,
 	}
 }
