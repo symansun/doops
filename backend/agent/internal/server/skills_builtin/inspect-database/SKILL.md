@@ -9,6 +9,7 @@ required_mcp: dosql
 ## 执行形态（如实声明）
 - **AI 驱动、无确定性脚本**：本包不提供 `scripts/`，也不声明 `entrypoint`；能力入口是 `required_mcp: dosql` 提供的受管 `mcp_dosql_read`，由 AI 组织只读巡检。
 - 无可绑定数据库目标或 dosql 不可用时，必须在 `checks` 中显式说明缺口，`status` 取 `warning`/`critical`，`metrics` 留空；**禁止编造指标或用 0 静默通过**。
+- **目标自述**：若环境提供 `DOOPS_TARGET_CLUSTER` / `DOOPS_TARGET_INSTANCE`，产物应带 `target: {cluster, instance}`；缺失取 `null`，不得编造。
 
 ## 执行步骤（严格只读）
 1. 优先调用 `mcp_dosql_read` 列出当前目标可用的受管数据库连接并核查只读连通性。
