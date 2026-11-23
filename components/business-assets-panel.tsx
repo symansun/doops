@@ -89,7 +89,7 @@ function SystemForm({ system, targets, onCancel, onSaved, onReload }: {
       onSaved(value.asset_id)
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) } finally { setBusy(false) }
   }
-  return <form onSubmit={save} className="space-y-4"><h3 className="font-semibold">{system ? "编辑业务系统" : "登记业务系统"}</h3>
+  return <form data-assist-scope="asset-entry" onSubmit={save} className="space-y-4"><h3 className="font-semibold">{system ? "编辑业务系统" : "登记业务系统"}</h3>
     <fieldset disabled={busy} className="grid gap-3 text-sm sm:grid-cols-2 [&_label]:grid [&_label]:gap-1">
       <label>系统编号<Input name="asset_id" required readOnly={!!system} maxLength={128} defaultValue={system?.asset_id} /></label><label>系统名称<Input name="name" required maxLength={256} defaultValue={system?.name} /></label>
       <label>负责人<Input name="owner" required maxLength={256} defaultValue={system?.owner} /></label><label>服役状态<Select name="active" defaultValue={String(system?.active ?? true)}><option value="true">在役</option><option value="false">退役</option></Select></label>

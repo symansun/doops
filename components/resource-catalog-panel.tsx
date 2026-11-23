@@ -167,6 +167,7 @@ export function ResourceCatalogPanel({
 
       {draft && (
         <form
+          data-assist-scope="asset-entry"
           className="card-surface space-y-3 p-4"
           onSubmit={(e) => {
             e.preventDefault()

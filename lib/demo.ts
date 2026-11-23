@@ -2004,8 +2004,10 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
         targets: Array.isArray(body.targets) ? body.targets : [],
         tags: Array.isArray(body.tags) ? body.tags : [],
         interval_seconds: Number(body.interval_seconds || 300),
-        strategies: derivedStrategies.length ? derivedStrategies : (nextSkills.length ? [] : seedSchedules[0].strategies),
+        strategies: derivedStrategies.length ? derivedStrategies : (nextSkills.length || body.prompt || body.command ? [] : seedSchedules[0].strategies),
         skills: nextSkills,
+        prompt: String(body.prompt || ""),
+        command: String(body.command || ""),
         thresholds: body.thresholds && typeof body.thresholds === "object" ? { ...defaultThresholds, ...(body.thresholds as Record<string, unknown>) } : defaultThresholds,
         updated_at: new Date(now).toISOString(),
       }
@@ -2038,6 +2040,8 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       : (sched && Array.isArray(sched.skills) && sched.skills.length ? (sched.skills as string[]) : null)
     const reqTargets = Array.isArray(body.targets) ? (body.targets as Array<{ cluster: string; instance: string }>) : []
     const sshHosts = Array.isArray(body.ssh_hosts) ? (body.ssh_hosts as Array<Record<string, unknown>>) : []
+    const reqPrompt = String(body.prompt || (sched?.prompt ?? "")).trim()
+    const reqCommand = String(body.command || (sched?.command ?? "")).trim()
 
     let generatedItems = buildStandardItems(newId, now - 2200, false, demoInspectionWave % 4 === 1)
     if (body.retest_run_id) {
@@ -2236,6 +2240,51 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       if (generatedItems.length === 0) {
         generatedItems = buildStandardItems(newId, now - 1800, false, false).slice(0, 2)
       }
+    } else if (reqCommand || reqPrompt) {
+      const targetCluster = reqTargets[0]?.cluster || "prod-cn"
+      const targetInstance = reqTargets[0]?.instance || "web-01"
+      const sampleJson = {
+        status: "pass",
+        summary: reqCommand ? "自定义命令采集完成并生成结构化产物" : "已按提示词执行巡检并输出 Markdown + JSON 产物",
+        target: `${targetCluster}/${targetInstance}`,
+        cpu_percent: 24.6,
+        memory_percent: 41.2,
+        open_ports: [
+          { port: 80, proto: "tcp", process: "nginx", status: "running" },
+          { port: 443, proto: "tcp", process: "nginx", status: "running" },
+          { port: 5432, proto: "tcp", process: "postgres", status: "running" },
+        ],
+      }
+      const sampleMd = `### 巡检产物摘要\n\n- **目标**：\`${targetCluster}/${targetInstance}\`\n${reqPrompt ? `- **提示词**：${reqPrompt}\n` : ""}${reqCommand ? `- **执行命令**：\`${reqCommand}\`\n` : ""}\n核心服务端口监听正常，资源水位平稳。\n\n\`\`\`json\n${JSON.stringify(sampleJson, null, 2)}\n\`\`\``
+      generatedItems = [{
+        id: 1,
+        run_id: newId,
+        cluster: targetCluster,
+        instance: targetInstance,
+        asset_id: reqCommand ? "shell-command" : "custom-prompt",
+        asset_name: reqPrompt ? reqPrompt.slice(0, 48) : "自定义命令巡检",
+        asset_kind: reqCommand ? "command" : "prompt",
+        strategy: reqCommand ? "command" : "custom_prompt",
+        collector_method: reqCommand ? "shell_command" : "agent_prompt",
+        status: "pass",
+        started_at_ms: now - 900,
+        finished_at_ms: now - 120,
+        duration_ms: 780,
+        metrics: {},
+        checks: [{
+          id: "artifact.result",
+          name: reqPrompt ? reqPrompt.slice(0, 48) : "自定义命令巡检",
+          category: reqCommand ? "command" : "prompt",
+          status: "pass",
+          value: "markdown+json",
+          detail: sampleJson.summary,
+        }],
+        evidence: { ...(reqPrompt ? { prompt: reqPrompt } : {}), ...(reqCommand ? { command: reqCommand } : {}) },
+        artifact_format: "markdown+json",
+        artifact_markdown: sampleMd,
+        artifact_json: sampleJson,
+        raw_output: sampleMd,
+      }]
     } else {
       if (reqTargets.length > 0) {
         generatedItems = generatedItems.filter((it) =>
@@ -2300,6 +2349,9 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
       trigger_kind: body.retest_run_id ? "retest" : "manual",
       triggered_by: "admin",
       status: runStatus,
+      skills: reqSkills || [],
+      prompt: reqPrompt,
+      command: reqCommand,
       total_targets: new Set(generatedItems.map((i) => `${i.cluster}/${i.instance}`)).size || 1,
       total_assets: generatedItems.length,
       passed_checks: passedChecks,

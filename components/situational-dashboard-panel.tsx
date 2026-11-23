@@ -6,7 +6,6 @@ import { assetRequest } from "@/lib/assets"
 import type { TargetTab } from "@/lib/console-views"
 import {
   buildRunReportCSV,
-  describeMonitorStatus,
   fetchMonitorOverview,
   fetchMonitorRunDetail,
   formatBytesCompact,
@@ -22,11 +21,6 @@ import {
   buildCustomReportMarkdown,
   type ReportSectionKey,
 } from "@/lib/inspection-report"
-import {
-  getInspectionMcpServices,
-  mapMcpServicesToStrategies,
-  recordInspectionMcpRun,
-} from "@/lib/inspection-mcp-store"
 import { ActivityIcon, RefreshIcon, RocketIcon, SparkIcon } from "./icons"
 import { AssetTopologyPanel } from "./asset-topology-panel"
 import { SystemResourceMonitor } from "./system-resource-monitor"
@@ -35,6 +29,7 @@ import {
   LayeredArchitecture3D,
   ResourceBars3D,
   TiltCard3D,
+  type ArchLink3D,
   type ArchNode3D,
   type CoreNode3D,
   type ResourceBar3DItem,
@@ -51,12 +46,6 @@ import {
   Select,
   Stack,
   StatusBanner,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from "./ui"
 
 type SituationTab = "dashboard" | "topology" | "resources"
@@ -115,11 +104,11 @@ interface CoverageSnapshot {
 
 const REPORT_SECTIONS: { key: ReportSectionKey; label: string }[] = [
   { key: "topology_coverage", label: "业务 → 集群 → 机器整体架构与覆盖率" },
-  { key: "system_gpu", label: "机器与集群立体化资源监控（含 GPU）" },
-  { key: "app_database", label: "应用级与数据库级运行观测" },
-  { key: "inspection_vuln", label: "综合巡检执行与 MCP 服务状态" },
-  { key: "security_events", label: "安全态势与告警记录" },
-  { key: "ai_remediation", label: "多源关联分析与优先处置建议" },
+  { key: "system_gpu", label: "机器与集群资源水位（含 GPU）" },
+  { key: "app_database", label: "应用与数据库运行观测" },
+  { key: "inspection_vuln", label: "巡检执行与产物概览" },
+  { key: "security_events", label: "实时阈值告警记录" },
+  { key: "ai_remediation", label: "异常项与处置建议" },
 ]
 
 function downloadFile(filename: string, content: string, mime: string) {
@@ -267,13 +256,12 @@ export function SituationalDashboardPanel({
   const [error, setError] = useState("")
   const [revision, setRevision] = useState(0)
   const [selectedNodeId, setSelectedNodeId] = useState<string>("")
+  const [onlyAnomalies, setOnlyAnomalies] = useState(false)
   const [chartMode, setChartMode] = useState<"3d" | "trend">("3d")
 
-  // Custom security report drawer
+  // Custom report drawer
   const [reportOpen, setReportOpen] = useState(false)
-  const [reportTitle, setReportTitle] = useState(
-    session.demo ? "浙江音乐学院智能综合感知运营与安全巡检综合报告" : "DoOps 业务→集群→机器综合态势与监控报告",
-  )
+  const [reportTitle, setReportTitle] = useState("DoOps 业务→集群→机器综合态势与监控报告")
   const [reportPeriod, setReportPeriod] = useState<"24h" | "7d" | "30d">("7d")
   const [reportSections, setReportSections] = useState<ReportSectionKey[]>([
     "topology_coverage",
@@ -333,33 +321,13 @@ export function SituationalDashboardPanel({
     setError("")
     setNotice("")
     try {
-      const enabledMcps = getInspectionMcpServices().filter((s) => s.enabled)
-      const strategies = session.demo
-        ? mapMcpServicesToStrategies(enabledMcps)
-        : ["vm_host", "ssh_host", "k8s_cluster", "container_runtime", "app_service", "database_service"]
       const res = await triggerMonitorRun(session, {
         scope_mode: "all_online",
-        strategies,
-        ...(session.demo
-          ? {
-              mcp_services: enabledMcps.map((m) => m.id),
-              mcp_title: `全网态势联动巡检（已启用 ${enabledMcps.length} 个 MCP 服务）`,
-            }
-          : {}),
+        skills: ["inspect-vm-host"],
       })
-      if (session.demo && enabledMcps.length > 0) {
-        const statusMap: Record<string, "pass" | "warning" | "critical"> = {}
-        for (const m of enabledMcps) {
-          statusMap[m.id] = res.run.failed_checks > 0 ? "critical" : res.run.warning_checks > 0 ? "warning" : "pass"
-        }
-        recordInspectionMcpRun(
-          enabledMcps.map((m) => m.id),
-          statusMap,
-        )
-      }
       const nextRound = inspectRounds + 1
       setInspectRounds(nextRound)
-      setNotice(`第 ${nextRound} 轮全网采集巡检完成（#${res.run.id} · 耗时 ${(res.run.duration_ms / 1000).toFixed(1)}s）：${res.run.summary}`)
+      setNotice(`第 ${nextRound} 轮主机采集巡检完成（#${res.run.id} · 耗时 ${(res.run.duration_ms / 1000).toFixed(1)}s）：${res.run.summary}`)
       reload()
     } catch (err) {
       setError((err as Error).message)
@@ -518,15 +486,51 @@ export function SituationalDashboardPanel({
       })
     }
 
-    // L1: Machines / GPU / VM / SSH Resources (from /v1/assets/machines + observed vm/physical snapshots)
+    // L1: Machines / GPU / VM / SSH Resources — always prioritize live-sampled hosts first so observed Agents are never truncated
     const seenMachines = new Set<string>()
-    for (const m of machines.slice(0, 8)) {
+    const liveHostSnapshots = resources.filter((item) => item.asset_kind === "vm" || item.asset_kind === "physical")
+    const sortedMachines = [...machines].sort((a, b) => {
+      const aLive =
+        resByAsset.has(a.asset_id) ||
+        liveHostSnapshots.some((r) => a.cluster && a.instance && r.cluster === a.cluster && r.instance === a.instance)
+      const bLive =
+        resByAsset.has(b.asset_id) ||
+        liveHostSnapshots.some((r) => b.cluster && b.instance && r.cluster === b.cluster && r.instance === b.instance)
+      if (aLive !== bLive) return aLive ? -1 : 1
+      const aBound = Boolean(a.cluster && a.instance)
+      const bBound = Boolean(b.cluster && b.instance)
+      if (aBound !== bBound) return aBound ? -1 : 1
+      return 0
+    })
+
+    // First include live observed host snapshots that aren't yet bound to any ledger machine
+    for (const r of liveHostSnapshots) {
+      const matchedInLedger = sortedMachines.some(
+        (m) => m.asset_id === r.asset_id || (m.cluster === r.cluster && m.instance === r.instance),
+      )
+      if (matchedInLedger || seenMachines.has(r.asset_id)) continue
+      seenMachines.add(r.asset_id)
+      out.push({
+        id: `mach:${r.asset_id}`,
+        layer: "infra",
+        title: r.asset_name || r.asset_id,
+        subtitle: `${r.cluster}/${r.instance} · 实时主机探针`,
+        metricLine: `CPU ${r.cpu_percent != null ? `${r.cpu_percent.toFixed(1)}%` : "—"} · 内存 ${r.memory_percent != null ? `${r.memory_percent.toFixed(1)}%` : "—"} · 盘 ${r.disk_percent != null ? `${r.disk_percent.toFixed(1)}%` : "—"}${r.gpu_percent != null ? ` · GPU ${r.gpu_percent.toFixed(0)}%` : ""}`,
+        status: toNodeStatus(r.status),
+        cluster: r.cluster,
+        instance: r.instance,
+        assetId: r.asset_id,
+        impactNote: `由在线目标 ${r.cluster}/${r.instance} 实时采集（${r.os_info || r.asset_kind}），最近同步 ${fmtClock(r.collected_at_ms)}。`,
+      })
+    }
+
+    for (const m of sortedMachines) {
+      if (seenMachines.has(m.asset_id) || out.filter((n) => n.layer === "infra").length >= 12) continue
       seenMachines.add(m.asset_id)
       const snap =
         resByAsset.get(m.asset_id) ||
-        resources.find(
+        liveHostSnapshots.find(
           (r) =>
-            (r.asset_kind === "vm" || r.asset_kind === "physical") &&
             m.cluster &&
             m.instance &&
             r.cluster === m.cluster &&
@@ -559,28 +563,127 @@ export function SituationalDashboardPanel({
             : "尚未绑定 Agent 目标，可在「机器台账」中完成绑定。",
       })
     }
-    // Also surface real observed host snapshots when machine ledger has no entry for that host yet (e.g. dev-agent)
-    for (const r of resources.filter((item) => item.asset_kind === "vm" || item.asset_kind === "physical")) {
-      if (seenMachines.has(r.asset_id) || out.filter((n) => n.layer === "infra").length >= 8) continue
-      seenMachines.add(r.asset_id)
-      out.push({
-        id: `mach:${r.asset_id}`,
-        layer: "infra",
-        title: r.asset_name || r.asset_id,
-        subtitle: `${r.cluster}/${r.instance} · ${r.collector_method}`,
-        metricLine: `CPU ${r.cpu_percent != null ? `${r.cpu_percent.toFixed(1)}%` : "—"} · 内存 ${r.memory_percent != null ? `${r.memory_percent.toFixed(1)}%` : "—"} · 盘 ${r.disk_percent != null ? `${r.disk_percent.toFixed(1)}%` : "—"}${r.gpu_percent != null ? ` · GPU ${r.gpu_percent.toFixed(0)}%` : ""}`,
-        status: toNodeStatus(r.status),
-        cluster: r.cluster,
-        instance: r.instance,
-        assetId: r.asset_id,
-        impactNote: `由在线目标 ${r.cluster}/${r.instance} 实时采集（${r.os_info || r.asset_kind}），最近同步 ${fmtClock(r.collected_at_ms)}。`,
-      })
-    }
 
     return out
   }, [systems, clusters, machines, resources, onlineTargetSet])
 
-  const selectedNode = archNodes.find((n) => n.id === selectedNodeId) || archNodes[0]
+  // Build real cross-layer dependency edges (Business -> App/DB -> Cluster -> Machine) for blast-radius tracing
+  const archLinks: ArchLink3D[] = useMemo(() => {
+    const edges: ArchLink3D[] = []
+    const seen = new Set<string>()
+    const addEdge = (from: string, to: string, label?: string) => {
+      if (!from || !to || from === to) return
+      const key = `${from}->${to}`
+      if (seen.has(key)) return
+      seen.add(key)
+      edges.push({ from, to, label })
+    }
+
+    const appNodes = archNodes.filter((n) => n.layer === "app")
+    const cluNodes = archNodes.filter((n) => n.layer === "platform")
+    const machNodes = archNodes.filter((n) => n.layer === "infra")
+
+    // L4 Business -> L3 App/DB & L2 Cluster
+    for (const sys of systems.filter((x) => x.active !== false)) {
+      const fromId = `sys:${sys.asset_id}`
+      if (!archNodes.some((n) => n.id === fromId)) continue
+      for (const dep of sys.deployments ?? []) {
+        let matchedApp = false
+        for (const app of appNodes) {
+          const sameTarget = app.cluster === dep.cluster && app.instance === dep.instance
+          const nameHit =
+            (dep.application &&
+              (app.title.toLowerCase().includes(dep.application.toLowerCase()) ||
+                (app.assetId || "").toLowerCase().includes(dep.application.toLowerCase()))) ||
+            (dep.database &&
+              (app.title.toLowerCase().includes(dep.database.toLowerCase()) ||
+                (app.assetId || "").toLowerCase().includes(dep.database.toLowerCase())))
+          if (sameTarget || nameHit) {
+            addEdge(fromId, app.id, "业务依赖")
+            matchedApp = true
+          }
+        }
+        if (!matchedApp) {
+          for (const clu of cluNodes) {
+            if (clu.cluster === dep.cluster && (!dep.instance || clu.instance === dep.instance)) {
+              addEdge(fromId, clu.id, "部署于")
+            }
+          }
+        }
+      }
+    }
+
+    // L3 App/DB -> L2 Cluster (or directly to L1 Machine when no cluster on that target)
+    for (const app of appNodes) {
+      let linkedCluster = false
+      for (const clu of cluNodes) {
+        if (app.cluster && clu.cluster === app.cluster && (!app.instance || !clu.instance || clu.instance === app.instance)) {
+          addEdge(app.id, clu.id, "运行于集群")
+          linkedCluster = true
+        }
+      }
+      if (!linkedCluster) {
+        for (const m of machNodes) {
+          if (app.cluster && m.cluster === app.cluster && (!app.instance || m.instance === app.instance)) {
+            addEdge(app.id, m.id, "运行于主机")
+          }
+        }
+      }
+    }
+
+    // L2 Cluster -> L1 Machine
+    for (const clu of cluNodes) {
+      let linkedExact = false
+      for (const m of machNodes) {
+        if (clu.cluster && m.cluster === clu.cluster && clu.instance && m.instance === clu.instance) {
+          addEdge(clu.id, m.id, "承载宿主机")
+          linkedExact = true
+        }
+      }
+      if (!linkedExact && clu.cluster) {
+        for (const m of machNodes) {
+          if (m.cluster === clu.cluster) {
+            addEdge(clu.id, m.id, "同集群宿主")
+          }
+        }
+      }
+    }
+
+    return edges
+  }, [archNodes, systems])
+
+  const selectedNode = archNodes.find((n) => n.id === selectedNodeId) || archNodes.find((n) => n.status !== "ok") || archNodes[0]
+
+  const selectedChain = useMemo(() => {
+    if (!selectedNode) return { upstream: [] as ArchNode3D[], downstream: [] as ArchNode3D[] }
+    const byId = new Map(archNodes.map((n) => [n.id, n]))
+    const upIds = new Set<string>()
+    const downIds = new Set<string>()
+    const uq = [selectedNode.id]
+    while (uq.length > 0) {
+      const cur = uq.shift()!
+      for (const lk of archLinks) {
+        if (lk.to === cur && !upIds.has(lk.from) && lk.from !== selectedNode.id) {
+          upIds.add(lk.from)
+          uq.push(lk.from)
+        }
+      }
+    }
+    const dq = [selectedNode.id]
+    while (dq.length > 0) {
+      const cur = dq.shift()!
+      for (const lk of archLinks) {
+        if (lk.from === cur && !downIds.has(lk.to) && lk.to !== selectedNode.id) {
+          downIds.add(lk.to)
+          dq.push(lk.to)
+        }
+      }
+    }
+    return {
+      upstream: [...upIds].map((id) => byId.get(id)).filter(Boolean) as ArchNode3D[],
+      downstream: [...downIds].map((id) => byId.get(id)).filter(Boolean) as ArchNode3D[],
+    }
+  }, [archNodes, archLinks, selectedNode])
 
   // Build 3D Holographic Core nodes dynamically from real archNodes
   const coreNodes: CoreNode3D[] = useMemo(() => {
@@ -653,6 +756,35 @@ export function SituationalDashboardPanel({
   const systemCovText =
     systemCov && systemCov.percent != null ? `${systemCov.percent.toFixed(0)}% (${systemCov.covered}/${systemCov.total})` : ""
 
+  const activeSystemsCount = systems.filter((x) => x.active !== false).length
+  const appLayerCount = archNodes.filter((n) => n.layer === "app").length
+  const clusterLayerCount = archNodes.filter((n) => n.layer === "platform").length
+  const machineLayerCount = archNodes.filter((n) => n.layer === "infra").length
+  const sampledMachineCount = useMemo(() => {
+    const sampledIds = new Set(
+      resources
+        .filter((r) => r.asset_kind === "vm" || r.asset_kind === "physical")
+        .map((r) => r.asset_id),
+    )
+    const sampledTargets = new Set(
+      resources
+        .filter((r) => r.asset_kind === "vm" || r.asset_kind === "physical")
+        .map((r) => `${r.cluster}/${r.instance}`),
+    )
+    return archNodes.filter(
+      (n) =>
+        n.layer === "infra" &&
+        ((n.assetId && sampledIds.has(n.assetId)) ||
+          (n.cluster && n.instance && sampledTargets.has(`${n.cluster}/${n.instance}`))),
+    ).length
+  }, [archNodes, resources])
+  const onlineAgentCount = s?.online_agents ?? targets.filter((t) => t.status !== "offline").length
+  const anomalyNodes = archNodes.filter((n) => n.status !== "ok")
+  const hasCritical = anomalyNodes.some((n) => n.status === "critical") || ai.findings.some((f) => f.priority === "P0")
+  const hasWarning = anomalyNodes.length > 0 || (s?.open_threshold_alerts ?? 0) > 0 || ai.findings.length > 0
+  const globalTone: "danger" | "warning" | "success" = hasCritical ? "danger" : hasWarning ? "warning" : "success"
+  const globalVerdict = hasCritical ? "存在严重异常" : hasWarning ? "存在运行告警" : "整体运行平稳"
+
   const toggleReportSection = (key: ReportSectionKey) => {
     setReportSections((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
   }
@@ -669,7 +801,6 @@ export function SituationalDashboardPanel({
         machinesCount: machines.length,
         serverCoverageText: serverCovText || undefined,
         systemCoverageText: systemCovText || undefined,
-        isDemo: session.demo,
       },
     )
     setGeneratedMarkdown(md)
@@ -682,10 +813,7 @@ export function SituationalDashboardPanel({
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold text-foreground">态势感知</h1>
             <Badge variant="primary">业务 → 集群 → 机器整体视角</Badge>
-            <Badge variant={session.demo ? "warning" : "success"}>
-              {session.demo ? "演示数据模式" : "实时采集模式"}
-            </Badge>
-            {inspectRounds > 0 && <Badge variant="primary">本会话已巡检 {inspectRounds} 轮</Badge>}
+            {inspectRounds > 0 && <Badge variant="primary">本会话已采集 {inspectRounds} 轮</Badge>}
           </div>
           <p className="text-sm text-muted-foreground">
             自上而下打通业务系统、应用与数据库、Kubernetes 集群到物理机/GPU/虚机/SSH 机器资源的全局立体架构与实时运行态势。
@@ -818,90 +946,179 @@ export function SituationalDashboardPanel({
             </Card>
           )}
 
-          {/* Top Hero: Business -> Cluster -> Machine 3-Tier KPIs + 3D Holographic Core */}
+          {/* Zone 1: Executive Status Verdict + 4-Tier Architecture Pipeline + Interactive 3D Core */}
           <Card>
             <CardContent className="p-4">
               <div className="grid items-stretch gap-4 lg:grid-cols-12">
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:col-span-8">
-                  <TiltCard3D glowTone="primary" className="rounded-lg border border-primary/25 bg-background/70 p-3">
-                    <div className="text-2xs text-muted-foreground">① 业务系统层</div>
-                    <div className="mt-1 font-mono text-xl font-semibold text-primary tabular-nums">
-                      {systems.filter((x) => x.active !== false).length} <span className="text-xs font-normal text-muted-foreground">套在役</span>
-                    </div>
-                    <div className="mt-0.5 text-2xs text-muted-foreground">
-                      {systemCovText ? `存量覆盖 ${systemCovText}` : "纳管覆盖基线待冻结"}
-                    </div>
-                  </TiltCard3D>
-
-                  <TiltCard3D glowTone="primary" className="rounded-lg border border-indigo-400/25 bg-background/70 p-3">
-                    <div className="text-2xs text-muted-foreground">② 集群与编排层</div>
-                    <div className="mt-1 font-mono text-xl font-semibold text-foreground tabular-nums">
-                      {clusters.length} <span className="text-xs font-normal text-muted-foreground">个集群</span>
-                    </div>
-                    <div className="mt-0.5 text-2xs text-muted-foreground">
-                      K8s 观测 {resources.filter((r) => r.asset_kind === "k8s").length} · 容器节点 {resources.filter((r) => r.asset_kind === "container").length}
-                    </div>
-                  </TiltCard3D>
-
-                  <TiltCard3D glowTone="success" className="rounded-lg border border-success/25 bg-background/70 p-3">
-                    <div className="text-2xs text-muted-foreground">③ 机器资源与探针覆盖</div>
-                    <div className="mt-1 font-mono text-xl font-semibold text-success tabular-nums">
-                      {s ? `${s.probe_coverage_pct.toFixed(0)}%` : "—"}
-                    </div>
-                    <div className="mt-0.5 text-2xs text-muted-foreground">
-                      机器 {machines.length} 台 · 在线 Agent {s?.online_agents ?? targets.filter((t) => t.status !== "offline").length}
-                      {serverCovText ? ` · 存量 ${serverCovText}` : ""}
-                    </div>
-                  </TiltCard3D>
-
-                  <TiltCard3D glowTone="primary" className="rounded-lg border bg-background/70 p-3 sm:col-span-2">
-                    <div className="text-2xs text-muted-foreground">全网实时流量、I/O 与活跃告警</div>
-                    <div className="mt-1 flex flex-wrap items-baseline justify-between gap-2">
-                      <span className="font-mono text-xl font-semibold text-foreground tabular-nums">
-                        {totalNetBps > 0 ? formatRateBytes(totalNetBps) : "暂无网卡速率样本"}
-                      </span>
-                      <span className="font-mono text-xs text-muted-foreground">
-                        告警 {s?.open_threshold_alerts ?? 0} 条 · 同步 {fmtClock(s?.last_collected_at_ms)}
-                        {totalIops > 0 ? ` · ${totalIops.toFixed(0)} IOPS` : ""}
-                        {gpuRes?.gpu_percent != null ? ` · GPU ${gpuRes.gpu_percent.toFixed(0)}%` : ""}
+                <div className="flex flex-col justify-between gap-3 lg:col-span-8">
+                  {/* Top Verdict & Real-Time Health Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/70 px-3.5 py-2.5">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <Badge variant={globalTone}>{globalVerdict}</Badge>
+                      <div className="font-mono text-sm font-semibold text-foreground tabular-nums">
+                        {latestRun ? (
+                          <>
+                            健康评分{" "}
+                            <span className={ai.score >= 85 ? "text-success" : ai.score >= 70 ? "text-warning" : "text-destructive"}>
+                              {ai.score}
+                            </span>
+                            <span className="text-xs font-normal text-muted-foreground"> / 100</span>
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">待首轮巡检评分</span>
+                        )}
+                      </div>
+                      <span className="font-mono text-2xs text-muted-foreground">
+                        · 活跃告警 {s?.open_threshold_alerts ?? 0} · 异常节点 {anomalyNodes.length}
                       </span>
                     </div>
-                  </TiltCard3D>
-
-                  <TiltCard3D
-                    glowTone={!latestRun ? "primary" : ai.score >= 85 ? "success" : ai.score >= 70 ? "warning" : "danger"}
-                    className="rounded-lg border bg-background/70 p-3"
-                  >
-                    <div className="text-2xs text-muted-foreground">
-                      {session.demo ? "浙音大模型态势评分" : "多源巡检健康评分"}
+                    <div className="flex flex-wrap items-center gap-2 font-mono text-2xs text-muted-foreground">
+                      {totalNetBps > 0 && <span>流量 {formatRateBytes(totalNetBps)}</span>}
+                      {totalIops > 0 && <span>· {totalIops.toFixed(0)} IOPS</span>}
+                      {gpuRes?.gpu_percent != null && <span className="text-primary">· GPU {gpuRes.gpu_percent.toFixed(0)}%</span>}
+                      <span>· 同步 {fmtClock(s?.last_collected_at_ms)}</span>
                     </div>
-                    <div className="mt-1 font-mono text-xl font-semibold tabular-nums">
-                      {latestRun ? (
-                        <>
-                          <span className={ai.score >= 85 ? "text-success" : ai.score >= 70 ? "text-warning" : "text-destructive"}>
-                            {ai.score}
-                          </span>
-                          <span className="text-xs font-normal text-muted-foreground"> / 100</span>
-                        </>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
+                  </div>
+
+                  {/* 4-Tier Business -> App/DB -> Cluster -> Machine Truthful Pipeline Counters */}
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                    <TiltCard3D glowTone="primary" className="rounded-lg border border-cyan-400/25 bg-background/70 p-3">
+                      <button
+                        type="button"
+                        onClick={() => onOpenArea?.("systems")}
+                        className="w-full text-left"
+                      >
+                        <div className="text-2xs text-cyan-300/90">L4 · 业务系统</div>
+                        <div className="mt-1 font-mono text-xl font-semibold text-foreground tabular-nums">
+                          {activeSystemsCount} <span className="text-xs font-normal text-muted-foreground">套</span>
+                        </div>
+                        <div className="mt-0.5 truncate text-2xs text-muted-foreground">
+                          {systemCovText ? `覆盖 ${systemCovText}` : activeSystemsCount > 0 ? "已登记业务台账" : "点击登记业务 →"}
+                        </div>
+                      </button>
+                    </TiltCard3D>
+
+                    <TiltCard3D glowTone="primary" className="rounded-lg border border-blue-400/25 bg-background/70 p-3">
+                      <button
+                        type="button"
+                        onClick={() => setSubTab("resources")}
+                        className="w-full text-left"
+                      >
+                        <div className="text-2xs text-blue-300/90">L3 · 应用 / 库 / 容器</div>
+                        <div className="mt-1 font-mono text-xl font-semibold text-foreground tabular-nums">
+                          {appLayerCount} <span className="text-xs font-normal text-muted-foreground">个</span>
+                        </div>
+                        <div className="mt-0.5 truncate text-2xs text-muted-foreground">
+                          {appRes
+                            ? `均耗 ${appRes.response_time_ms?.toFixed(0) ?? "—"}ms`
+                            : dbRes
+                              ? `库探活 ${dbRes.response_time_ms?.toFixed(0) ?? "—"}ms`
+                              : "实采工作负载实例"}
+                        </div>
+                      </button>
+                    </TiltCard3D>
+
+                    <TiltCard3D glowTone="primary" className="rounded-lg border border-indigo-400/25 bg-background/70 p-3">
+                      <button
+                        type="button"
+                        onClick={() => onOpenArea?.("clusters")}
+                        className="w-full text-left"
+                      >
+                        <div className="text-2xs text-indigo-300/90">L2 · Kubernetes 集群</div>
+                        <div className="mt-1 font-mono text-xl font-semibold text-foreground tabular-nums">
+                          {clusterLayerCount} <span className="text-xs font-normal text-muted-foreground">个</span>
+                        </div>
+                        <div className="mt-0.5 truncate text-2xs text-muted-foreground">
+                          台账 {clusters.length} · 实采 {resources.filter((r) => r.asset_kind === "k8s").length}
+                        </div>
+                      </button>
+                    </TiltCard3D>
+
+                    <TiltCard3D
+                      glowTone={sampledMachineCount > 0 ? "success" : "warning"}
+                      className="rounded-lg border border-emerald-400/25 bg-background/70 p-3"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onOpenArea?.("machines")}
+                        className="w-full text-left"
+                      >
+                        <div className="text-2xs text-emerald-300/90">L1 · 机器资源</div>
+                        <div className="mt-1 font-mono text-xl font-semibold text-foreground tabular-nums">
+                          {machineLayerCount} <span className="text-xs font-normal text-muted-foreground">台</span>
+                        </div>
+                        <div className="mt-0.5 truncate text-2xs text-muted-foreground">
+                          实采 {sampledMachineCount}/{machineLayerCount} · Agent {onlineAgentCount}
+                          {serverCovText ? ` · ${serverCovText}` : ""}
+                        </div>
+                      </button>
+                    </TiltCard3D>
+                  </div>
+
+                  {/* Actionable Risk Focus Strip (Highlights top issues immediately above the fold) */}
+                  {ai.findings.length > 0 ? (
+                    <div className="rounded-lg border border-warning/30 bg-warning/5 px-3.5 py-2.5 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2 font-medium text-foreground">
+                          <SparkIcon width={14} height={14} className="text-warning" />
+                          <span>当前聚焦风险（{ai.findings.length} 项）</span>
+                          <span className="font-normal text-muted-foreground">{ai.headline}</span>
+                        </div>
+                        <Inline gap={2}>
+                          {anomalyNodes.length > 0 && (
+                            <Button size="sm" variant={onlyAnomalies ? "primary" : "ghost"} onClick={() => setOnlyAnomalies((v) => !v)}>
+                              {onlyAnomalies ? "查看全部架构" : "聚焦异常链路"}
+                            </Button>
+                          )}
+                          {latestRun && onOpenInspection && (
+                            <Button size="sm" variant="ghost" onClick={() => onOpenInspection(latestRun.id)}>
+                              巡检详情 →
+                            </Button>
+                          )}
+                        </Inline>
+                      </div>
+                      <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                        {ai.findings.slice(0, 2).map((f, idx) => (
+                          <div key={`${f.priority}-${idx}`} className="flex items-start gap-2 rounded-md border border-border/60 bg-background/70 px-2.5 py-1.5">
+                            <Badge variant={priorityVariant(f.priority)} className="mt-0.5 shrink-0">
+                              {f.priority}
+                            </Badge>
+                            <div className="min-w-0">
+                              <div className="truncate font-medium text-foreground">{f.title}</div>
+                              <div className="truncate text-2xs text-muted-foreground">{f.rootCause}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-success/25 bg-success/5 px-3.5 py-2 text-xs">
+                      <span className="text-foreground">
+                        <strong className="text-success">运行平稳</strong> ·{" "}
+                        {latestRun
+                          ? `最近巡检 #${latestRun.id} 未检出未闭环告警，实时采集链路正常。`
+                          : "当前暂无活跃阈值告警，可点击右上角「立即发起全网巡检」生成实时基线。"}
+                      </span>
+                      {s && resources.length > 0 && (
+                        <span className="font-mono text-2xs text-muted-foreground">
+                          均值 CPU {s.avg_cpu_percent.toFixed(1)}% · 内存 {s.avg_memory_percent.toFixed(1)}% · 盘 {s.avg_disk_percent.toFixed(1)}%
+                        </span>
                       )}
                     </div>
-                    <div className="mt-0.5 text-2xs text-muted-foreground">
-                      累计巡检 {s?.total_runs ?? 0} 轮 · 周期 {s?.active_schedules ?? 0} 启用
-                    </div>
-                  </TiltCard3D>
+                  )}
                 </div>
 
                 <div className="lg:col-span-4">
                   <HolographicCore3D
                     nodes={coreNodes}
+                    selectedNodeId={selectedNode?.id}
+                    onSelectNode={setSelectedNodeId}
                     scanning={inspecting}
-                    title="3D 业务→集群→机器态势核心"
+                    title="3D 态势核心（点击节点追踪链路）"
                     metrics={[
-                      { label: "业务系统", value: String(systems.filter((x) => x.active !== false).length), tone: "accent" },
-                      { label: "集群 / 机器", value: `${clusters.length} / ${machines.length}`, tone: "success" },
-                      { label: "活跃告警", value: String(s?.open_threshold_alerts ?? 0), tone: (s?.open_threshold_alerts ?? 0) > 0 ? "warning" : "success" },
+                      { label: "业务 / 应用", value: `${activeSystemsCount} / ${appLayerCount}`, tone: "accent" },
+                      { label: "集群 / 机器", value: `${clusterLayerCount} / ${machineLayerCount}`, tone: "success" },
+                      { label: "异常节点", value: String(anomalyNodes.length), tone: anomalyNodes.length > 0 ? "warning" : "success" },
                     ]}
                   />
                 </div>
@@ -909,13 +1126,16 @@ export function SituationalDashboardPanel({
             </CardContent>
           </Card>
 
-          {/* 3D Floating 4-Layer Business -> App/DB -> Cluster -> Machine Architecture */}
+          {/* Zone 2: Business -> App/DB -> Cluster -> Machine Cross-Layer Impact Architecture */}
           <Card>
             <CardContent className="space-y-3 p-4">
               <LayeredArchitecture3D
                 nodes={archNodes}
+                links={archLinks}
                 selectedNodeId={selectedNode?.id || ""}
                 onSelectNode={setSelectedNodeId}
+                onlyAnomalies={onlyAnomalies}
+                onToggleAnomalies={() => setOnlyAnomalies((v) => !v)}
                 scanning={inspecting}
                 onOpenResources={() => setSubTab("resources")}
                 onOpenLayerAction={(layer) => {
@@ -927,43 +1147,85 @@ export function SituationalDashboardPanel({
               />
 
               {selectedNode && (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/70 px-3.5 py-2.5 text-xs">
-                  <div className="min-w-0 space-y-0.5">
-                    <div className="flex flex-wrap items-center gap-2">
+                <div className="space-y-2.5 rounded-lg border bg-background/75 px-3.5 py-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <Badge variant={selectedNode.status === "critical" ? "danger" : selectedNode.status === "warning" ? "warning" : "success"}>
                         {selectedNode.status === "critical" ? "严重" : selectedNode.status === "warning" ? "告警" : "健康"}
                       </Badge>
-                      <strong className="text-foreground">{selectedNode.title}</strong>
-                      <span className="font-mono text-muted-foreground">{selectedNode.metricLine}</span>
+                      <strong className="text-sm text-foreground">{selectedNode.title}</strong>
+                      <span className="font-mono text-2xs text-muted-foreground">{selectedNode.subtitle}</span>
+                      <span className="font-mono text-foreground">· {selectedNode.metricLine}</span>
                     </div>
-                    <p className="text-muted-foreground">关联链路与观测详情：{selectedNode.impactNote}</p>
+                    <Inline gap={2} className="flex-wrap">
+                      {onOpenTarget && selectedNode.cluster && selectedNode.instance && (
+                        <>
+                          <Button size="sm" variant="primary" onClick={() => onOpenTarget(selectedNode.cluster!, selectedNode.instance!, "monitor")}>
+                            Agent 监控曲线
+                          </Button>
+                          <Button size="sm" onClick={() => onOpenTarget(selectedNode.cluster!, selectedNode.instance!, "ask")}>
+                            AI 助手诊断
+                          </Button>
+                        </>
+                      )}
+                      <Button size="sm" variant="ghost" onClick={() => setSubTab("topology")}>
+                        多跳拓扑详情
+                      </Button>
+                      {latestRun && onOpenInspection && (
+                        <Button size="sm" variant="ghost" onClick={() => onOpenInspection(latestRun.id)}>
+                          最新巡检报告
+                        </Button>
+                      )}
+                    </Inline>
                   </div>
-                  <Inline gap={2} className="flex-wrap">
-                    {onOpenTarget && selectedNode.cluster && selectedNode.instance && (
-                      <Button size="sm" onClick={() => onOpenTarget(selectedNode.cluster!, selectedNode.instance!, "monitor")}>
-                        查看 Agent 监控曲线
-                      </Button>
-                    )}
-                    <Button size="sm" variant="ghost" onClick={() => setSubTab("topology")}>
-                      查看多跳依赖拓扑
-                    </Button>
-                    {latestRun && onOpenInspection && (
-                      <Button size="sm" variant="ghost" onClick={() => onOpenInspection(latestRun.id)}>
-                        查看巡检报告
-                      </Button>
-                    )}
-                  </Inline>
+
+                  <p className="text-muted-foreground">{selectedNode.impactNote}</p>
+
+                  {(selectedChain.upstream.length > 0 || selectedChain.downstream.length > 0) && (
+                    <div className="flex flex-wrap gap-4 border-t border-border/50 pt-2">
+                      {selectedChain.upstream.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-medium text-amber-300">上游受影响 ({selectedChain.upstream.length})：</span>
+                          {selectedChain.upstream.map((u) => (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => setSelectedNodeId(u.id)}
+                              className="rounded border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 text-2xs text-foreground hover:border-amber-300"
+                            >
+                              {u.title}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {selectedChain.downstream.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-medium text-cyan-300">下游承载 ({selectedChain.downstream.length})：</span>
+                          {selectedChain.downstream.map((d) => (
+                            <button
+                              key={d.id}
+                              type="button"
+                              onClick={() => setSelectedNodeId(d.id)}
+                              className="rounded border border-cyan-400/40 bg-cyan-500/10 px-2 py-0.5 text-2xs text-foreground hover:border-cyan-300"
+                            >
+                              {d.title}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
           </Card>
 
-          {/* 3D Isometric Resource Prism Array / Trend + Real 4-Domain Telemetry Matrix */}
-          <div className="grid gap-4 lg:grid-cols-5">
-            <Card className="lg:col-span-3">
+          {/* Zone 3: 3D Resource Visualization + 4-Domain Coverage (Left) | Risk Root-Cause & Action List (Right) */}
+          <div className="grid gap-4 lg:grid-cols-12">
+            <Card className="lg:col-span-7">
               <CardContent className="space-y-3 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
-                  <span className="text-xs font-medium text-muted-foreground">机器与集群资源可视化</span>
+                  <span className="text-xs font-semibold text-foreground">机器与集群资源水位</span>
                   <Inline gap={1}>
                     <Button size="sm" variant={chartMode === "3d" ? "primary" : "ghost"} onClick={() => setChartMode("3d")}>
                       3D 立体柱阵
@@ -973,13 +1235,18 @@ export function SituationalDashboardPanel({
                     </Button>
                   </Inline>
                 </div>
+
                 {chartMode === "3d" ? (
-                  <ResourceBars3D items={bar3DItems} />
+                  <ResourceBars3D
+                    items={bar3DItems}
+                    title="核心资产 3D 立体资源柱阵"
+                  />
                 ) : overview ? (
                   <SituationalTrendChart overview={overview} />
                 ) : (
                   <p className="py-12 text-center text-sm text-muted-foreground">正在加载资源趋势…</p>
                 )}
+
                 <div className="grid grid-cols-2 gap-2 border-t pt-3 text-xs sm:grid-cols-4">
                   <div>
                     <div className="text-2xs text-muted-foreground">总 CPU 核数 / 已用</div>
@@ -1010,171 +1277,127 @@ export function SituationalDashboardPanel({
                     </div>
                   </div>
                 </div>
+
+                {/* Compact 4-Domain Telemetry Readiness Strip */}
+                <div className="grid gap-2 border-t pt-3 text-xs sm:grid-cols-2">
+                  <div className="flex items-center justify-between gap-2 rounded-md border bg-background/50 px-2.5 py-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground">系统级监控</div>
+                      <div className="truncate font-mono text-2xs text-muted-foreground">
+                        {s && resources.length > 0
+                          ? `CPU ${s.avg_cpu_percent.toFixed(1)}% · 内存 ${s.avg_memory_percent.toFixed(1)}% · 盘 ${s.avg_disk_percent.toFixed(1)}%`
+                          : "等待机器采样快照"}
+                      </div>
+                    </div>
+                    <Badge variant={resources.length > 0 ? "success" : "outline"}>{resources.length > 0 ? "已采集" : "待采集"}</Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 rounded-md border bg-background/50 px-2.5 py-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground">应用级拨测</div>
+                      <div className="truncate font-mono text-2xs text-muted-foreground">
+                        {appRes
+                          ? `${appRes.response_time_ms?.toFixed(1) ?? "—"}ms · ${appRes.requests_per_sec?.toFixed(0) ?? "—"} req/s · 错 ${appRes.error_rate ?? 0}%`
+                          : "在「资产 → 网站」登记后自动拨测"}
+                      </div>
+                    </div>
+                    <Badge variant={appRes ? "success" : "outline"}>{appRes ? "已采集" : "待登记"}</Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 rounded-md border bg-background/50 px-2.5 py-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground">数据库级观测</div>
+                      <div className="truncate font-mono text-2xs text-muted-foreground">
+                        {dbStats
+                          ? `连接 ${dbStats.connections}/${dbStats.max_connections} · ${dbStats.tps} TPS · 锁 ${dbStats.lock_waits}`
+                          : dbRes
+                            ? `TCP ${dbRes.response_time_ms?.toFixed(1) ?? "—"}ms（探活）`
+                            : "在「资产 → 数据库」登记后探活"}
+                      </div>
+                    </div>
+                    <Badge variant={dbStats ? "success" : dbRes ? "primary" : "outline"}>
+                      {dbStats ? "全维" : dbRes ? "探活" : "待登记"}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 rounded-md border bg-background/50 px-2.5 py-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground">安全基线监测</div>
+                      <div className="truncate font-mono text-2xs text-muted-foreground">
+                        {secStats
+                          ? `拦截登录 ${secStats.failed_logins_blocked} · 权限变更 ${secStats.privilege_changes}`
+                          : "Agent M5 登录与账户基线巡检"}
+                      </div>
+                    </div>
+                    <Badge variant={secStats ? "warning" : "outline"}>{secStats ? "监测中" : "M5 基线"}</Badge>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
-            <Card className="lg:col-span-2">
-              <CardContent className="space-y-2.5 p-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-foreground">四维运行监控观测态</h2>
-                  <Badge variant="outline">{session.demo ? "演示全量" : "仅展示实采"}</Badge>
+            <Card className="lg:col-span-5">
+              <CardContent className="flex h-full flex-col justify-between gap-3 p-4">
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2 border-b pb-2">
+                    <div className="flex items-center gap-1.5">
+                      <SparkIcon width={15} height={15} className="text-primary" />
+                      <h2 className="text-sm font-semibold text-foreground">
+                        实时异常与处置建议
+                      </h2>
+                    </div>
+                    {onOpenTarget && targets[0] && (
+                      <Button size="sm" variant="ghost" onClick={() => onOpenTarget(targets[0].cluster, targets[0].instance, "ask")}>
+                        AI 助手诊断
+                      </Button>
+                    )}
+                  </div>
+
+                  {ai.findings.length > 0 ? (
+                    <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                      {ai.findings.slice(0, 6).map((f, idx) => (
+                        <div key={`${f.priority}-${idx}`} className="space-y-1.5 rounded-lg border bg-background/60 p-3 text-xs">
+                          <div className="flex flex-wrap items-center justify-between gap-1.5">
+                            <Badge variant={priorityVariant(f.priority)}>
+                              {f.priority} · {f.riskLevel}
+                            </Badge>
+                            <span className="truncate text-2xs text-muted-foreground">影响：{f.businessImpact}</span>
+                          </div>
+                          <div className="font-semibold text-foreground">{f.title}</div>
+                          <div className="text-2xs leading-relaxed text-muted-foreground">根因：{f.rootCause}</div>
+                          <div className="rounded bg-muted/50 px-2 py-1 font-mono text-2xs text-foreground">
+                            建议：{f.remediation}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-lg border border-dashed bg-background/40 p-4 text-xs text-muted-foreground">
+                      {latestRun
+                        ? "最近一轮巡检未检出异常风险项，当前架构各层运行平稳。"
+                        : "尚无巡检执行记录，点击顶部「立即发起全网巡检」或前往「智能巡检」启动周期任务。"}
+                    </p>
+                  )}
                 </div>
-                <div className="grid gap-2 text-xs">
-                  <div className="rounded-md border bg-background/60 p-2.5">
-                    <div className="flex items-center justify-between font-medium text-foreground">
-                      <span>系统级（CPU / 内存 / GPU / 磁盘 / 网络）</span>
-                      <Badge variant={resources.length > 0 ? "success" : "outline"}>
-                        {resources.length > 0 ? "已采集" : "待采集"}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 font-mono text-2xs text-muted-foreground">
-                      {s && resources.length > 0
-                        ? `CPU ${s.avg_cpu_percent.toFixed(1)}% · 内存 ${s.avg_memory_percent.toFixed(1)}% · 磁盘 ${s.avg_disk_percent.toFixed(1)}%${gpuRes?.gpu_percent != null ? ` · GPU ${gpuRes.gpu_percent.toFixed(1)}%` : ""}`
-                        : "尚未收到机器采样快照"}
-                    </div>
+
+                {/* Single-line link to Standalone Inspection workspace (no duplicated run history table) */}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2.5 text-xs">
+                  <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+                    <ActivityIcon width={14} height={14} className="shrink-0 text-primary" />
+                    {latestRun ? (
+                      <span className="truncate">
+                        最新巡检 <span className="font-mono text-foreground">#{latestRun.id}</span> ·{" "}
+                        {fmtDateTime(latestRun.started_at_ms)}
+                      </span>
+                    ) : (
+                      <span>巡检记录由「智能巡检」统一归档</span>
+                    )}
                   </div>
-                  <div className="rounded-md border bg-background/60 p-2.5">
-                    <div className="flex items-center justify-between font-medium text-foreground">
-                      <span>应用级（响应时间 / 并发 / 请求速率 / 错误率）</span>
-                      <Badge variant={appRes ? "success" : "outline"}>{appRes ? "已采集" : "待登记网站"}</Badge>
-                    </div>
-                    <div className="mt-1 font-mono text-2xs text-muted-foreground">
-                      {appRes
-                        ? `均耗 ${appRes.response_time_ms?.toFixed(1) ?? "—"}ms · 并发 ${appRes.active_connections ?? "—"} · ${appRes.requests_per_sec?.toFixed(1) ?? "—"} req/s · 错误 ${appRes.error_rate ?? "—"}%`
-                        : "在「资产 → 网站」登记端点或开启 Nginx stub_status 后自动采集"}
-                    </div>
-                  </div>
-                  <div className="rounded-md border bg-background/60 p-2.5">
-                    <div className="flex items-center justify-between font-medium text-foreground">
-                      <span>数据库级（连通性 / 连接数 / TPS / 锁等待）</span>
-                      <Badge variant={dbStats ? "success" : dbRes ? "primary" : "outline"}>
-                        {dbStats ? "全维已采" : dbRes ? "TCP 探活" : "待登记库"}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 font-mono text-2xs text-muted-foreground">
-                      {dbStats
-                        ? `连接 ${dbStats.connections}/${dbStats.max_connections} · 均耗 ${dbStats.query_ms}ms · ${dbStats.tps} TPS · 锁等待 ${dbStats.lock_waits}`
-                        : dbRes
-                          ? `${dbRes.asset_name} TCP 建连 ${dbRes.response_time_ms?.toFixed(1) ?? "—"}ms（深度连接/TPS/锁等待需配置只读库采集）`
-                          : "在「资产 → 数据库」登记实例后自动探测连通性"}
-                    </div>
-                  </div>
-                  <div className="rounded-md border bg-background/60 p-2.5">
-                    <div className="flex items-center justify-between font-medium text-foreground">
-                      <span>安全级（异常登录 / 权限基线 / 审计操作）</span>
-                      <Badge variant={secStats ? "warning" : "outline"}>
-                        {secStats ? "持续监测" : "主机 M5 基线"}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 font-mono text-2xs text-muted-foreground">
-                      {secStats
-                        ? `拦截异常登录 ${secStats.failed_logins_blocked} 次 · 权限变更 ${secStats.privilege_changes} 次 · 敏感操作审计 ${secStats.sensitive_ops} 条`
-                        : "主机登录日志与账户指纹由 Agent M5 策略巡检；边界安防需对接外部安全 MCP"}
-                    </div>
-                  </div>
+                  {onOpenInspection && (
+                    <Button size="sm" variant="primary" onClick={() => onOpenInspection(latestRun?.id)}>
+                      前往智能巡检 →
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
           </div>
-
-          {/* Risk & Root-Cause Summary + Link to Standalone Inspection Workspace */}
-          <Card>
-            <CardContent className="space-y-3 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <SparkIcon width={15} height={15} className="text-primary" />
-                    <h2 className="text-sm font-semibold text-foreground">
-                      {session.demo ? "浙音大模型 · 多源风险关联与处置建议" : "多源巡检风险关联与处置建议"}
-                    </h2>
-                    {latestRun && (
-                      <Badge variant={describeMonitorStatus(latestRun.status).variant}>
-                        最新巡检 #{latestRun.id}
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">{ai.headline}</p>
-                </div>
-                <Inline gap={2} className="flex-wrap">
-                  {onOpenInspection && (
-                    <Button size="sm" variant="primary" onClick={() => onOpenInspection(latestRun?.id)}>
-                      前往「智能巡检」查看全量报告与 MCP
-                    </Button>
-                  )}
-                  {onOpenTarget && targets[0] && (
-                    <Button size="sm" onClick={() => onOpenTarget(targets[0].cluster, targets[0].instance, "ask")}>
-                      进入 AI 助手深度诊断
-                    </Button>
-                  )}
-                </Inline>
-              </div>
-
-              {ai.findings.length > 0 ? (
-                <div className="overflow-x-auto rounded-md border bg-card">
-                  <Table className="min-w-[780px]">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>优先级 / 评级</TableHead>
-                        <TableHead>风险项与受影响业务</TableHead>
-                        <TableHead>关联根因分析</TableHead>
-                        <TableHead>处置建议</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {ai.findings.slice(0, 6).map((f, idx) => (
-                        <TableRow key={`${f.priority}-${idx}`}>
-                          <TableCell className="whitespace-nowrap">
-                            <Badge variant={priorityVariant(f.priority)}>
-                              {f.priority} · {f.riskLevel}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="text-xs font-medium text-foreground">{f.title}</div>
-                            <div className="mt-0.5 text-2xs text-muted-foreground">影响：{f.businessImpact}</div>
-                          </TableCell>
-                          <TableCell className="max-w-xs text-xs text-muted-foreground">{f.rootCause}</TableCell>
-                          <TableCell className="max-w-xs font-mono text-2xs text-foreground">{f.remediation}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              ) : (
-                <p className="rounded-md border bg-background/50 p-3 text-xs text-muted-foreground">
-                  {latestRun ? "最近一次巡检未发现异常风险项。" : "尚无巡检执行记录，可点击上方「立即发起全网巡检」或前往「智能巡检」创建巡检计划。"}
-                </p>
-              )}
-
-              {overview && overview.recent_runs.length > 0 && (
-                <div className="border-t pt-3">
-                  <div className="mb-2 flex items-center gap-2 text-xs font-medium text-foreground">
-                    <ActivityIcon width={14} height={14} className="text-primary" />
-                    最近巡检轨迹（最新 {Math.min(4, overview.recent_runs.length)} 次）
-                  </div>
-                  <div className="divide-y text-xs">
-                    {overview.recent_runs.slice(0, 4).map((run) => {
-                      const st = describeMonitorStatus(run.status)
-                      return (
-                        <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge variant={st.variant}>{st.label}</Badge>
-                            <span className="font-mono text-foreground">#{run.id}</span>
-                            <span className="text-foreground">{run.schedule_name || "手动全网巡检"}</span>
-                            <span className="text-muted-foreground">{fmtDateTime(run.started_at_ms)}</span>
-                          </div>
-                          {onOpenInspection && (
-                            <Button size="sm" variant="ghost" onClick={() => onOpenInspection(run.id)}>
-                              查看报告
-                            </Button>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
         </Stack>
       )}
     </section>

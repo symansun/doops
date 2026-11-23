@@ -472,7 +472,7 @@ function ConfigEditor({
   const set = (patch: Partial<ModelConfig>) => onChange({ ...cfg, ...patch })
   const isFile = configKind(cfg) === "file"
   return (
-    <div data-assist-scope="" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
+    <div className="flex flex-col gap-3 rounded-lg border bg-card p-4">
       <div className="flex items-center gap-2">
         <span
           className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium ${

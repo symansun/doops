@@ -23,7 +23,7 @@ export interface ConsoleRouteState {
 
 const VALID_VIEWS = new Set<ConsoleView>([CONSOLE_HOME, "console", "assets", "deploy", "catalog"])
 const VALID_TABS = new Set<string>(TARGET_TABS)
-const VALID_AREAS = new Set<AssetArea>(["situation", "inspection", "skills", "board", "machines", "clusters", "systems", "scope"])
+const VALID_AREAS = new Set<AssetArea>(["situation", "inspection", "skills", "mcp", "board", "machines", "clusters", "systems", "scope"])
 const VALID_DEPLOY = new Set<DeploySection>(DEPLOY_SECTIONS.map((item) => item.id))
 const VALID_CATALOG = new Set<string>(Object.keys(assetKinds))
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/
@@ -63,6 +63,8 @@ export function parseConsoleSearch(search: string): ConsoleRouteState {
   } else if (area === "skills") {
     const slug = params.get("skill") ?? ""
     assetPage = SAFE_ID.test(slug) ? { section: "skills", slug } : { section: "skills" }
+  } else if (area === "mcp") {
+    assetPage = { section: "mcp" }
   } else if (area === "board") {
     const clusterId = params.get("cluster") ?? ""
     assetPage = SAFE_ID.test(clusterId) ? { section: "board", clusterId } : { section: "board" }

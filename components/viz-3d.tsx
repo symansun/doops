@@ -23,6 +23,12 @@ export interface ArchNode3D {
   impactNote: string
 }
 
+export interface ArchLink3D {
+  from: string
+  to: string
+  label?: string
+}
+
 export interface CoreNode3D {
   id: string
   label: string
@@ -117,51 +123,44 @@ export function TiltCard3D({
   )
 }
 
-const DEFAULT_CORE_NODES: CoreNode3D[] = [
-  { id: "llm", label: "浙音大模型", status: "ok", lat: 5, lon: 0, shell: 1.04 },
-  { id: "portal", label: "教务门户", status: "ok", lat: 34, lon: 35, shell: 1 },
-  { id: "sso", label: "统一 SSO", status: "ok", lat: 24, lon: 112, shell: 1 },
-  { id: "k8s", label: "K8s 集群", status: "warning", lat: -10, lon: 68, shell: 1.03 },
-  { id: "gpu", label: "双卡 A100", status: "ok", lat: 46, lon: -42, shell: 1.04 },
-  { id: "pg", label: "PG 主库", status: "ok", lat: -24, lon: -25, shell: 1 },
-  { id: "fw", label: "边界防火墙", status: "warning", lat: 14, lon: -108, shell: 1.02 },
-  { id: "ac", label: "上网行为", status: "ok", lat: -36, lon: 148, shell: 1 },
-  { id: "evasion", label: "翻墙巡检", status: "warning", lat: -12, lon: -162, shell: 1.03 },
-  { id: "archive", label: "SSH 归档", status: "warning", lat: -48, lon: 20, shell: 0.98 },
-  { id: "music", label: "智慧琴房", status: "ok", lat: 52, lon: 158, shell: 1 },
-  { id: "vuln", label: "漏洞基线", status: "ok", lat: -42, lon: -96, shell: 1 },
-]
-
 /**
- * Interactive 60fps high-DPI 3D Holographic Campus Situational Core (drag to rotate).
+ * Interactive 60fps high-DPI 3D Holographic Situational Core (drag to rotate, click node to trace).
  */
 export function HolographicCore3D({
   nodes,
+  selectedNodeId,
+  onSelectNode,
   scanning = false,
   title = "3D 全息架构态势核心",
   metrics = [
-    { label: "探针覆盖", value: "100%", tone: "success" },
+    { label: "探针覆盖", value: "—", tone: "success" },
     { label: "业务系统", value: "—", tone: "accent" },
     { label: "告警", value: "0", tone: "warning" },
   ],
 }: {
   nodes?: CoreNode3D[]
+  selectedNodeId?: string
+  onSelectNode?: (id: string) => void
   scanning?: boolean
   title?: string
   metrics?: { label: string; value: string; tone?: "success" | "accent" | "warning" | "danger" }[]
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const dragRef = useRef<{ dragging: boolean; x: number; y: number; rotY: number; rotX: number }>({
+  const dragRef = useRef<{ dragging: boolean; moved: boolean; x: number; y: number; rotY: number; rotX: number }>({
     dragging: false,
+    moved: false,
     x: 0,
     y: 0,
     rotY: 0.35,
-    rotX: 0.28,
+    rotX: 0.24,
   })
+  const hitNodesRef = useRef<Array<{ id: string; sx: number; sy: number; r: number }>>([])
   const scanningRef = useRef(scanning)
   scanningRef.current = scanning
+  const selectedRef = useRef(selectedNodeId || "")
+  selectedRef.current = selectedNodeId || ""
 
-  const items = nodes && nodes.length > 0 ? nodes : DEFAULT_CORE_NODES
+  const items = nodes ?? []
   const itemsRef = useRef(items)
   itemsRef.current = items
 
@@ -307,8 +306,15 @@ export function HolographicCore3D({
         return { node: n, ...project(x, y, z, cx, cy, fov) }
       })
 
-      // Draw glowing energy arcs from hub (index 0: 浙音大模型) to satellite nodes
+      // Draw glowing energy arcs from hub (index 0) to satellite nodes
       const hub = projected[0]
+      if (!hub) {
+        ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'
+        ctx.textAlign = "center"
+        ctx.textBaseline = "middle"
+        ctx.fillStyle = "rgba(148, 163, 184, 0.85)"
+        ctx.fillText("暂无在线资产节点", cx, cy)
+      }
       if (hub) {
         for (let i = 1; i < projected.length; i++) {
           const target = projected[i]
@@ -339,22 +345,34 @@ export function HolographicCore3D({
         }
       }
 
-      // Depth-sort back to front and render nodes + crisp labels for front hemisphere
+      // Depth-sort back to front for dots, then render non-overlapping pill labels for front nodes
       projected.sort((a, b) => b.z - a.z)
+      const hitList: Array<{ id: string; sx: number; sy: number; r: number }> = []
+      const labelCandidates: Array<{
+        p: (typeof projected)[number]
+        dotR: number
+        priority: number
+      }> = []
+
       for (const p of projected) {
-        const isFront = p.z < radius * 0.32
-        const alpha = isFront ? 0.96 : 0.34
-        const dotR = (p.node.id === "llm" ? 5.2 : 3.7) * Math.max(0.75, p.scale)
+        const isFront = p.z < radius * 0.22
+        const isSelected = selectedRef.current === p.node.id
+        const alpha = isSelected ? 1 : isFront ? 0.96 : 0.28
+        const dotR = (isSelected ? 5.6 : p.node.id === "llm" ? 5.0 : 3.6) * Math.max(0.75, p.scale)
         const c = colorOf(p.node.status)
 
-        // Pulse ring on warning / critical / hub
-        if (isFront && (p.node.status !== "ok" || p.node.id === "llm" || isScan)) {
-          const pulse = ((t * 1.1 + p.sx * 0.01) % 1) * 10
+        if (isFront) {
+          hitList.push({ id: p.node.id, sx: p.sx, sy: p.sy, r: Math.max(12, dotR + 8) })
+        }
+
+        // Pulse ring on selected / warning / critical / scan
+        if (isFront && (isSelected || p.node.status !== "ok" || isScan)) {
+          const pulse = ((t * 1.05 + p.sx * 0.01) % 1) * 9
           ctx.beginPath()
           ctx.arc(p.sx, p.sy, dotR + pulse, 0, Math.PI * 2)
-          ctx.strokeStyle = c
-          ctx.globalAlpha = Math.max(0, 0.55 - pulse * 0.05)
-          ctx.lineWidth = 1.1
+          ctx.strokeStyle = isSelected ? "#38bdf8" : c
+          ctx.globalAlpha = Math.max(0, 0.6 - pulse * 0.055)
+          ctx.lineWidth = isSelected ? 1.5 : 1.1
           ctx.stroke()
           ctx.globalAlpha = 1
         }
@@ -365,14 +383,68 @@ export function HolographicCore3D({
         ctx.fillStyle = c
         ctx.globalAlpha = alpha
         ctx.fill()
-
-        if (isFront) {
-          ctx.font = '600 10.5px "Geist", ui-sans-serif, system-ui, sans-serif'
-          ctx.fillStyle = p.node.id === "llm" ? "#e0f2fe" : "#e2e8f0"
-          ctx.globalAlpha = Math.min(1, alpha)
-          ctx.fillText(p.node.label, p.sx + dotR + 4, p.sy + 3.5)
+        if (isSelected) {
+          ctx.strokeStyle = "#f8fafc"
+          ctx.lineWidth = 1.4
+          ctx.stroke()
         }
         ctx.globalAlpha = 1
+
+        if (p.z < radius * 0.14 || isSelected) {
+          const statusWeight = p.node.status === "critical" ? 300 : p.node.status === "warning" ? 200 : 100
+          const selWeight = isSelected ? 500 : 0
+          labelCandidates.push({ p, dotR, priority: selWeight + statusWeight - p.z })
+        }
+      }
+      hitNodesRef.current = hitList
+
+      // Draw crisp pill-backed labels with strict 2D bounding-box collision culling (max 5 visible)
+      labelCandidates.sort((a, b) => b.priority - a.priority)
+      const placedBoxes: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
+      ctx.font = '600 10px "Geist", ui-sans-serif, system-ui, sans-serif'
+
+      for (const cand of labelCandidates) {
+        if (placedBoxes.length >= 5) break
+        const { p, dotR } = cand
+        const label = p.node.label.length > 8 ? `${p.node.label.slice(0, 7)}…` : p.node.label
+        const textW = ctx.measureText(label).width
+        const padX = 5
+        const boxW = textW + padX * 2
+        const boxH = 16
+        const placeLeft = p.sx + dotR + 6 + boxW > w - 4
+        const bx = Math.max(4, Math.min(w - boxW - 4, placeLeft ? p.sx - dotR - 6 - boxW : p.sx + dotR + 6))
+        const by = Math.max(4, Math.min(h - boxH - 4, p.sy - boxH / 2))
+        const box = { x1: bx - 3, y1: by - 3, x2: bx + boxW + 3, y2: by + boxH + 3 }
+
+        const collides = placedBoxes.some(
+          (b) => !(box.x2 < b.x1 || box.x1 > b.x2 || box.y2 < b.y1 || box.y1 > b.y2),
+        )
+        if (collides) continue
+        placedBoxes.push(box)
+
+        const isSelected = selectedRef.current === p.node.id
+        const borderCol = isSelected
+          ? "rgba(56, 189, 248, 0.9)"
+          : p.node.status === "critical"
+            ? "rgba(248, 113, 113, 0.7)"
+            : p.node.status === "warning"
+              ? "rgba(251, 191, 36, 0.7)"
+              : "rgba(148, 163, 184, 0.35)"
+
+        ctx.fillStyle = "rgba(15, 23, 42, 0.84)"
+        ctx.strokeStyle = borderCol
+        ctx.lineWidth = isSelected ? 1.2 : 0.8
+        ctx.beginPath()
+        if (typeof ctx.roundRect === "function") {
+          ctx.roundRect(bx, by, boxW, boxH, 4)
+        } else {
+          ctx.rect(bx, by, boxW, boxH)
+        }
+        ctx.fill()
+        ctx.stroke()
+
+        ctx.fillStyle = isSelected ? "#ffffff" : "#e2e8f0"
+        ctx.fillText(label, bx + padX, by + 11.5)
       }
 
       if (!reduceMotion) {
@@ -388,6 +460,7 @@ export function HolographicCore3D({
 
   function onPointerDown(e: ReactPointerEvent<HTMLCanvasElement>) {
     dragRef.current.dragging = true
+    dragRef.current.moved = false
     dragRef.current.x = e.clientX
     dragRef.current.y = e.clientY
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -397,6 +470,7 @@ export function HolographicCore3D({
     if (!dragRef.current.dragging) return
     const dx = e.clientX - dragRef.current.x
     const dy = e.clientY - dragRef.current.y
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragRef.current.moved = true
     dragRef.current.x = e.clientX
     dragRef.current.y = e.clientY
     dragRef.current.rotY += dx * 0.0085
@@ -404,9 +478,17 @@ export function HolographicCore3D({
   }
 
   function onPointerUp(e: ReactPointerEvent<HTMLCanvasElement>) {
+    const wasClick = dragRef.current.dragging && !dragRef.current.moved
     dragRef.current.dragging = false
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    if (wasClick && onSelectNode) {
+      const rect = e.currentTarget.getBoundingClientRect()
+      const mx = e.clientX - rect.left
+      const my = e.clientY - rect.top
+      const hit = hitNodesRef.current.find((h) => Math.hypot(mx - h.sx, my - h.sy) <= h.r)
+      if (hit) onSelectNode(hit.id)
     }
   }
 
@@ -457,31 +539,39 @@ export function HolographicCore3D({
 }
 
 /**
- * Interactive True-3D 4-Layer Floating Campus Architecture Stack (drag to orbit / preset camera views).
+ * Interactive 4-Layer Architecture Stack with cross-layer blast-radius tracing
+ * and optional True-3D floating projection (flat crisp view by default).
  */
 export function LayeredArchitecture3D({
   nodes,
+  links = [],
   selectedNodeId,
   onSelectNode,
+  onlyAnomalies = false,
+  onToggleAnomalies,
   scanning = false,
   onOpenResources,
   onOpenLayerAction,
 }: {
   nodes: ArchNode3D[]
+  links?: ArchLink3D[]
   selectedNodeId: string
   onSelectNode: (id: string) => void
+  onlyAnomalies?: boolean
+  onToggleAnomalies?: () => void
   scanning?: boolean
   onOpenResources?: () => void
   onOpenLayerAction?: (layer: ArchNode3D["layer"]) => void
 }) {
-  const [viewMode, setViewMode] = useState<"iso" | "aerial" | "flat">("iso")
-  const [tilt, setTilt] = useState<{ rx: number; ry: number }>({ rx: 17, ry: -9 })
+  const [viewMode, setViewMode] = useState<"flat" | "iso" | "aerial">("flat")
+  const [tilt, setTilt] = useState<{ rx: number; ry: number }>({ rx: 0, ry: 0 })
   const [autoOrbit, setAutoOrbit] = useState(false)
+  const [hoveredNodeId, setHoveredNodeId] = useState("")
   const dragRef = useRef<{ dragging: boolean; x: number; y: number }>({ dragging: false, x: 0, y: 0 })
 
   useEffect(() => {
-    if (viewMode === "iso") setTilt({ rx: 17, ry: -9 })
-    else if (viewMode === "aerial") setTilt({ rx: 30, ry: -16 })
+    if (viewMode === "iso") setTilt({ rx: 14, ry: -6 })
+    else if (viewMode === "aerial") setTilt({ rx: 26, ry: -12 })
     else setTilt({ rx: 0, ry: 0 })
   }, [viewMode])
 
@@ -493,13 +583,62 @@ export function LayeredArchitecture3D({
       phase += 0.015
       setTilt((prev) => ({
         rx: prev.rx,
-        ry: Number((Math.sin(phase) * 14).toFixed(2)),
+        ry: Number((Math.sin(phase) * 12).toFixed(2)),
       }))
       raf = window.requestAnimationFrame(tick)
     }
     raf = window.requestAnimationFrame(tick)
     return () => window.cancelAnimationFrame(raf)
   }, [autoOrbit, viewMode])
+
+  // Compute full upstream (impacted) and downstream (supporting) transitive chain for active node
+  const focusId = hoveredNodeId || selectedNodeId
+  const upstreamIds = new Set<string>()
+  const downstreamIds = new Set<string>()
+  if (focusId && links.length > 0) {
+    const downQueue = [focusId]
+    while (downQueue.length > 0) {
+      const cur = downQueue.shift()!
+      for (const lk of links) {
+        if (lk.from === cur && !downstreamIds.has(lk.to) && lk.to !== focusId) {
+          downstreamIds.add(lk.to)
+          downQueue.push(lk.to)
+        }
+      }
+    }
+    const upQueue = [focusId]
+    while (upQueue.length > 0) {
+      const cur = upQueue.shift()!
+      for (const lk of links) {
+        if (lk.to === cur && !upstreamIds.has(lk.from) && lk.from !== focusId) {
+          upstreamIds.add(lk.from)
+          upQueue.push(lk.from)
+        }
+      }
+    }
+  }
+  const hasActiveChain = Boolean(focusId && (upstreamIds.size > 0 || downstreamIds.size > 0))
+
+  // When onlyAnomalies is enabled, keep warning/critical nodes AND their connected blast-radius chain
+  const anomalyRelatedIds = new Set<string>()
+  if (onlyAnomalies) {
+    const seeds = nodes.filter((n) => n.status !== "ok").map((n) => n.id)
+    for (const s of seeds) anomalyRelatedIds.add(s)
+    const queue = [...seeds]
+    while (queue.length > 0) {
+      const cur = queue.shift()!
+      for (const lk of links) {
+        if (lk.from === cur && !anomalyRelatedIds.has(lk.to)) {
+          anomalyRelatedIds.add(lk.to)
+          queue.push(lk.to)
+        }
+        if (lk.to === cur && !anomalyRelatedIds.has(lk.from)) {
+          anomalyRelatedIds.add(lk.from)
+          queue.push(lk.from)
+        }
+      }
+    }
+  }
 
   function handlePointerDown(e: ReactPointerEvent<HTMLDivElement>) {
     if ((e.target as HTMLElement).closest("button")) return
@@ -516,8 +655,8 @@ export function LayeredArchitecture3D({
     dragRef.current.x = e.clientX
     dragRef.current.y = e.clientY
     setTilt((prev) => ({
-      rx: Math.max(0, Math.min(38, prev.rx - dy * 0.25)),
-      ry: Math.max(-24, Math.min(24, prev.ry + dx * 0.25)),
+      rx: Math.max(0, Math.min(34, prev.rx - dy * 0.25)),
+      ry: Math.max(-20, Math.min(20, prev.ry + dx * 0.25)),
     }))
   }
 
@@ -532,39 +671,39 @@ export function LayeredArchitecture3D({
     {
       key: "business" as const,
       label: "L4 · 业务系统层（Business）",
-      emptyText: "暂未登记在役业务系统，可前往「业务系统」台账录入业务与部署映射。",
+      emptyText: "暂未登记在役业务系统",
       actionLabel: "登记业务系统",
-      accent: "border-cyan-400/35 bg-cyan-950/20",
+      accent: "border-cyan-400/30 bg-cyan-950/15",
       tagColor: "text-cyan-300",
       cols: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-5",
-      zOffset: 36,
+      zOffset: 30,
     },
     {
       key: "app" as const,
-      label: "L3 · 应用服务、容器与数据库层（Workload / App / DB）",
-      emptyText: "暂无已探测的应用、容器或数据库实例，可登记网站/数据库或发起巡检。",
+      label: "L3 · 应用服务、容器与数据库层（App / Container / DB）",
+      emptyText: "暂无已探测的应用、容器或数据库实例",
       actionLabel: "查看资源明细",
-      accent: "border-blue-400/35 bg-blue-950/20",
+      accent: "border-blue-400/30 bg-blue-950/15",
       tagColor: "text-blue-300",
       cols: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4",
-      zOffset: 24,
+      zOffset: 20,
     },
     {
       key: "platform" as const,
       label: "L2 · Kubernetes 集群与编排层（Cluster）",
-      emptyText: "暂未关联 Kubernetes 集群，可前往「资产 → Kubernetes」从在线 Agent 导入。",
+      emptyText: "暂未关联 Kubernetes 集群",
       actionLabel: "管理集群台账",
-      accent: "border-indigo-400/35 bg-indigo-950/25",
+      accent: "border-indigo-400/30 bg-indigo-950/20",
       tagColor: "text-indigo-300",
       cols: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3",
-      zOffset: 12,
+      zOffset: 10,
     },
     {
       key: "infra" as const,
       label: "L1 · 机器资源层（物理机 / GPU / 虚拟机 / SSH 托管主机）",
-      emptyText: "暂未登记或采集到机器资源，可前往「机器台账」登记并绑定在线 Agent。",
+      emptyText: "暂未登记或采集到机器资源",
       actionLabel: "管理机器台账",
-      accent: "border-emerald-400/35 bg-emerald-950/20",
+      accent: "border-emerald-400/30 bg-emerald-950/15",
       tagColor: "text-emerald-300",
       cols: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4",
       zOffset: 0,
@@ -572,30 +711,46 @@ export function LayeredArchitecture3D({
   ]
 
   const is3D = viewMode !== "flat"
+  const anomalyCount = nodes.filter((n) => n.status !== "ok").length
+  const layerOrder: Record<ArchNode3D["layer"], number> = { business: 0, app: 1, platform: 2, infra: 3 }
+  const nodeLayerById = new Map(nodes.map((n) => [n.id, n.layer]))
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
+        <div className="space-y-0.5">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold text-foreground">业务 → 集群 → 机器 3D 立体分层架构与实时运行态势</h3>
-            <Badge variant="primary">{is3D ? "3D 空间投影" : "2D 平面视图"}</Badge>
-            {is3D && <span className="font-mono text-2xs text-muted-foreground">空白处拖拽可自由旋转视角</span>}
+            <h3 className="text-sm font-semibold text-foreground">业务 → 应用/库 → 集群 → 机器 联动影响架构</h3>
+            <Badge variant={hasActiveChain ? "primary" : "outline"}>
+              {hasActiveChain
+                ? `已追踪：上游影响 ${upstreamIds.size} · 下游承载 ${downstreamIds.size}`
+                : `共 ${nodes.length} 节点 · ${links.length} 条链路`}
+            </Badge>
+            {is3D && <span className="font-mono text-2xs text-muted-foreground">空白处可拖拽旋转视角</span>}
           </div>
           <p className="text-xs text-muted-foreground">
-            自上而下打通「业务系统 → 应用/数据库 → Kubernetes 集群 → 物理/GPU/虚机/SSH 机器资源」四层实时关联，全部节点由真实台账与监控快照驱动。
+            点击或悬停任意节点，实时高亮其上游受影响业务与下游承载集群/机器；支持一键筛选异常链路或切换 3D 立体视角。
           </p>
         </div>
 
         <Inline gap={1} className="flex-wrap">
+          {onToggleAnomalies && (
+            <Button
+              size="sm"
+              variant={onlyAnomalies ? "danger-outline" : "default"}
+              onClick={onToggleAnomalies}
+            >
+              {onlyAnomalies ? `显示全部 (${nodes.length})` : `仅看异常链路 (${anomalyCount})`}
+            </Button>
+          )}
+          <Button size="sm" variant={viewMode === "flat" ? "primary" : "default"} onClick={() => setViewMode("flat")}>
+            标准分层
+          </Button>
           <Button size="sm" variant={viewMode === "iso" ? "primary" : "default"} onClick={() => setViewMode("iso")}>
             3D 立体
           </Button>
           <Button size="sm" variant={viewMode === "aerial" ? "primary" : "default"} onClick={() => setViewMode("aerial")}>
             3D 俯瞰
-          </Button>
-          <Button size="sm" variant={viewMode === "flat" ? "primary" : "default"} onClick={() => setViewMode("flat")}>
-            2D 平面
           </Button>
           {is3D && (
             <Button size="sm" variant={autoOrbit ? "primary" : "ghost"} onClick={() => setAutoOrbit((v) => !v)}>
@@ -610,14 +765,14 @@ export function LayeredArchitecture3D({
         </Inline>
       </div>
 
-      {/* 3D Holographic Stage */}
+      {/* Architecture Stage (crisp flat by default; true 3D on demand) */}
       <div
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        className={`doops-3d-stage rounded-xl border border-primary/25 p-4 md:p-6 ${
-          is3D ? "cursor-grab select-none active:cursor-grabbing" : ""
+        className={`rounded-xl border border-primary/20 p-3.5 md:p-4 ${
+          is3D ? "doops-3d-stage cursor-grab select-none active:cursor-grabbing md:p-6" : "bg-background/40"
         }`}
         style={{ perspective: is3D ? "1500px" : "none" }}
       >
@@ -625,92 +780,165 @@ export function LayeredArchitecture3D({
         {scanning && <div aria-hidden="true" className="doops-scan-beam" />}
 
         <div
-          className="relative mx-auto space-y-3 transition-transform duration-300 ease-out"
+          className="relative mx-auto space-y-2.5 transition-transform duration-300 ease-out"
           style={{
-            transformStyle: "preserve-3d",
+            transformStyle: is3D ? "preserve-3d" : "flat",
             transform: is3D
-              ? `rotateX(${tilt.rx}deg) rotateY(${tilt.ry}deg) scale(${viewMode === "aerial" ? 0.94 : 0.97})`
+              ? `rotateX(${tilt.rx}deg) rotateY(${tilt.ry}deg) scale(${viewMode === "aerial" ? 0.94 : 0.98})`
               : "none",
           }}
         >
           {layers.map((layer, layerIdx) => {
-            const layerNodes = nodes.filter((n) => n.layer === layer.key)
+            const rawLayerNodes = nodes.filter((n) => n.layer === layer.key)
+            const layerNodes = onlyAnomalies
+              ? rawLayerNodes.filter((n) => anomalyRelatedIds.has(n.id))
+              : rawLayerNodes
+            const layerAnomalies = rawLayerNodes.filter((n) => n.status !== "ok").length
+            const nextLayer = layers[layerIdx + 1]
+            const betweenCount = nextLayer
+              ? links.filter((lk) => {
+                  const a = nodeLayerById.get(lk.from)
+                  const b = nodeLayerById.get(lk.to)
+                  return a && b && layerOrder[a] <= layerIdx && layerOrder[b] >= layerIdx + 1
+                }).length
+              : 0
+            const activeBetween = nextLayer && hasActiveChain
+              ? links.some((lk) => {
+                  const inChain =
+                    (lk.from === focusId || upstreamIds.has(lk.from) || downstreamIds.has(lk.from)) &&
+                    (lk.to === focusId || upstreamIds.has(lk.to) || downstreamIds.has(lk.to))
+                  const a = nodeLayerById.get(lk.from)
+                  const b = nodeLayerById.get(lk.to)
+                  return inChain && a && b && layerOrder[a] <= layerIdx && layerOrder[b] >= layerIdx + 1
+                })
+              : false
+
             return (
               <div
                 key={layer.key}
                 className="relative"
                 style={{
-                  transformStyle: "preserve-3d",
+                  transformStyle: is3D ? "preserve-3d" : "flat",
                   transform: is3D ? `translateZ(${layer.zOffset}px)` : "none",
                 }}
               >
-                <div className={`doops-3d-slab rounded-xl border p-3 ${layer.accent}`}>
-                  <div className="mb-2 flex items-center justify-between gap-2 text-2xs font-medium">
-                    <span className={`font-mono tracking-wide ${layer.tagColor}`}>{layer.label}</span>
-                    <span className="font-mono text-muted-foreground/80">
-                      Z+{layer.zOffset}px · {layerNodes.length} 节点
-                    </span>
+                {rawLayerNodes.length === 0 ? (
+                  /* Compact single-line onboarding strip so empty layers never crowd out populated layers */
+                  <div className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed px-3 py-2 text-xs ${layer.accent}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`font-mono font-medium ${layer.tagColor}`}>{layer.label}</span>
+                      <span className="text-muted-foreground">· {layer.emptyText}</span>
+                    </div>
+                    {onOpenLayerAction && (
+                      <Button size="sm" variant="ghost" onClick={() => onOpenLayerAction(layer.key)}>
+                        {layer.actionLabel} →
+                      </Button>
+                    )}
                   </div>
-
-                  {layerNodes.length === 0 ? (
-                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-white/15 bg-background/40 px-3 py-2.5 text-xs text-muted-foreground">
-                      <span>{layer.emptyText}</span>
-                      {onOpenLayerAction && (
-                        <Button size="sm" variant="ghost" onClick={() => onOpenLayerAction(layer.key)}>
-                          {layer.actionLabel}
-                        </Button>
-                      )}
+                ) : (
+                  <div className={`rounded-xl border p-3 ${is3D ? "doops-3d-slab" : ""} ${layer.accent}`}>
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-2xs font-medium">
+                      <span className={`font-mono tracking-wide ${layer.tagColor}`}>{layer.label}</span>
+                      <span className="flex items-center gap-2 font-mono text-muted-foreground">
+                        <span>{layerNodes.length} / {rawLayerNodes.length} 节点</span>
+                        {layerAnomalies > 0 && <span className="text-warning">· {layerAnomalies} 异常</span>}
+                        {is3D && <span>· Z+{layer.zOffset}px</span>}
+                      </span>
                     </div>
-                  ) : (
-                    <div className={`grid gap-2.5 ${layer.cols}`} style={{ transformStyle: "preserve-3d" }}>
-                      {layerNodes.map((node) => {
-                        const active = selectedNodeId === node.id
-                        const dotCls =
-                          node.status === "critical"
-                            ? "bg-destructive shadow-[0_0_8px_rgba(248,113,113,0.9)]"
-                            : node.status === "warning"
-                              ? "bg-warning shadow-[0_0_8px_rgba(251,191,36,0.85)]"
-                              : "bg-success shadow-[0_0_8px_rgba(52,211,153,0.85)]"
-                        const borderCls = active
-                          ? "border-accent bg-primary/15 doops-3d-node-active"
-                          : node.status === "critical"
-                            ? "border-destructive/60 bg-destructive/10 hover:border-destructive"
-                            : node.status === "warning"
-                              ? "border-warning/60 bg-warning/10 hover:border-warning"
-                              : "border-white/15 bg-card/85 hover:border-accent/70"
 
-                        return (
-                          <button
-                            key={node.id}
-                            type="button"
-                            onClick={() => onSelectNode(node.id)}
-                            className={`doops-3d-node rounded-lg border p-2.5 text-left ${borderCls}`}
-                          >
-                            <div className="flex items-center justify-between gap-1.5">
-                              <span className="truncate text-xs font-semibold text-foreground">{node.title}</span>
-                              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotCls}`} />
-                            </div>
-                            <div className="mt-0.5 truncate font-mono text-2xs text-muted-foreground">{node.subtitle}</div>
-                            <div className="mt-1.5 truncate font-mono text-2xs text-foreground">{node.metricLine}</div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
+                    {layerNodes.length === 0 ? (
+                      <div className="rounded-md border border-dashed border-white/10 px-3 py-2 text-xs text-muted-foreground">
+                        本层当前无异常或关联受影响节点。
+                      </div>
+                    ) : (
+                      <div className={`grid gap-2 ${layer.cols}`} style={{ transformStyle: is3D ? "preserve-3d" : "flat" }}>
+                        {layerNodes.map((node) => {
+                          const isSelected = selectedNodeId === node.id
+                          const isFocus = focusId === node.id
+                          const isUp = upstreamIds.has(node.id)
+                          const isDown = downstreamIds.has(node.id)
+                          const isDimmed = hasActiveChain && !isFocus && !isUp && !isDown
 
-                {/* Glowing vertical laser data conduits between 3D planes */}
+                          const dotCls =
+                            node.status === "critical"
+                              ? "bg-destructive shadow-[0_0_8px_rgba(248,113,113,0.9)]"
+                              : node.status === "warning"
+                                ? "bg-warning shadow-[0_0_8px_rgba(251,191,36,0.85)]"
+                                : "bg-success shadow-[0_0_8px_rgba(52,211,153,0.85)]"
+                          const borderCls = isSelected
+                            ? "border-accent bg-primary/15 ring-1 ring-accent/50"
+                            : isUp
+                              ? "border-amber-400/70 bg-amber-500/10"
+                              : isDown
+                                ? "border-cyan-400/70 bg-cyan-500/10"
+                                : node.status === "critical"
+                                  ? "border-destructive/60 bg-destructive/10 hover:border-destructive"
+                                  : node.status === "warning"
+                                    ? "border-warning/60 bg-warning/10 hover:border-warning"
+                                    : "border-white/12 bg-card/85 hover:border-accent/60"
+
+                          return (
+                            <button
+                              key={node.id}
+                              type="button"
+                              onClick={() => onSelectNode(node.id)}
+                              onMouseEnter={() => setHoveredNodeId(node.id)}
+                              onMouseLeave={() => setHoveredNodeId("")}
+                              className={`rounded-lg border p-2.5 text-left transition-all ${borderCls} ${
+                                isDimmed ? "opacity-35" : "opacity-100"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-1.5">
+                                <span className="truncate text-xs font-semibold text-foreground">{node.title}</span>
+                                <span className="flex shrink-0 items-center gap-1">
+                                  {isUp && (
+                                    <span className="rounded bg-amber-500/20 px-1 py-0.2 font-mono text-[10px] text-amber-300">
+                                      上游影响
+                                    </span>
+                                  )}
+                                  {isDown && (
+                                    <span className="rounded bg-cyan-500/20 px-1 py-0.2 font-mono text-[10px] text-cyan-300">
+                                      下游承载
+                                    </span>
+                                  )}
+                                  <span className={`h-2.5 w-2.5 rounded-full ${dotCls}`} />
+                                </span>
+                              </div>
+                              <div className="mt-0.5 truncate font-mono text-2xs text-muted-foreground">{node.subtitle}</div>
+                              <div className="mt-1.5 truncate font-mono text-2xs text-foreground">{node.metricLine}</div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Meaningful inter-layer dependency indicator */}
                 {layerIdx < layers.length - 1 && (
                   <div
                     aria-hidden="true"
-                    className="pointer-events-none flex items-center justify-around px-10 py-0.5"
+                    className="pointer-events-none flex items-center justify-center gap-3 py-1 font-mono text-[11px]"
                   >
-                    {[0, 1, 2, 3].map((beamIdx) => (
-                      <div
-                        key={beamIdx}
-                        className="doops-beam-pulse h-4 w-0.5 rounded-full bg-gradient-to-b from-cyan-400/50 via-blue-400/30 to-emerald-400/50"
-                      />
-                    ))}
+                    <span
+                      className={`h-px flex-1 max-w-28 transition-colors ${
+                        activeBetween ? "bg-cyan-400/70" : "bg-border/50"
+                      }`}
+                    />
+                    <span
+                      className={`rounded-full border px-2 py-0.5 transition-colors ${
+                        activeBetween
+                          ? "border-cyan-400/60 bg-cyan-500/15 text-cyan-300"
+                          : "border-border/50 bg-background/60 text-muted-foreground"
+                      }`}
+                    >
+                      ↓ {betweenCount > 0 ? `${betweenCount} 条依赖承载链路` : "待建立上下层映射"}
+                    </span>
+                    <span
+                      className={`h-px flex-1 max-w-28 transition-colors ${
+                        activeBetween ? "bg-cyan-400/70" : "bg-border/50"
+                      }`}
+                    />
                   </div>
                 )}
               </div>
@@ -725,7 +953,13 @@ export function LayeredArchitecture3D({
 /**
  * Interactive Isometric 3D Prism Resource Bar Chart (CPU / Memory / GPU / Disk).
  */
-export function ResourceBars3D({ items }: { items: ResourceBar3DItem[] }) {
+export function ResourceBars3D({
+  items,
+  title = "核心资产 3D 立体资源柱阵",
+}: {
+  items: ResourceBar3DItem[]
+  title?: string
+}) {
   const [metric, setMetric] = useState<"cpu" | "memory" | "disk" | "gpu">("memory")
   const [hoveredId, setHoveredId] = useState<string>("")
 
@@ -767,7 +1001,7 @@ export function ResourceBars3D({ items }: { items: ResourceBar3DItem[] }) {
     <div className="space-y-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-foreground">全校核心资产 3D 立体资源柱阵</span>
+          <span className="font-semibold text-foreground">{title}</span>
           <Badge variant="outline">{metricMeta[metric].label}</Badge>
         </div>
         <Inline gap={1}>

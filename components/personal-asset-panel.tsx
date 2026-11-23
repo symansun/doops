@@ -39,7 +39,7 @@ export function PersonalAssetPanel({ kind, demo, onOperate }: { kind: Exclude<Ca
       <Button onClick={onOperate}>进入 Agent 操作台</Button></div>
     {demo && <p role="status">连接 Gateway 后可维护个人资产登记。</p>}
     {error && <StatusBanner tone="error">{error}</StatusBanner>}
-    {draft && <form className="card-surface space-y-3 p-4" onSubmit={e => {e.preventDefault(); void save(draft.revision ? "update" : "create",draft)}}>
+    {draft && <form data-assist-scope="asset-entry" className="card-surface space-y-3 p-4" onSubmit={e => {e.preventDefault(); void save(draft.revision ? "update" : "create",draft)}}>
       <label className="flex flex-col gap-1 text-sm">资产编号<Input required disabled={busy || !!draft.revision} value={draft.id} onChange={e => setDraft({...draft,id:e.target.value})} className="font-mono" /></label>
       <label className="flex flex-col gap-1 text-sm">名称<Input required maxLength={80} value={draft.name} onChange={e => setDraft({...draft,name:e.target.value})} /></label>
       <label className="flex flex-col gap-1 text-sm">环境（选填）<Input maxLength={80} value={draft.environment} onChange={e => setDraft({...draft,environment:e.target.value})} /></label>

@@ -3,13 +3,9 @@
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import { fetchTargets, login, persistTokenSession, type Session } from "@/lib/client"
-import { DEMO_TOKEN } from "@/lib/demo"
-import { isDemoAllowed } from "@/lib/demo-policy"
-import { PlugIcon, ServerIcon, SparkIcon } from "./icons"
+import { PlugIcon } from "./icons"
 import { BrandStacked } from "./brand"
 import { Button, Input, SegmentedControl, Textarea } from "./ui"
-
-const DEMO_ENABLED = isDemoAllowed()
 
 export function ConnectScreen({
   defaultGateway,
@@ -29,10 +25,6 @@ export function ConnectScreen({
   const [error, setError] = useState(initialError)
   useEffect(() => { setGateway(defaultGateway) }, [defaultGateway])
   useEffect(() => { if (initialError) setError(initialError) }, [initialError])
-
-  function enterDemo() {
-    onConnected({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })
-  }
 
   async function connect() {
     setError("")
@@ -151,22 +143,6 @@ export function ConnectScreen({
             <PlugIcon width={16} height={16} />
             {busy ? "连接中…" : "连接"}
           </Button>
-
-          <div className="my-4 flex items-center gap-3">
-            <span className="h-px flex-1 bg-border" />
-            <span className="text-sm text-muted-foreground">或</span>
-            <span className="h-px flex-1 bg-border" />
-          </div>
-
-          {DEMO_ENABLED && (
-            <Button
-              onClick={enterDemo}
-              className="w-full"
-            >
-              <SparkIcon width={16} height={16} />
-              进入演示模式（无需连接 gateway）
-            </Button>
-          )}
         </div>
 
         <p className="mt-4 text-center text-sm text-muted-foreground">

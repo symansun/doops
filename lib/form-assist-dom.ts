@@ -1,5 +1,6 @@
 import { containsSecret, forbiddenLabel, type FieldSpec } from './form-assist'
-export const scopeSelector='form,[data-assist-scope],[role="dialog"]'
+// Only explicit asset-entry forms opt into AI form assist; never attach globally to every <form> or dialog.
+export const scopeSelector='[data-assist-scope="asset-entry"]'
 type Control=HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement
 export type Bound=FieldSpec & {el:Control; original:string}
 function labelOf(el:Control, trigger:Element|null) {

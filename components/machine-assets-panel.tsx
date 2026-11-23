@@ -455,7 +455,7 @@ function MachineForm({ initialKind, machine, machines, online, onCancel, onSaved
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally { setBusy(false) }
   }
-  return <form onSubmit={save} className="space-y-4">
+  return <form data-assist-scope="asset-entry" onSubmit={save} className="space-y-4">
     <h3 className="font-semibold">{machine ? "编辑机器" : "手工新增机器"}</h3>
     <fieldset disabled={busy} className="grid min-w-0 gap-3 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-3 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1.5">
       <label>资产编号（必填）<Input name="asset_id" required readOnly={!!machine} defaultValue={machine?.asset_id} /></label>

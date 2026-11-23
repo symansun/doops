@@ -253,7 +253,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
       ) : (
         <>
           {form && (
-            <div data-assist-scope="" className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
+            <div className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
               <div className="text-xs font-medium text-foreground">
                 {form.id ? `编辑路由 ${form.id}` : "新建路由"}
               </div>

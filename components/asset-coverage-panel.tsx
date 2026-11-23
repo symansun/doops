@@ -91,7 +91,7 @@ function ScopedCoverageSummary({ onOpen, clusterId }: SummaryProps) {
 function MachineLifecycle({ machines, busy, change }: { machines: MachineState[]; busy: boolean; change: (machine: MachineState) => void }) {
   const [id, setID] = useState("")
   const machine = machines.find(item => item.asset_id === id)
-  return <section data-assist-scope="" className="card-surface space-y-2 p-4"><h3 className="font-semibold">机器在役状态</h3>
+  return <section className="card-surface space-y-2 p-4"><h3 className="font-semibold">机器在役状态</h3>
     <p className="text-xs text-muted-foreground">退役后从当前分母移除，恢复在役后重新计入。已冻结基线保留盘点时的状态。</p>
     {machines.length ? <div className="flex flex-wrap items-center gap-2">
       <Select aria-label="选择盘点机器" className="max-w-full" value={id} disabled={busy} onChange={e => setID(e.target.value)}>

@@ -134,7 +134,7 @@ function UpgradePanel({ session, target, sessionId }: Props) {
   const disabled = running || !ready || offline || unresolved || Boolean(storageError) || session.demo === true
 
   return (
-    <section data-assist-scope="" className="flex w-full min-w-0 flex-col gap-3 px-4 py-5">
+    <section className="flex w-full min-w-0 flex-col gap-3 px-4 py-5">
       <h2 className="text-base font-medium">升级现有 Agent</h2>
       <p className="break-all text-sm text-muted-foreground">{target.cluster}/{target.instance} · {sessionId}</p>
       {!ready && <p role="status" className="text-sm text-muted-foreground">正在恢复升级记录…</p>}

@@ -452,7 +452,7 @@ function UsersView({ session }: { session: Session }) {
       <ErrorBar msg={error} />
 
       {showCreate && (
-        <div data-assist-scope="" className="mx-4 mt-3 flex flex-wrap items-end gap-3 rounded-lg border bg-muted/40 p-3">
+        <div className="mx-4 mt-3 flex flex-wrap items-end gap-3 rounded-lg border bg-muted/40 p-3">
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             用户名
             <Input
@@ -670,7 +670,7 @@ function GrantsView({ session }: { session: Session }) {
       <ErrorBar msg={error} />
 
       {showCreate && (
-        <div data-assist-scope="" className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
+        <div className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               用户
@@ -900,7 +900,7 @@ function TokensView({ session }: { session: Session }) {
       <ErrorBar msg={error} />
 
       {showCreate && (
-        <div data-assist-scope="" className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
+        <div className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               所属用户
