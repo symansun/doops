@@ -71,7 +71,7 @@ PROXY_PORTS = {"1080", "3128", "7890", "7891", "8118", "10808", "20170"}
 
 def run(cmd):
     try:
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=6)
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=6)
         return r.stdout if r.returncode == 0 else ""
     except Exception:
         return ""
@@ -79,7 +79,7 @@ def run(cmd):
 def run_rc(cmd):
     """返回 (returncode, stdout)；失败时 rc != 0，调用方必须显式报缺口而非静默当 0。"""
     try:
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=6)
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=6)
         return r.returncode, r.stdout or ""
     except Exception:
         return 1, ""

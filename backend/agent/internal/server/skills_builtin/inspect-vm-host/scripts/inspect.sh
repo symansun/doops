@@ -88,7 +88,7 @@ def read_text(path):
 
 def run_cmd(cmd, timeout=5):
     try:
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=timeout)
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=timeout)
         return r.stdout if r.returncode == 0 else ""
     except Exception:
         return ""

@@ -69,7 +69,7 @@ KEY_PKGS = ("openssl", "openssh-server", "openssh-client", "curl", "sudo", "ngin
 
 def run(cmd, timeout=8):
     try:
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=timeout)
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=timeout)
         return r.returncode, r.stdout.strip()
     except Exception:
         return 1, ""

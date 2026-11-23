@@ -75,7 +75,7 @@ def finish(payload):
 
 def kget(args):
     try:
-        r = subprocess.run(["kubectl", "--request-timeout=10s"] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+        r = subprocess.run(["kubectl", "--request-timeout=10s"] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=15)
         if r.returncode != 0:
             return None, r.stderr.strip() or f"exit {r.returncode}"
         return json.loads(r.stdout), ""
