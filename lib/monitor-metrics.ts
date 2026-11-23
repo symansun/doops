@@ -250,11 +250,50 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
+// SKILL_FIRST_INSPECTION_SPEC.md §3.2：artifact_state 的展示模型。
+// missing 只表示"正文文件不在了"，不是采集失败；present + truncated 是 present 的子状态，
+// 截断提示由后端写进正文的 "... [truncated]"（JSON 为 truncated 信封）承担，前端不替换正文。
+
+/** 与后端 artifact_state 取值一致；老响应可能缺省。 */
+export type MonitorArtifactState = "present" | "missing"
+
+export const ARTIFACT_MISSING_NOTICE =
+  "本次巡检的原始产物已被保留策略清理（默认保留 30 天），正文不可用；指标趋势仍按 90 天保留。原始产物文件已不存在或不可读，这不代表本次采集失败。"
+
+export interface ArtifactStateDisplay {
+  /** missing = 正文不可渲染，正文区应替换为 notice。 */
+  missing: boolean
+  /** present 及其截断子状态下正文照常渲染；missing 为 false。 */
+  showBody: boolean
+  /** missing 时的正文区提示；present 时为 null。 */
+  notice: string | null
+  /** present 且被 256 KiB 上限截断；missing 恒为 false（不做状态提升）。 */
+  truncated: boolean
+}
+
+/**
+ * 把详情 item 的 artifact_state / artifact_truncated 收敛成一个展示模型。
+ * 字段缺省（老响应）与 present 等价；truncated 只作为 present 的子状态透出。
+ */
+export function describeArtifactState(
+  state: MonitorArtifactState | string | null | undefined,
+  truncated?: boolean | null,
+): ArtifactStateDisplay {
+  if (state === "missing") {
+    return { missing: true, showBody: false, notice: ARTIFACT_MISSING_NOTICE, truncated: false }
+  }
+  return { missing: false, showBody: true, notice: null, truncated: Boolean(truncated) }
+}
+
 /** 详情接口 item 上可选的 diff 字段（仅 GET /v1/monitor/runs/<id> 提供）。 */
 export interface MonitorDiffSourceItem {
   diff?: MonitorRunDiff | null
   cluster?: string | null
   instance?: string | null
+  /** 产物可用状态；老后端不返回该字段。 */
+  artifact_state?: MonitorArtifactState | string | null
+  /** 仅 present 下的 256 KiB 截断标记；老后端不返回该字段。 */
+  artifact_truncated?: boolean | null
 }
 
 /** InspectionArtifactViewer 需要的外部上下文（跨次 diff + 趋势取数目标）。 */
@@ -264,6 +303,10 @@ export interface MonitorInspectionViewerProps {
   trendSkill?: string
   trendCluster?: string
   trendInstance?: string
+  /** 产物可用状态；undefined 表示老响应缺省，viewer 按 present 处理。 */
+  artifactState?: MonitorArtifactState
+  /** 仅 present 下的截断标记。 */
+  artifactTruncated?: boolean
 }
 
 /**
@@ -284,8 +327,13 @@ export function toInspectionViewerProps(
   const cluster = item?.cluster || undefined
   const instance = item?.instance || undefined
   const skill = skillSlug || undefined
+  // 只认后端明确给出的 present/missing；缺省或未知取值保持 undefined（= 老响应）。
+  const artifactState: MonitorArtifactState | undefined =
+    item?.artifact_state === "missing" ? "missing" : item?.artifact_state === "present" ? "present" : undefined
+  const artifactTruncated = item?.artifact_truncated === true ? true : undefined
+  const base = { diff, artifactState, artifactTruncated }
   if (!session || !skill || !cluster || !instance) {
-    return { diff }
+    return base
   }
-  return { diff, session, trendSkill: skill, trendCluster: cluster, trendInstance: instance }
+  return { ...base, session, trendSkill: skill, trendCluster: cluster, trendInstance: instance }
 }

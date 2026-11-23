@@ -6,6 +6,7 @@ import {
   MONITOR_METRIC_RANGES,
   buildTrendGeometry,
   deltaDirection,
+  describeArtifactState,
   diffHasChanges,
   fetchMonitorMetricSeries,
   formatDeltaPercent,
@@ -572,6 +573,8 @@ export function InspectionArtifactViewer({
   trendSkill,
   trendCluster,
   trendInstance,
+  artifactState,
+  artifactTruncated,
 }: {
   format?: string
   markdown?: string
@@ -585,10 +588,15 @@ export function InspectionArtifactViewer({
   trendSkill?: string
   trendCluster?: string
   trendInstance?: string
+  /** SKILL_FIRST_INSPECTION_SPEC.md §3.2：missing = artifact_dir 指向的产物文件已读不到，正文区换成提示。 */
+  artifactState?: "present" | "missing"
+  /** 仅 present 下的 256 KiB 截断标记；截断提示由正文自带的 "... [truncated]" 承担。 */
+  artifactTruncated?: boolean
 }) {
   const hasJson = jsonData !== undefined && jsonData !== null
   const hasMarkdown = Boolean(markdown && markdown.trim())
   const showTrend = Boolean(session && trendSkill && trendCluster && trendInstance)
+  const artifactDisplay = describeArtifactState(artifactState, artifactTruncated)
   const [view, setView] = useState<ArtifactViewMode>("visual")
   const [copied, setCopied] = useState(false)
 
@@ -598,7 +606,7 @@ export function InspectionArtifactViewer({
     [hasMarkdown, hasJson, markdown],
   )
 
-  if (!hasJson && !hasMarkdown && !rawOutput && diff === undefined && !showTrend) {
+  if (!hasJson && !hasMarkdown && !rawOutput && diff === undefined && !showTrend && !artifactDisplay.missing) {
     return null
   }
 
@@ -632,8 +640,13 @@ export function InspectionArtifactViewer({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-xs font-semibold text-foreground">巡检产物</span>
-          <Badge variant="primary">{formatLabel}</Badge>
+          {artifactDisplay.missing ? (
+            <Badge variant="outline">正文不可用</Badge>
+          ) : (
+            <Badge variant="primary">{formatLabel}</Badge>
+          )}
         </div>
+        {!artifactDisplay.missing && (
         <Inline gap={1} className="flex-wrap">
           <Button
             size="sm"
@@ -694,6 +707,7 @@ export function InspectionArtifactViewer({
             {copied ? "已复制" : "复制"}
           </Button>
         </Inline>
+        )}
       </div>
 
       {view === "visual" && (
@@ -707,16 +721,38 @@ export function InspectionArtifactViewer({
               instance={trendInstance}
             />
           )}
-          {visualProse && (
-            <div className="rounded-md border bg-background px-3.5 py-2.5 text-xs">
-              <Markdown content={visualProse} variant="compact" />
-            </div>
-          )}
-          {hasJson && <DynamicJsonNode data={jsonData} />}
-          {!visualProse && !hasJson && rawOutput && (
-            <pre className="max-h-72 overflow-auto rounded-md border bg-background p-2.5 font-mono text-2xs text-foreground">
-              {rawOutput}
-            </pre>
+          {artifactDisplay.missing ? (
+            <>
+              <div
+                role="status"
+                data-artifact-state="missing"
+                className="rounded-md border border-warning/40 bg-warning/5 px-3.5 py-2.5 text-xs leading-relaxed text-foreground"
+              >
+                {artifactDisplay.notice}
+              </div>
+              {hasJson && (
+                <div className="space-y-1.5">
+                  <p className="text-2xs text-muted-foreground">
+                    以下为巡检记录中的指标与检查项（原始产物正文已不可用）
+                  </p>
+                  <DynamicJsonNode data={jsonData} />
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {visualProse && (
+                <div className="rounded-md border bg-background px-3.5 py-2.5 text-xs">
+                  <Markdown content={visualProse} variant="compact" />
+                </div>
+              )}
+              {hasJson && <DynamicJsonNode data={jsonData} />}
+              {!visualProse && !hasJson && rawOutput && (
+                <pre className="max-h-72 overflow-auto rounded-md border bg-background p-2.5 font-mono text-2xs text-foreground">
+                  {rawOutput}
+                </pre>
+              )}
+            </>
           )}
         </div>
       )}
@@ -733,7 +769,7 @@ export function InspectionArtifactViewer({
         </pre>
       )}
 
-      {rawOutput && rawOutput.trim() !== (markdown || "").trim() && rawOutput.trim() !== prettyJson.trim() && (
+      {!artifactDisplay.missing && rawOutput && rawOutput.trim() !== (markdown || "").trim() && rawOutput.trim() !== prettyJson.trim() && (
         <details className="text-xs">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
             查看原始命令 / 模型输出

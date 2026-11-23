@@ -85,6 +85,8 @@ export interface MonitorRunRecord {
   finished_at_ms: number
   duration_ms: number
   summary?: string
+  /** run 级产物可用状态聚合（SKILL_FIRST_INSPECTION_SPEC.md §3.2）；列表响应不含该字段。 */
+  artifact_state?: "present" | "missing"
 }
 
 export interface MonitorInspectCheck {
@@ -145,6 +147,10 @@ export interface MonitorRunItemRecord {
   artifact_markdown?: string
   artifact_json?: unknown
   raw_output?: string
+  /** 产物可用状态（SKILL_FIRST_INSPECTION_SPEC.md §3.2）：missing = artifact_dir 有值但读不到任何产物文件。 */
+  artifact_state?: "present" | "missing"
+  /** 仅 present 下出现：产物文件在但被 256 KiB 上限截断。 */
+  artifact_truncated?: boolean
   /** 跨次对比，仅 GET /v1/monitor/runs/<id> 详情响应提供；创建响应不含该字段。 */
   diff?: MonitorRunDiff | null
 }
