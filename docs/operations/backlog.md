@@ -9,7 +9,7 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
-| QA-05 | 发布前基线重跑：以当时 HEAD 重跑 QA-04 的 6 路分片（测试数会随之变化），作为对外基线 | qa-skill-01 | 只追加 docs/reviews/2026-11-24-main-full-suite-baseline.md | 03:08 | 运行中（基线 6c3fb171，30 分钟硬上限） |
+| QA-05 | 发布前基线重跑：以当时 HEAD 重跑 QA-04 的 6 路分片（测试数会随之变化），作为对外基线 | qa-skill-01 | 只追加 docs/reviews/2026-11-24-main-full-suite-baseline.md | 03:05 | 运行中（基线 6c3fb171，30 分钟硬上限） |
 | QA-03 | 对抗性复核 6 条反向实验（SF-08 x2 / INT-08 / SF-16 / SF-15 / 审计 cutoff F5），干净树重做、破坏只在 /tmp | qa-recheck-01 | 只新增 `docs/reviews/2026-11-24-adversarial-recheck.md` | 02:38 | 运行中 |
 
 ## 待办（排队/待决策）
