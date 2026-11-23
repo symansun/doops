@@ -10,6 +10,8 @@
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
 | SF-05 | 前端接 SF-04：viewer Diff/Trends + 删死开关 + 改发 `skill`/`actions` 停发 `strategies`/`ssh_hosts`（SF-09 后手动巡检必 400） | dev-artifact-01 | `components/inspection-artifact-viewer.tsx`、`components/skill-registry-panel.tsx`、`components/inspection-center-panel.tsx`、`lib/demo.ts`、`lib/monitor-engine.ts`(+test)、新增 `lib/monitor-metrics.ts`(+test) | 01:26，01:48 扩范围 | 运行中 |
+| SF-13 | legacy strategy 退役后的残留清扫（文档/注释/死列标注/`retiredStrategySkillSlugs` slug 钉子） | dev-sf-01 | `DOOPS_WEBUI.md`、`GATEWAY_MYSQL_MIGRATION_PLAN.md`、spec、`AGENTS.md`、`gateway_store_schema.go` 仅注释 | 01:52 | 运行中 |
+| QA-02 | 全仓回归：`go test ./...` 全包 + pytest + verify.sh + 残留扫描（SF-09 删 2186 行的保险） | qa-skill-01 | 只新增 `docs/reviews/2026-11-24-main-regression.md` | 01:52 | 运行中 |
 | SF-08 | 内置巡检包鲁棒性矩阵（10 场景真跑）+ 端口表收紧 + ssh-host 退化分支 + 消费 `DOOPS_TARGET_*` | skill-dev-01 | `skills_builtin/**`、`testdata/skills_builtin_verify/**` | 01:15，01:27 加附录 | 运行中 |
 | INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）+ `agent_status` 两列 + census 刷新 + 真机回读 | integrator-ars | `gateway_mysql_schema.sql`、`testdata/gateway-sqlite-schema.sql`、`gateway_mysql_runtime_test.go`、`gateway_store_schema.go` | 01:23 | 运行中 |
 
