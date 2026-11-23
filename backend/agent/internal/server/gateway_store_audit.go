@@ -316,5 +316,5 @@ func credentialAuditScopeJSON(scope *CredentialGrantScope) (string, error) {
 }
 
 func (s *GatewayStore) DeleteAuditBefore(before time.Time) (int64, error) {
-	return execRowsAffected(s.db, deleteCompletedAuditSQL, formatTime(before.UTC()))
+	return execRowsAffected(s.db, deleteCompletedAuditSQL, before.UTC().UnixMilli())
 }

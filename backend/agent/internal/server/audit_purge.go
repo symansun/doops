@@ -38,15 +38,17 @@ const activeAuditStatusSQL = `'running', 'executing', 'outcome_unknown'`
 // auditIndexHint pins the started_at index for every retention scan. A delivered
 // database can pick a different plan, and a full table scan on the single
 // gateway connection would stall every execution for the whole purge.
-const auditIndexHint = ` INDEXED BY idx_audit_started_at `
+const auditIndexHint = ` INDEXED BY idx_audit_started_ms `
 
 // deleteCompletedAuditSQL removes upgrade evidence that a later terminal
 // observation has replaced. Controller admission and polls stay until their
 // exact Job has a later success/error row. The CTE is materialized and the
 // predicate and the deletion run in one statement, so an admission row is never
 // deleted without the terminal row being evaluated in the same snapshot. The
-// cutoff is a plain range on started_at so idx_audit_started_at serves it
-// (julianday(started_at) could not use any index).
+// cutoff is a plain range on started_at_ms so idx_audit_started_ms serves it.
+// The comparison must stay on the integer column: RFC3339Nano text drops the
+// fractional part at whole seconds, so ".5Z" sorts before "Z" and a text
+// started_at < cutoff would wrongly include rows up to one second after it.
 const deleteCompletedAuditSQL = `WITH terminal AS MATERIALIZED (
 	SELECT cluster, instance, correlation_id,
 		json_extract(CASE WHEN json_valid(tail) THEN tail ELSE '{}' END, '$.result.job') AS job,
@@ -58,7 +60,7 @@ const deleteCompletedAuditSQL = `WITH terminal AS MATERIALIZED (
 )
 DELETE FROM audit_events WHERE id IN (
 	SELECT audit_events.id FROM audit_events` + auditIndexHint + `
-	WHERE started_at < ?
+	WHERE started_at_ms < ?
 		AND status NOT IN (` + activeAuditStatusSQL + `) AND action != 'audit:purge'
 		AND (status NOT IN ('accepted', 'observing') OR EXISTS (
 			SELECT 1 FROM terminal WHERE terminal.id > audit_events.id
@@ -152,7 +154,11 @@ func (s *GatewayStore) purgeAuditBefore(userID, tokenID string, before time.Time
 	if err := purge.record(nil); err != nil {
 		// The receipt never reached a terminal state and nothing was deleted,
 		// so remove it instead of leaving a running row that looks in flight.
-		purge.discardReceipt()
+		// A discard failure is reported alongside: a silently orphaned
+		// 'running' receipt is indistinguishable from an in-flight purge.
+		if discardErr := purge.discardReceipt(); discardErr != nil {
+			return result, fmt.Errorf("%w; audit purge receipt %d could not be discarded: %v", err, purge.id, discardErr)
+		}
 		return result, err
 	}
 
@@ -174,9 +180,20 @@ func (s *GatewayStore) purgeAuditBefore(userID, tokenID string, before time.Time
 
 // discardReceipt rolls back a receipt that could not be finalized before any
 // deletion ran. A receipt already moved to a terminal state is left in place.
-func (p *auditPurgeSession) discardReceipt() {
-	_, _ = p.store.db.Exec(`DELETE FROM audit_events
-		WHERE id = ? AND action = 'audit:purge' AND status IN ('running', 'executing')`, p.id)
+// The delete is retried briefly: on a contended store a transient busy error
+// must not strand the running receipt.
+func (p *auditPurgeSession) discardReceipt() error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+		}
+		if _, err = p.store.db.Exec(`DELETE FROM audit_events
+			WHERE id = ? AND action = 'audit:purge' AND status IN ('running', 'executing')`, p.id); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 // auditPurgeSession is one purge and its receipt. It is confined to one goroutine.
@@ -216,13 +233,12 @@ func (p *auditPurgeSession) openReceipt() (int64, error) {
 // deleteBatch runs one transaction that deletes the next batch, applies the
 // upgrade-evidence rule and records the running counts on the receipt.
 func (p *auditPurgeSession) deleteBatch(before time.Time) (int64, bool, error) {
-	cutoff := formatTime(before.UTC())
 	tx, err := p.store.db.Begin()
 	if err != nil {
 		return 0, false, err
 	}
 	defer tx.Rollback()
-	deleted, complete, err := drainAuditTx(tx, cutoff, before.UTC().UnixMilli())
+	deleted, complete, err := drainAuditTx(tx, before.UTC().UnixMilli())
 	if err != nil {
 		return 0, false, err
 	}
@@ -230,7 +246,7 @@ func (p *auditPurgeSession) deleteBatch(before time.Time) (int64, bool, error) {
 		// Another writer may have added rows after this transaction took its
 		// read snapshot. Delete them here so the committed receipt covers
 		// every row this run removed.
-		extra, _, err := drainAuditTx(tx, cutoff, before.UTC().UnixMilli())
+		extra, _, err := drainAuditTx(tx, before.UTC().UnixMilli())
 		if err != nil {
 			return 0, false, err
 		}
@@ -254,8 +270,8 @@ func (p *auditPurgeSession) deleteBatch(before time.Time) (int64, bool, error) {
 // drainAuditTx applies the upgrade-evidence rule and then deletes one bounded
 // ordinary batch. It reports whether the ordinary batch was short, meaning no
 // ordinary row older than the cutoff is visible in this transaction.
-func drainAuditTx(tx *sql.Tx, cutoff string, cutoffMs int64) (int64, bool, error) {
-	deleted, err := execRowsAffected(tx, deleteCompletedAuditSQL, cutoff)
+func drainAuditTx(tx *sql.Tx, cutoffMs int64) (int64, bool, error) {
+	deleted, err := execRowsAffected(tx, deleteCompletedAuditSQL, cutoffMs)
 	if err != nil {
 		return 0, false, err
 	}
