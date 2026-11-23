@@ -96,3 +96,10 @@
 - **INT-06 派 integrator-ars**：把列级守卫从 `agent_status` 推广到**全部导出表**，并加"NOT NULL 无默认且 INSERT 会省略该列"的守卫（从源码 AST 抽真实 INSERT 列，不手工维护清单）；跑出的真实漂移当轮修。反向实验三组必跑（删默认值/改名/删列）。理由：1048 与 1364 已在 `agent_status` 上各爆一次，其余 60 张表仍是 table 级盲区。
 - 在主工作区未覆盖项（继续挂 backlog）：INT-05 的前端浏览器实测、Gateway↔Agent 端到端、其余表列漂移（INT-06 接手）。
 
+
+## 02:01 派 SF-14（CI 接线）· 记 open item O-1
+
+- **SF-14 派 skill-dev-01**：`.github/workflows/ci.yml` 四个 job（Go tests / Web / Contract tests / Secret scan）**都不跑 `verify.sh`**，SF-07/SF-08 的 34 项真跑证据在 push 后无人复验 → 违反闭环标准②的持续性。要求：新增 `skills-packages` job（照抄 `ref: ${{ inputs.source_commit || github.sha }}`）、CI 用 `SB01_IMG_PYTHON=python:3.12-slim` + `alpine:3` 并写明"CI 验脚本逻辑，镜像一致性由发布流程保证"、`--privileged` 夹具不可跑时走显式 `warning + reason=no_privileged_docker`（不许删场景、不许静默跳过）、本地干净树用 CI 同命令跑通 34 项、push 后 `gh run list/watch` 自己核对并给出绿/红结论。
+- **O-1（open item，未决）**：主工作区存在未跟踪 `backend/agent/internal/server/dbg_test.go`（47 行，`TestDebugPurgeCutoff` + `openCredentialTestStore`，凭证审计清理的调试残留），非本轮任何会话声明所有；不删、不提交，待确认归属后清理，已记此处避免被误当成品入库。
+- 并发：SF-13、SF-05、QA-02、INT-06、SF-14 = 5 个在跑，integrator-gm 空闲。
+
