@@ -232,3 +232,10 @@
 - **本机环境缺陷（已修，不在仓库里）**：`~/.zshrc:23` 把 `GOROOT` 钉在 `/Users/wwyz/.local/share/go`（go1.26.2），而 PATH 上的 go 是 Homebrew 1.27.4 → 子进程裸跑 `go test` 必报 `compile: version "go1.26.2" does not match go tool version "go1.27.4"`。这条不只是我们踩：`pnpm run test:console` 的 9 个 `lib/server/agent-attachments.test.mjs` 红就是它造成的（`env -u GOROOT` 后 706/706 全绿）。已把那行改成 `/Users/wwyz/.homebrew/opt/go/libexec`（与 PATH 上 go 同一工具链，`zsh -i -c` 验证 `go env GOROOT` 一致）。**但 DSH 工具 shell 从父进程继承旧 GOROOT，rc 修不了它**——所有派活书继续写 `env -u GOROOT`。
 - **QA-04 派 qa-skill-01**：在 clean tree 分片跑完 `internal/server` 全量（`go test -list` 集合比对证明无遗漏无重复）+ Top10 慢测试归因 + clean tree 的 `test:console`/`pnpm build`，补 QA-02 最大的证据缺口。40 分钟硬上限。
 - 我在共享工作区撞到 `internal/server` 编译错误（`want ("context".Context, TokenAuth, monitorTargetRef, string, platformSkillRecord, string)`），是 SF-18 在改签名的半成品；同一 sha 的 clean tree `go build ./...` rc=0、`TestAuditTimeRangePreservesSecondBoundary` 1.365s ok —— **共享树的红不算数，clean tree 才算**，这一点继续按老规矩执行。
+
+## 02:56 第 16 轮巡检：SB-02 三个提交落 main，HEAD 干净树可编译；无新活可派
+
+- 在跑 4：skill-dev-01（SB-02 收尾）、integrator-e2e-01（SF-18）、qa-skill-01（QA-04）、qa-recheck-01（QA-03）。无后台 job。origin/main = 2dfbf26b，ahead=0/behind=0，dirty=13（均为他人未提交文件：SF-18 的 `monitor_engine_*`/`skills_registry.go`、SB-02 的 k8s 脚本与 verify.sh）。
+- **SB-02 代码已进 main**：`a7a4a84e feat(skills): collect physical block-device I/O in inspect-vm-host`、`e03d8439 feat(skills): bridge metrics-server usage into inspect-k8s-cluster`、`2dfbf26b test(skills): cover host.disk_io and k8s.metrics with real-run fixtures`。我独立验：`git archive 2dfbf26b` → /tmp/r16，`env -u GOROOT go build ./...` rc=0、`go vet ./internal/server/` rc=0（02:55:29–02:55:5x）。**验收未完成**：它自己的 verify.sh 34+ 项真跑与两组反向实验结果还没报，等报告再把 SB-02 移「已完成」并回填 CHANGELOG 那两行「正在补齐」的措辞。
+- 队列状态：SF-11/D8 与 INT-06 仍等用户给真实 target + canary 凭据；CHANGELOG 统一补写仍被外部会话与 D11 占着；没有别的可开工任务 → 本轮不派活，避免为占位而造任务。
+- 推送竞态又出现一次：我 fetch 后本地领先 1（`a7a4a84e`），`git push` 期间 origin 已到 `e03d8439`，最终 `3476dc8d..e03d8439` 一并推上，随后 `2dfbf26b` 由 skill-dev-01 推上；当前领先/落后均为 0。说明「每次 push 前 fetch + push 后复验 ahead=0」这条要一直做。
