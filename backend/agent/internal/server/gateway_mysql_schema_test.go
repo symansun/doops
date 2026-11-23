@@ -117,11 +117,12 @@ func TestGatewayMySQLExpectedObjects(t *testing.T) {
 }
 
 // gatewayMySQLTestSQLiteExport opens the production export read-only. The
-// test skips when the file is absent (for example in CI without a checkout of
-// the worktree root); when present, it is authoritative.
+// export ships with the tree as testdata/gateway-sqlite-schema.sql; the test
+// skips when the file is absent (for example a partial checkout) and treats it
+// as authoritative when present.
 func gatewayMySQLTestSQLiteExport(t *testing.T) *sql.DB {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "..", "production-schema.sqlite.sql")
+	path := filepath.Join("testdata", "gateway-sqlite-schema.sql")
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("production export not available: %v", err)
 	}
@@ -179,7 +180,7 @@ func gatewayMySQLTestSQLiteExport(t *testing.T) *sql.DB {
 // comparisons that do not need a parsed SQLite catalog (triggers, indexes).
 func gatewayMySQLTestExportText(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "..", "production-schema.sqlite.sql")
+	path := filepath.Join("testdata", "gateway-sqlite-schema.sql")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Skipf("production export not available: %v", err)

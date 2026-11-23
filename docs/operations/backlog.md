@@ -9,17 +9,19 @@
 |---|---|---|---|---|---|
 | SF-01 | 内置巡检 Skill 包 embed/registry 接线、`Entrypoint` 字段、落盘复用、恢复可编译 | dev-sf-01 | `backend/agent/internal/server/*.go`、`backend/docs/design/SKILL_FIRST_INSPECTION_SPEC.md` | 2026-11-24 00:39 | 运行中 |
 | SB-01 | 8 个内置巡检 Skill 包实战化：docker 真跑、协议断言、同盘去重夹具、补缺脚本包、`_verify/verify.sh` | skill-dev-01 | `backend/agent/internal/server/skills_builtin/**` | 2026-11-24 00:41 | 运行中 |
-| QA-01 | 内置巡检 Skill 包基线缺陷实测（独立验证，不改代码） | qa-skill-01 | `docs/reviews/`（仅报告） | 2026-11-24 00:45 | 运行中 |
 | SF-03 | 巡检产物 File-First 落盘：`<dbDir>/artifacts/<date>/<run_id>/<item_id>/`，SQLite 只存索引 | dev-artifact-01 | `backend/agent/internal/server/monitor_artifact*.go`、`gateway_store_schema.go`（增量） | 2026-11-24 00:45 | 运行中 |
+| INT-01 | Gateway MySQL 迁移合入 main + golden 断言刷新 + docker 真迁移 | integrator-gm | `gateway_mysql_*.go`、`mysql_runtime_dialect.go`、`backend/scripts/gateway-sqlite-*.py`、`GATEWAY_MYSQL_MIGRATION_PLAN.md` | 2026-11-24 00:49 | merge 已落 801a73e6，测试收尾中 |
+| INT-02 | Agent 资源同步移植（**隔离 /tmp 目录**解冲突，产出 `rescue/agent-resource-sync-v2`） | integrator-ars | 隔离目录，不动主工作区 | 2026-11-24 00:49 | 运行中 |
+| SF-02 | 移除 `builtin_strategy`/`strategy_id` 双轨（含 QA 缺陷 D9） | dev-sf-01 | `monitor_engine_*.go`、`skills_registry.go`、`skills_builtin_packages.go` | 2026-11-24 00:50 | 运行中 |
+| SF-07 | 修 QA-01 缺陷 D1/D2/D3/D4/D5/D7/D8/D10（skills_builtin 内） | skill-dev-01 | `backend/agent/internal/server/skills_builtin/**`（fixtures 需移出嵌入目录） | 2026-11-24 00:57 | 随 SB-01 一并做 |
 
 ## 待办（排队，等前置合入）
 
 | 编号 | 任务 | 依赖 | 备注 |
 |---|---|---|---|
-| SF-02 | 移除 `builtin_strategy`/`strategy_id` 双轨，`monitor_engine_runner.go` 改走 Skill 包 | SF-01 合入 main | 改 `monitor_engine_*.go` 与测试，约 15 处 `builtin_strategy`、29 处 `StrategyID` |
 | SF-04 | `inspection_metric_points` 通用时序表 + 跨次 diff + `GET /v1/monitor/metrics` | SF-03 合入 | spec 4.2/4.3 |
 | SF-05 | 前端 `InspectionArtifactViewer` 动态渲染 + 趋势图，ego-browser 真实验收 | SF-04 合入 | 改 `components/`、`lib/`，与另一条会话的前端提交错峰 |
-| SF-06 | 架构评审核验 SF-01/SB-01/SF-03（SOP-3，模板 B） | 上述提交进 main | 只读核实，不改业务代码 |
+| SF-06 | 架构评审核验 SF-01/SB-01/SF-03/SF-02（SOP-3，模板 B） | SF-02/SF-03 进 main | 只读核实，不改业务代码；产出 `docs/reviews/` 符合性报告 |
 
 ## 合入 main（从遗留分支移植）
 
@@ -35,8 +37,9 @@
 |---|---|---|---|
 | — | 建立本台账 | 见 docs(ops) 提交 | pm-worklog.md |
 | CLEAN-01 | worktree/分支清理 + 4 条遗留分支保全 | 见 docs(ops) 提交 | pm-worklog.md 00:52 |
+| QA-01 | 内置巡检 Skill 包基线缺陷实测（D1–D10，含 D4/D9 高危） | `7beb4679` | `docs/reviews/2026-11-24-skill-package-baseline.md` |
 
 ## 不派
 
 - 安全整改剩余项（B-10…B-13、S-04、S-06、S-08、M-02 与 5 项半程）：另一条活跃会话正在 `audit/r3-*` 上推进（00:04–00:29 仍在合），重复派会撞文件。
-- `.worktrees/agent-resource-sync`（ad402c4c 遗留 27 文件半成品）：等用户决定「废弃重做」还是「逐条挑拣」，见 pending-decisions.md D1。
+- （D1 已决并执行，见 pending-decisions.md）
