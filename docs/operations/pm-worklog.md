@@ -288,3 +288,11 @@
 - **它够不到的一行我补了**（它只被允许改测试文件）：`backend/docs/GATEWAY_MYSQL_MIGRATION_PLAN.md` 原第 73 条把无列清单 INSERT 描述成「logged as skipped」，已改为指向 `TestGatewayMySQLInsertWithoutColumnListOrdersColumns` 与三个前提，并说明 `dosql_copy.go` 的动态 SQL 天生带列清单、不在范围。文档与实现不同批改齐才算闭环（closure-standard 第 1 条）。
 - **新立项 INT-12（低优先）**：6 条生产 INSERT 补显式列清单后可把守卫退化为「禁止无列清单」；现在不急于做，因为三重守卫已经把安全前提断言住了，先补会动生产代码并要重跑真机。
 - 在跑 1：qa-skill-01（QA-05，约 03:35 到点）。`origin/main` 本轮推进到我的文档提交。
+
+## 03:18 第 24 轮巡检：QA-05 发布前基线落定（1114 用例，无新增回归）；INT-12 开做
+
+- **QA-05 完成**（`c15f48a1`，报告第 11 节追加，+74 行）：基线固定 `6c3fb171`，6 路分片 **1114 用例 / 1094 PASS / 4 FAIL / 16 SKIP**；`-list` 清单 1114 条、`=== RUN` 1114 个、missing 0 / extra 0，1094+4+16 逐条对上，全程 `-count=1 -v` 无缓存。最慢分片 378s（QA-04 是 401s）。
+- **FAIL 定性没有含糊**：3 条是争用型 flake（`CredentialImportHTTPThroughRealAgent` 本次新出现、`CredentialVerifySuccessAuditFiltersRequestTextTarget`、`RunHelmCommandInterruptedUpgradeNeverStaysPending`），隔离 `-count=3` 全 3/3 PASS，成因是 6 片同时起跑在 24 核上、客户端 5s 超时；第 4 条 `TestDoSQLVersionJournalVerifiesHistoricalEscapedReplacementEntry` 3/3 确定失败，是本机 Go 1.27.4 与 CI 1.25.14 的转义渲染差异，不是产品缺陷——**这条不能算绿，也不能算回归**，CI 上它是绿的。
+- **对外结论**：与上节（`0e749395`）比测试数 1113→1114、PASS 1092→1094、FAIL 5→4，失败集合里消失两条、新增一条 flake，**无新增回归**；前端 `test:console` 707/707（+1 即 SF-21 守卫）、`pnpm build` rc=0。这份基线可以对外引用，但必须同时写明「本机 Go 1.27.4」这个前提，否则那条 DoSQL 失败会被误读成回归。
+- **队列处理**：待办里唯一不需要凭据、又明确欠着的是 INT-12（integrator-gm 自己在 INT-11 报告里提的建议 1）。03:16 已派：6 条无列清单 INSERT 按冻结导出的列序机械补列名（**零行为变更**，`:144` 的字面 `''`/`1` 原样保留），然后让守卫退化为「无列清单即红」；反向实验要求包含「对调两个列名仍必须红」，防止退化时偷偷放松。
+- 在跑 1：integrator-gm（INT-12）。CI 侧 d4638735 的 run 45246804181 还在排队（19:14 创建），稍后核结论。`origin/main = d4638735`。

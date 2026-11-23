@@ -9,13 +9,12 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
-| QA-05 | 发布前基线重跑：以当时 HEAD 重跑 QA-04 的 6 路分片（测试数会随之变化），作为对外基线 | qa-skill-01 | 只追加 docs/reviews/2026-11-24-main-full-suite-baseline.md | 03:05 | 运行中（基线 6c3fb171，30 分钟硬上限） |
+| INT-12 | 6 条无列清单生产 INSERT 补显式列清单，守卫退化为「禁止无列清单」 | integrator-gm | asset_inspection_evidence.go、asset_inspection_schedule.go、cluster_profiles.go、两个 mysql 守卫测试、GATEWAY_MYSQL_MIGRATION_PLAN.md | 03:16 | 运行中（零行为变更重构：列名按冻结导出列序机械补上，:144 的字面值原样保留） |
 
 ## 待办（排队/待决策）
 
 | 编号 | 任务 | 依赖 | 备注 |
 |---|---|---|---|
-| INT-12 | 6 条无列清单生产 INSERT 补显式列清单（asset_inspection_evidence.go:220/:270、asset_inspection_schedule.go:94、cluster_profiles.go:86/:109/:144），之后把 INT-11 的守卫退化为「禁止无列清单」 | 无（INT-11 已给出安全前提） | 低优先：当前三重守卫已覆盖；补列清单后 cluster_profiles.go:144 的字面空串与 1 可改为显式值，减少位序耦合 |
 | SF-11 | 真实 Gateway↔Agent 隧道端到端验收（SF-06 §5 红线5「未覆盖」） | 需要可用 target 与凭据 | 未派：需先确认有可连的 agent 与允许的 canary 凭据，不能编造证据 |
 | INT-06 | Console 侧展示 agent_resource 同步状态 | INT-05 | **已阻塞（02:38）**：`target-manifest-card.tsx` 已具备四态同步状态 + 五态资源徽章 + 八类资源（`manifestStatus()`/`resourceStates`/`resourceKinds`），由 `console-shell.tsx:64/:936` 渲染；剩余「TS 校验 + 浏览器实测」需真实 target，与 SF-11/D8 同条件 |
 | — | `CHANGELOG.md` [Unreleased] 统一补写（SF-04/SF-05/SF-09/INT-05 的用户可见变化） | SF-05/SF-09 完成 | 该文件被前端会话占用，由我或前端会话统一写，避免共享索引互扫 |
@@ -24,6 +23,7 @@
 
 | 编号 | 任务 | 提交 | 结论摘要 |
 |---|---|---|---|
+| QA-05 | 发布前基线重跑（基线 6c3fb171，6 路分片） | c15f48a1 | **1114 用例**（QA-04 时 1113，+1 = SF-21 守卫）、1094 PASS / 4 FAIL / 16 SKIP；集合比对 missing 0 / extra 0，1094+4+16=1114 逐条对上，全程 -count=1 -v 无缓存；最慢分片 378s（上节 401s）。4 个 FAIL 全部定性：TestCredentialImportHTTPThroughRealAgent（本次新出现，shard5，Post .../import-secret: context deadline exceeded）、TestCredentialVerifySuccessAuditFiltersRequestTextTarget、TestRunHelmCommandInterruptedUpgradeNeverStaysPending 三条隔离 -count=3 全 PASS（6 片同时起跑于 24 核，5s 客户端超时类争用 flake）；TestDoSQLVersionJournalVerifiesHistoricalEscapedReplacementEntry 3/3 确定失败，本机 Go 1.27.4 vs CI 1.25.14 的转义渲染差异（非产品缺陷）。**与上节对比：无新增回归**（消失 CredentialVerifyUsesStoredGrantScope 与 RegistryAuthIsNotDeliveredAfterRevocation，新增 1 条 flake）。前端 test:console 707/707（+1 = 新守卫）、pnpm build rc=0（97s）。Top 慢仍是 TestSelfUpgradeRBACTransitionStopsBeforeMutation 107.17s；SKIP 16 项与历史一致。 |
 | INT-11 | 让「无列清单的 INSERT」不再被守卫静默放行：列序 + 元数 + 冻结清单三重守卫 | 458e1d68 | 新增 `gateway_mysql_insert_order_test.go`（220 行）：① 冻结导出 `pragma_table_info` 物理列序 vs `gatewayMySQLSchemaSQL` 声明列序逐列相同，首处不同即指名表/列位/两侧全序列；② 解析 `VALUES(...)` 顶层值（跳过引号内逗号括号，cluster_profiles.go:144 的字面空串与 1 按真值算）断言值数=列数；③ `gatewayMySQLUnlistedInsertSites` 按「表→处数」冻结（inspection_receipts:2 / inspection_scope:1 / inventory_cluster_profiles:3）用 reflect.DeepEqual 比对，新增表或新增处即红，提示先补列清单或显式登记；不按 file:line 冻结（行号会漂）。原「cannot be checked」误导性 skip 日志改为指向新守卫。真机 mysql:8.4（端口 13308）`-run GatewayMySQL` ok 9.867s、新守卫 0.14s；四组反向实验全红（删占位符→inserts 5 values ... which has 6 columns；对调 DDL environment/contact→column 3 is environment ... and contact；新加 7 个占位符→元数红；复制第 4 处合法语句→measured map[...:4], frozen map[...:3]），还原后 0.923s 绿。未改生产代码/schema。**遗留建议**：6 条生产 INSERT 补显式列清单后可把守卫退化为「禁止无列清单」，见 INT-12 |
 | QA-03 | 独立重做六条反向实验（SF-08 非 UTF-8 / SF-08 256 KiB / INT-08 默认 / SF-16 状态 / SF-15 顺序 / 审计 cutoff），干净树、破坏只在 /tmp | 13011171、dd80ce53 | 六条**全部守住**，但复现出 5 处「声称与实测不符」，比绿本身更有价值：① 404113 B 不可复现（`a8587ffc`→404086、`94fe9a1e`→404089、`2a29ed67`/`c1b62473`→405391，SB-02 后基线从 203983 长到 205158）——结论稳但别拿这个数当基准；② INT-08 并非单行指名 `credentials.revoked_at`，实际分两行打印表名与 `only in export: [revoked_at]`；③ SF-15「4 组全红」易误读：顺序反转后 `TestMonitorRetentionRemovesFilesBeforeIndexRows` 仍绿，只有 `BEFORE DELETE` 触发器那条能观测顺序；④ 审计测试是配对守卫：只改谓词仍绿（整数与 TEXT 比较匹配不到），谓词+参数一起回退才红；⑤ SF-08「脚本失败」不准确：破坏后夹具仍 `ROBUST_OK` 退出 0，红在 `robust_check.py` 的 `minmounts` 断言。**唯一真风险**：`gateway_mysql_columns_test.go:55` 对 6 处无列清单 INSERT 只 `t.Logf` 不计数 → 已立项 INT-11 |
 | SF-21 | 清掉前端 driver_mode/strategy_id/SKILL_DRIVER_LABELS 双轨残留 + 「旧概念不得复活」静态守卫（并把守卫接进 CI、订正过时手册） | ba0ec523、6c3fb171 | lib/skills-registry.ts 删三处：字段 driver_mode/strategy_id（原 :16-17）、整个 SKILL_DRIVER_LABELS（原 :57-59，含「内置策略直采」）、upsertPlatformSkill 载荷旧键（原 :219-220）；全仓无消费者，后端无对应 JSON tag（只剩 gateway_store_schema.go:362-363 历史 DDL 列）。新建 lib/skills-registry.test.mjs：RETIRED_TOKENS 4 个、扫 lib+components 共 224 文件、assert.ok(scanned > 100) 防路径写错静默变绿；反向实验加回 driver_mode: builtin_strategy → 红并指名 lib/skills-registry.ts:16 两处 token。验收 tsc 0、test:console 706/706、build 0、干净树守卫 1/1。我补的两个尾巴：守卫原本进不了 CI（package.json:14 的 test:console 是硬编码清单）→ 已加入清单；DOOPS_ACCEPTANCE_USER_MANUAL.md:203 仍写「按驱动模式自动执行（内置策略直采或只读 Agent Skill 执行）」→ 改为「一律按 Skill 包执行，实际路径看 dispatch_mode/collector_method」 |
