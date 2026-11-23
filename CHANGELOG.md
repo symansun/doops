@@ -8,23 +8,33 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 修复「AI 助手」回合在其他标签页无法中断的问题：回合在后台运行时，控制台顶部常驻「AI 助手正在执行任务」提示条，可直接「停止 AI 任务」或「查看」，不再需要在被锁住的切换操作上先切回「AI 助手」才能找到停止按钮。
+
+## [0.3.28] — 2026-11-23
+
 ### Added
 
 - 新增真正的 **「MCP 管理」**（`?view=assets&area=mcp`、Gateway `/v1/mcp-servers` 与 Agent 内部工具 `doops_mcp_sync` / `doops_mcp_inspect`）：统一管理内置 MCP（`doops`、`dosql`）与用户接入的自定义 `stdio` / `http` / `sse` MCP 服务；支持在在线 Agent 上执行真实 MCP JSON-RPC 2.0 `initialize` + `tools/list` 探测（返回实测延迟、服务端版本与完整工具 Schema），并将自定义 MCP 原子同步至 `/root/.agent/doops-mcp-servers.json` 并合并写入 `/root/.agent/settings.json` 与 `do-agent` 允许工具列表（保留模型配置不变），供「AI 助手」与「智能巡检」直接调用。
 - **「Skill 管理」** 升级为共享能力中心：Gateway 侧将 Skill 正文与附属脚本迁移至本地文件目录存储（`<dbDir>/skills/<slug>/`）并在 SQLite 仅保留轻量元数据索引（兼容旧库记录回读）；新增「Agent 运行态 Skill」页签（通过 `doops_skills_inspect` 实时扫描目标 Agent `/root/.agent/skills/`，区分平台托管与镜像内置 Skill）以及卡片内 **「在线试跑验证」**（选节点与可选提示词原地触发真实执行并内联展示动态 Markdown + JSON 产物）。
 - 巡检引擎（Gateway `monitor_schedules` / `monitor_runs` / `monitor_run_items`）新增通用的 **Skill + 提示词（`prompt`） + 任意直接命令（`command`）** 执行与产物持久化能力：支持在目标 Agent 上通过 `doops_agent_prompt`、Skill 内置脚本或经审计的 `doops_shell` 执行任意巡检命令，并自动解析与持久化 `artifact_format`（`json` / `markdown+json` / `markdown` / `text`）、`artifact_markdown`、`artifact_json` 与脱敏 `raw_output`。
 - 控制台新增无硬编码字段的 **动态巡检产物可视化器**（`InspectionArtifactViewer`）：可对任意结构的 JSON 与 Markdown+JSON 巡检产物自动生成 KPI 指标卡、百分比水位条、状态徽章与动态推断列表格，支持在「可视化 / Markdown / JSON」间切换及一键复制下载。
+- 「部署包」页的 Markdown 文件支持 **编辑 / 预览** 切换：预览复用控制台同一套 Markdown 渲染（禁用图片），源文件仍按原文保存。
 
 ### Changed
 
+- 一级导航「文件」更名为 **「部署包」**（`?tab=files` 不变），并移除该页没有实际作用的「检查部署」按钮；部署检查仍通过 CLI `doops check` 与 Agent 工具完成。
 - 精简 **「智能巡检」** 与 **「态势感知」** 页面并彻底清理冗余配置与演示残留：
   - 删除无后端支撑的 `inspection-mcp-panel`、`inspection-mcp-store` 与 `asset-inspection-panel` 文件；「智能巡检」仅保留「执行与记录」与「定时计划」两张纯巡检页签，移除临时 SSH 表单、硬编码告警阈值、按标签筛选、旧策略复选框及演示 HTML 报表入口，统一聚焦 **目标 + 关联 Skill + 巡检提示词 + 可选直接执行命令**。
   - 登录页移除「进入演示模式」按钮，默认直连真实 Gateway；`HolographicCore3D` 移除硬编码演示默认节点，无在线节点时如实展示空态；「态势感知」与报告生成器全部改为基于 Gateway 真实采样、实时阈值告警与巡检产物输出。
 
 ### Fixed
 
+- 修复「部署包」页「上传文件 / 上传文件夹」在部分浏览器与内嵌 WebView 中点击无反应的问题：入口改为原生 `label` + `<input type="file">`，由浏览器直接唤起选择器，不再依赖脚本 `input.click()`；同时支持把文件或文件夹直接拖入页面，执行中拖入会提示原因而不是静默忽略。
 - 修复「AI 助手」会话里执行轨迹的工具分组在长链路调用中反复自动展开／收起的闪烁问题：分组一旦开始执行就保持展开，直到用户手动收起（`@agent-cloud/agent-ui` 0.3.52 仓库内 patch），桌面端用户面与本页开发者面行为一致。
 - 修复非演示（真实后端）模式下巡检与态势感知错误套用演示规则模板（如硬编码 `83.8%` 内存压力与演示模型文案）的问题；真实模式下仅呈现来自 Gateway 与 Agent 的真实巡检结果与产物。
+- 只读 `ask` 不再因一次被恢复的调用而整轮报 `doagent_tool_failed`：`mcp_doops_k8s_read`、`mcp_doops_web_read`、`mcp_doops_kb_read`、`mcp_dosql_read` 因参数无效在协议层被拒绝（`mcp_error`，工具未执行），以及 `Bash` 命令非零退出（`command_failed`），在同名工具的后续成功调用后视为已修正，与 Helm 部署对未执行校验失败的修正规则一致。超时、取消、工具执行失败（`mcp_tool_error`）、被策略拒绝的命令、没有后续成功的失败，以及不同工具的失败仍按失败上报。
 - Agent 的 `mcp_doops_k8s_read`、`mcp_doops_web(_read)`、`mcp_doops_kb_read`、`doops_helm` 与 DoSql 工具在拒绝非法 `operation` 时，错误信息现在列出全部合法取值，模型一次重试即可自纠，不再因反复猜测操作名耗尽调用。
 
 ## [0.3.27] — 2026-11-23
