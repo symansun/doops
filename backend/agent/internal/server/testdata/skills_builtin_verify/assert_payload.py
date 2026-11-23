@@ -7,7 +7,7 @@ backend/docs/design/SKILL_FIRST_INSPECTION_SPEC.md 第 4.1 节输出协议与红
   - metrics/checks 每项字段与枚举合法
   - 单条产物 <= 256 KiB（spec L28）
   - 输出中不得出现 userinfo 形式的凭据（scheme://user:pass@host）
-用法：assert_payload.py <输出文件> <slug> [--expect-status S] [--require-metric K]... [--forbid-substring T]...
+用法：assert_payload.py <输出文件> <slug> [--expect-status S] [--require-metric K]... [--forbid-substring T]... [--require-target]
 退出码：0 通过；1 失败（打印 ASSERT_FAIL 原因）。
 """
 import argparse
@@ -34,6 +34,7 @@ def main():
     ap.add_argument("--require-metric", action="append", default=[])
     ap.add_argument("--forbid-substring", action="append", default=[])
     ap.add_argument("--min-checks", type=int, default=1)
+    ap.add_argument("--require-target", action="store_true")
     args = ap.parse_args()
 
     size = os.path.getsize(args.path)
@@ -77,6 +78,14 @@ def main():
                 fail(args.slug, "checks[%d] 缺少 %s" % (i, f))
         if c["status"] not in STATUS:
             fail(args.slug, "checks[%d].status=%r 非法" % (i, c["status"]))
+
+    if args.require_target:
+        tgt = payload.get("target")
+        if not isinstance(tgt, dict) or "cluster" not in tgt or "instance" not in tgt:
+            fail(args.slug, "target 字段缺失或结构非法（需 cluster/instance 两键）")
+        for k in ("cluster", "instance"):
+            if tgt[k] is not None and not isinstance(tgt[k], str):
+                fail(args.slug, "target.%s 既不是 null 也不是字符串" % k)
 
     text = json.dumps(payload, ensure_ascii=False)
     if "skipped" in text:

@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 set -eu
+# 目标身份安全编码：cluster/instance 名仅允许常见字符集，其余一律 null（不编造）
+tgtj() { case "${1:-}" in ''|*[!A-Za-z0-9_.:@/-]*) printf 'null';; *) printf '"%s"' "$1";; esac; }
 
 MISSING=""
 if ! command -v kubectl >/dev/null 2>&1; then
@@ -18,7 +20,7 @@ if [ -n "$MISSING" ]; then
   cat <<'MD'
 ```json
 MD
-  printf '{"status":"warning","summary":"缺少依赖（%s），未直采 Kubernetes 集群","metrics":[],"checks":[{"id":"k8s.client","name":"采集依赖","category":"availability","status":"warning","value":"missing","detail":"未找到 %s，无法执行 kubectl 采集"}]}\n' "$MISSING" "$MISSING"
+  printf '{"target":{"cluster":%s,"instance":%s},"status":"warning","summary":"缺少依赖（%s），未直采 Kubernetes 集群","metrics":[],"checks":[{"id":"k8s.client","name":"采集依赖","category":"availability","status":"warning","value":"missing","detail":"未找到 %s，无法执行 kubectl 采集"}]}\n' "$(tgtj "${DOOPS_TARGET_CLUSTER:-}")" "$(tgtj "${DOOPS_TARGET_INSTANCE:-}")" "$MISSING" "$MISSING"
   cat <<'MD'
 ```
 MD
@@ -27,12 +29,20 @@ fi
 
 python3 - <<'PY'
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 
 MAX_PAYLOAD_BYTES = 200 * 1024  # spec L28 单条产物硬上限 256 KiB，预留保护余量
 HARD_CAP_BYTES = 256 * 1024  # spec L28 单条产物硬上限（整条 stdout，含 Markdown 正文）
 TRIM_LIST_KEYS = ("abnormal_pods", "unready_workloads", "checks")
+
+def _target_identity():
+    """消费平台注入的目标身份（monitor_engine_runner.go:938-953）；缺失时保持 null，不编造。"""
+    return {
+        "cluster": os.environ.get("DOOPS_TARGET_CLUSTER") or None,
+        "instance": os.environ.get("DOOPS_TARGET_INSTANCE") or None,
+    }
 
 def _nbytes(obj):
     return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
@@ -111,6 +121,7 @@ def kget(args):
 nodes_doc, err = kget(["get", "nodes", "-o", "json"])
 if nodes_doc is None:
     payload = {
+        "target": _target_identity(),
         "status": "warning",
         "summary": f"无法连接 Kubernetes API：{err[:160]}",
         "collected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -177,6 +188,7 @@ checks = [
 summary = f"K8s 集群：{len(nodes)} 节点（{len(not_ready_nodes)} 异常），{len(pods)} Pod（{len(bad_pods)} 异常），{len(unready_wl)} 控制器未就绪，{warn_events} 条 Warning 事件"
 
 payload = {
+    "target": _target_identity(),
     "status": overall,
     "summary": summary,
     "collected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

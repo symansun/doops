@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 set -eu
+# 目标身份安全编码：cluster/instance 名仅允许常见字符集，其余一律 null（不编造）
+tgtj() { case "${1:-}" in ''|*[!A-Za-z0-9_.:@/-]*) printf 'null';; *) printf '"%s"' "$1";; esac; }
 
 # 无 python3 时的降级路径：仍输出协议合规载荷（status=warning，不伪造 0 值）
 if ! command -v python3 >/dev/null 2>&1; then
@@ -8,8 +10,12 @@ if ! command -v python3 >/dev/null 2>&1; then
 
 - **综合结论**：`warning` — 缺少 python3，未能采集容器运行时指标
 
+MD
+  cat <<'MD'
 ```json
-{"status":"warning","summary":"缺少 python3，未采集容器运行时指标","metrics":[],"checks":[{"id":"runtime.python3","name":"采集依赖","category":"runtime","status":"warning","value":"missing","detail":"未检测到 python3，容器运行时探测与统计均未执行"}]}
+MD
+  printf '{"target":{"cluster":%s,"instance":%s},"status":"warning","summary":"缺少 python3，未采集容器运行时指标","metrics":[],"checks":[{"id":"runtime.python3","name":"采集依赖","category":"runtime","status":"warning","value":"missing","detail":"未检测到 python3，容器运行时探测与统计均未执行"}]}\n' "$(tgtj "${DOOPS_TARGET_CLUSTER:-}")" "$(tgtj "${DOOPS_TARGET_INSTANCE:-}")"
+  cat <<'MD'
 ```
 MD
   exit 0
@@ -17,6 +23,7 @@ fi
 
 python3 - <<'PY'
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -32,6 +39,13 @@ BYTE_MULT = {
     "gb": 1000 ** 3, "gib": 1024 ** 3, "tb": 1000 ** 4, "tib": 1024 ** 4,
     "pb": 1000 ** 5, "pib": 1024 ** 5,
 }
+
+def _target_identity():
+    """消费平台注入的目标身份（monitor_engine_runner.go:938-953）；缺失时保持 null，不编造。"""
+    return {
+        "cluster": os.environ.get("DOOPS_TARGET_CLUSTER") or None,
+        "instance": os.environ.get("DOOPS_TARGET_INSTANCE") or None,
+    }
 
 def _nbytes(obj):
     return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
@@ -132,6 +146,7 @@ for cand in present:
 if not runtime:
     detail = "未安装运行时 CLI" if not present else "已安装 %s，但 info 探测未通过" % ",".join(present)
     emit({
+        "target": _target_identity(),
         "status": "warning",
         "summary": "未检测到可用的 Docker / nerdctl / Podman 运行时守护进程，容器指标未采集",
         "collected_at": collected_at,
@@ -238,6 +253,7 @@ checks = [
 ]
 
 emit({
+    "target": _target_identity(),
     "status": overall,
     "summary": summary,
     "collected_at": collected_at,

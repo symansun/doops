@@ -210,9 +210,9 @@ check_pkg() {
     record FAIL "$slug" "$(($(now) - t0))" "python3 正路径退出码非 0: $(tail -1 "$out.err" 2>/dev/null)"
     return
   fi
-  extra=""
+  extra="--require-target"
   if [ "$slug" = inspect-vm-host ]; then
-    extra="--require-metric disk_total_bytes --require-metric disk_used_bytes --require-metric disk_percent"
+    extra="--require-target --require-metric disk_total_bytes --require-metric disk_used_bytes --require-metric disk_percent"
   fi
   # shellcheck disable=SC2086
   if ! reason=$(run_assert "$out" "$slug" $extra); then
@@ -231,7 +231,7 @@ check_pkg() {
         record FAIL "$slug" "$(($(now) - t0))" "无 python3 降级路径退出码非 0: $(tail -1 "$out2.err" 2>/dev/null)"
         return
       fi
-      if ! reason=$(run_assert "$out2" "$slug" --expect-status warning); then
+      if ! reason=$(run_assert "$out2" "$slug" --expect-status warning --require-target); then
         record FAIL "$slug" "$(($(now) - t0))" "降级路径协议断言: $reason"
         return
       fi

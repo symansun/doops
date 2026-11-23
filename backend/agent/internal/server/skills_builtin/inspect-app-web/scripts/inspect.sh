@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 set -eu
+# 目标身份安全编码：cluster/instance 名仅允许常见字符集，其余一律 null（不编造）
+tgtj() { case "${1:-}" in ''|*[!A-Za-z0-9_.:@/-]*) printf 'null';; *) printf '"%s"' "$1";; esac; }
 
 if ! command -v python3 >/dev/null 2>&1; then
   cat <<'MD'
@@ -7,8 +9,12 @@ if ! command -v python3 >/dev/null 2>&1; then
 
 - **综合结论**：warning — 缺少 python3，未能采集
 
+MD
+  cat <<'MD'
 ```json
-{"status":"warning","summary":"缺少 python3，未采集应用与 Web 指标","metrics":[],"checks":[{"id":"app.python3","name":"采集依赖","category":"runtime","status":"warning","value":"missing","detail":"未检测到 python3，监听端口与 HTTP 探活均未执行"}]}
+MD
+  printf '{"target":{"cluster":%s,"instance":%s},"status":"warning","summary":"缺少 python3，未采集应用与 Web 指标","metrics":[],"checks":[{"id":"app.python3","name":"采集依赖","category":"runtime","status":"warning","value":"missing","detail":"未检测到 python3，监听端口与 HTTP 探活均未执行"}]}\n' "$(tgtj "${DOOPS_TARGET_CLUSTER:-}")" "$(tgtj "${DOOPS_TARGET_INSTANCE:-}")"
+  cat <<'MD'
 ```
 MD
   exit 0
@@ -30,6 +36,13 @@ from urllib.parse import urlparse
 MAX_PAYLOAD_BYTES = 200 * 1024  # spec L28 单条产物硬上限 256 KiB，预留保护余量
 HARD_CAP_BYTES = 256 * 1024  # spec L28 单条产物硬上限（整条 stdout，含 Markdown 正文）
 TRIM_LIST_KEYS = ("listeners", "endpoints", "checks")
+
+def _target_identity():
+    """消费平台注入的目标身份（monitor_engine_runner.go:938-953）；缺失时保持 null，不编造。"""
+    return {
+        "cluster": os.environ.get("DOOPS_TARGET_CLUSTER") or None,
+        "instance": os.environ.get("DOOPS_TARGET_INSTANCE") or None,
+    }
 
 def _nbytes(obj):
     return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
@@ -184,6 +197,7 @@ overall = "critical" if any(c["status"] == "critical" for c in checks) else ("wa
 summary = f"监听 {len(listeners)} 个 TCP 端口" + (f"，探测 {len(endpoints)} 个 HTTP 端点" if endpoints else "")
 
 payload = {
+    "target": _target_identity(),
     "status": overall,
     "summary": summary,
     "collected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

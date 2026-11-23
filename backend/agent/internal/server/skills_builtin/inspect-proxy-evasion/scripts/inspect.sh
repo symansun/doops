@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 set -eu
+# 目标身份安全编码：cluster/instance 名仅允许常见字符集，其余一律 null（不编造）
+tgtj() { case "${1:-}" in ''|*[!A-Za-z0-9_.:@/-]*) printf 'null';; *) printf '"%s"' "$1";; esac; }
 
 if ! command -v python3 >/dev/null 2>&1; then
   cat <<'MD'
@@ -7,8 +9,12 @@ if ! command -v python3 >/dev/null 2>&1; then
 
 - **综合结论**：warning — 缺少 python3，未能采集
 
+MD
+  cat <<'MD'
 ```json
-{"status":"warning","summary":"缺少 python3，未采集代理与穿透线索","metrics":[],"checks":[{"id":"proxy.python3","name":"采集依赖","category":"runtime","status":"warning","value":"missing","detail":"未检测到 python3，进程与端口线索均未采集"}]}
+MD
+  printf '{"target":{"cluster":%s,"instance":%s},"status":"warning","summary":"缺少 python3，未采集代理与穿透线索","metrics":[],"checks":[{"id":"proxy.python3","name":"采集依赖","category":"runtime","status":"warning","value":"missing","detail":"未检测到 python3，进程与端口线索均未采集"}]}\n' "$(tgtj "${DOOPS_TARGET_CLUSTER:-}")" "$(tgtj "${DOOPS_TARGET_INSTANCE:-}")"
+  cat <<'MD'
 ```
 MD
   exit 0
@@ -25,6 +31,13 @@ from datetime import datetime, timezone
 MAX_PAYLOAD_BYTES = 200 * 1024  # spec L28 单条产物硬上限 256 KiB，预留保护余量
 HARD_CAP_BYTES = 256 * 1024  # spec L28 单条产物硬上限（整条 stdout，含 Markdown 正文）
 TRIM_LIST_KEYS = ("suspect_processes", "proxy_ports", "proxy_envs", "checks")
+
+def _target_identity():
+    """消费平台注入的目标身份（monitor_engine_runner.go:938-953）；缺失时保持 null，不编造。"""
+    return {
+        "cluster": os.environ.get("DOOPS_TARGET_CLUSTER") or None,
+        "instance": os.environ.get("DOOPS_TARGET_INSTANCE") or None,
+    }
 
 def _nbytes(obj):
     return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
@@ -170,6 +183,7 @@ if _gaps:
     summary += "；采集缺口：" + "；".join(_gaps)
 
 payload = {
+    "target": _target_identity(),
     "status": overall,
     "summary": summary,
     "collected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
