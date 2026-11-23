@@ -4,6 +4,7 @@
 - 基线：`origin/main` = `c1b62473`（`docs(ops): queue QA-05 pre-release baseline rerun`，含 SF-18 的 `8001ce4f`）
 - 方法：`git archive c1b62473 | tar -x -C /tmp/qa4`，另解一份 `/tmp/qa4-pristine`；所有破坏只在 /tmp 树内，恢复后 `diff -rq /tmp/qa4-pristine /tmp/qa4` 无输出（DIFF_RC=0）。工作区未被改动。
 - 环境：go1.27.4 darwin/arm64；docker 29.4.0，镜像 `python:3.12-slim`、`mysql:8.4`（两项都可用，**无降级**）。
+- 基线漂移：提交时 `origin/main` 已前进到 `7ebb8a2b`；`git diff --name-only c1b62473..7ebb8a2b` 只涉及 `docs/`、`lib/`、`package.json`，本次破坏涉及的 Go 源码、`inspect.sh`、夹具与 `verify.sh` 在该区间逐字节未变，故结论对 `7ebb8a2b` 同样成立。
 
 ## 结论摘要
 
