@@ -38,9 +38,10 @@ CPU_WARN, CPU_CRIT = 80.0, 90.0
 MEM_WARN, MEM_CRIT = 80.0, 90.0
 DISK_WARN, DISK_CRIT = 85.0, 95.0
 ZOMBIE_WARN = 5
+DISK_IO_WARN_MS, DISK_IO_CRIT_MS = 50.0, 200.0  # 对齐 monitor_engine_types.go:20 DiskLatencyWarnMs 默认 50ms
 MAX_PAYLOAD_BYTES = 200 * 1024  # spec L28 单条产物硬上限 256 KiB，预留保护余量
 HARD_CAP_BYTES = 256 * 1024  # spec L28 单条产物硬上限（整条 stdout，含 Markdown 正文）
-TRIM_LIST_KEYS = ("mounts", "sysctl", "charts")
+TRIM_LIST_KEYS = ("mounts", "sysctl", "charts", "disk_io")
 
 def _target_identity():
     """消费平台注入的目标身份（monitor_engine_runner.go:938-953）；缺失时保持 null，不编造。"""
@@ -341,6 +342,69 @@ def collect_processes():
         return len(lines), None
     return None, None
 
+def fmt_bytes(n):
+    """人类可读字节数（检查项 detail 用，不做单位换算精度承诺）。"""
+    v = float(n)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if v < 1024 or unit == "TiB":
+            return "%s%s" % (int(v) if unit == "B" else round(v, 2), unit)
+        v /= 1024
+    return "%dB" % n
+
+# /proc/diskstats 只暴露计数器，虚拟设备与分区计数器会重复计量，必须显式排除（不猜容量）
+VIRTUAL_DEV_PREFIXES = ("loop", "ram", "fd", "sr", "zram", "nbd", "dm-", "md", "drbd")
+
+def _is_virtual_dev(name):
+    return name.startswith(VIRTUAL_DEV_PREFIXES)
+
+def _is_partition_name(name, names):
+    """分区计数器是整盘计数的子集：sda1/sda、nvme0n1p1/nvme0n1、vda1/vda。"""
+    for parent in names:
+        if parent == name or not name.startswith(parent):
+            continue
+        rest = name[len(parent):]
+        if rest.isdigit() or (rest[:1] == "p" and rest[1:].isdigit()):
+            return True
+    return False
+
+def collect_disk_io():
+    """返回 (per_device_rows, reason)；reason 非空表示未采到物理块设备计数器，调用方必须显式告警。
+
+    字段口径（/proc/diskstats 第 4 段起）：读完成数、读扇区数、读耗时 ms、写完成数、写扇区数、写耗时 ms；
+    扇区固定 512 字节。分区与虚拟设备在采集阶段排除，避免同一物理盘重复计量（红线 2 同源问题）。
+    """
+    if platform.system() != "Linux":
+        return [], "/proc/diskstats 仅 Linux 内核提供，当前平台无块设备计数器，磁盘 I/O 与延迟未知（不按 0 静默通过）"
+    raw = read_text("/proc/diskstats")
+    if not raw:
+        return [], "/proc/diskstats 不可读（容器未暴露 proc 或无权限），磁盘 I/O 与延迟未知（不按 0 静默通过）"
+    rows = []
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) < 14:
+            continue
+        try:
+            reads, sectors_read, ms_read = int(parts[3]), int(parts[5]), int(parts[6])
+            writes, sectors_written, ms_write = int(parts[7]), int(parts[9]), int(parts[10])
+        except ValueError:
+            continue
+        ios = reads + writes
+        rows.append({
+            "device": parts[2],
+            "reads": reads,
+            "writes": writes,
+            "read_bytes": sectors_read * 512,
+            "write_bytes": sectors_written * 512,
+            "latency_ms": round((ms_read + ms_write) / float(ios), 2) if ios > 0 else None,
+        })
+    names = set(r["device"] for r in rows)
+    kept = [r for r in rows if not _is_virtual_dev(r["device"]) and not _is_partition_name(r["device"], names)]
+    if not kept:
+        return [], ("/proc/diskstats 只含虚拟设备或分区计数器（已排除 loop/ram/dm-/md-/sr/zram/nbd 与分区），"
+                    "容器内看不到物理块设备，磁盘 I/O 与延迟未知（不按 0 静默通过）")
+    kept.sort(key=lambda r: -(r["read_bytes"] + r["write_bytes"]))
+    return kept[:50], ""
+
 def collect_sysctl():
     if platform.system() != "Linux":
         return []
@@ -431,6 +495,36 @@ else:
     disk_st = "warning"
     add_check("host.disk", "磁盘容量（按卷去重）", "resource", "warning", "未采集", "df 不可用或未采集到可去重的挂载点，磁盘容量未知（不按 0 静默通过）")
 
+disk_io_rows, disk_io_missing = collect_disk_io()
+io_reads = io_writes = io_read_bytes = io_write_bytes = None
+io_lat = None
+if disk_io_missing:
+    disk_io_st = "warning"
+    add_check("host.disk_io", "磁盘 I/O 与延迟 (M6)", "resource", "warning", "未采集", disk_io_missing)
+else:
+    io_reads = sum(r["reads"] for r in disk_io_rows)
+    io_writes = sum(r["writes"] for r in disk_io_rows)
+    io_read_bytes = sum(r["read_bytes"] for r in disk_io_rows)
+    io_write_bytes = sum(r["write_bytes"] for r in disk_io_rows)
+    io_lats = [r["latency_ms"] for r in disk_io_rows if r["latency_ms"] is not None]
+    io_lat = round(max(io_lats), 2) if io_lats else None
+    disk_io_st = "critical" if (io_lat or 0) >= DISK_IO_CRIT_MS else ("warning" if (io_lat or 0) >= DISK_IO_WARN_MS else "pass")
+    top_io = [
+        "%s 读 %d 次/%s、写 %d 次/%s、平均延迟 %s ms" % (
+            r["device"], r["reads"], fmt_bytes(r["read_bytes"]), r["writes"], fmt_bytes(r["write_bytes"]),
+            r["latency_ms"] if r["latency_ms"] is not None else "-",
+        )
+        for r in disk_io_rows[:3]
+    ]
+    add_check(
+        "host.disk_io",
+        "磁盘 I/O 与延迟 (M6)",
+        "resource",
+        disk_io_st,
+        "%d 个块设备 / 最高延迟 %s ms" % (len(disk_io_rows), io_lat if io_lat is not None else "-"),
+        "物理块设备 %d 个（已排除虚拟设备与分区计数器）：%s" % (len(disk_io_rows), "；".join(top_io)),
+    )
+
 if proc_total is None:
     proc_st = "warning"
     add_check("host.processes", "进程健康 (M3)", "security", "warning", "unknown", "ps 不可用或输出为空，进程数与僵尸数未能采集（不按 0 静默通过）")
@@ -483,6 +577,13 @@ if disk_total > 0:
     metrics.append({"key": "disk_used_bytes", "label": "磁盘去重已用", "value": disk_used, "unit": "B", "status": disk_st})
 if proc_total is not None:
     metrics.append({"key": "process_count", "label": "进程总数", "value": proc_total, "unit": "", "status": proc_st})
+if disk_io_rows:
+    metrics.append({"key": "disk_io_reads", "label": "磁盘读次数", "value": io_reads, "unit": "", "status": "pass"})
+    metrics.append({"key": "disk_io_writes", "label": "磁盘写次数", "value": io_writes, "unit": "", "status": "pass"})
+    metrics.append({"key": "disk_io_read_bytes", "label": "磁盘读字节", "value": io_read_bytes, "unit": "B", "status": "pass"})
+    metrics.append({"key": "disk_io_write_bytes", "label": "磁盘写字节", "value": io_write_bytes, "unit": "B", "status": "pass"})
+    if io_lat is not None:
+        metrics.append({"key": "disk_io_latency_ms", "label": "磁盘最高平均延迟", "value": io_lat, "unit": "ms", "status": disk_io_st})
 
 payload = {
     "target": _target_identity(),
@@ -514,6 +615,7 @@ payload = {
     "checks": checks,
     "mounts": mounts,
     "sysctl": sysctl_rows,
+    "disk_io": disk_io_rows,
 }
 payload = finish(payload)
 
@@ -523,6 +625,10 @@ md_lines = [
     "- **综合结论**：`%s` — %s" % (overall, summary),
     "- **系统信息**：%s / %s（%d 核%s）" % (os_info, kernel_info, cores, " · 容器环境" if in_container else ""),
     "- **资源水位**：CPU `%s%%` · 内存 `%s%%`（%s/%s GiB）· 磁盘最高 `%s %s%%`（去重总容量 `%s GiB`）" % (cpu_pct if cpu_pct is not None else "-", mem_pct if mem_pct is not None else "-", round(mem_used / (1024 ** 3), 2), round(mem_total / (1024 ** 3), 2), worst_mount, disk_pct, round(disk_total / (1024 ** 3), 2)),
+    "- **磁盘 I/O**：%s" % (
+        "未采集（%s）" % disk_io_missing if disk_io_missing else
+        "%d 个物理块设备 · 读 %d 次/%s · 写 %d 次/%s · 最高平均延迟 %s ms" % (len(disk_io_rows), io_reads, fmt_bytes(io_read_bytes), io_writes, fmt_bytes(io_write_bytes), io_lat if io_lat is not None else "-")
+    ),
 ]
 emit(md_lines, payload)
 PY
