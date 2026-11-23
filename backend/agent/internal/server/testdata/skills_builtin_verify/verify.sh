@@ -11,14 +11,20 @@
 #      metrics/checks 字段与命名、无 status=skipped、单条 ≤256 KiB、无 userinfo 凭据
 #   D. 验收红线 2：同盘多挂载点 disk_total_bytes 不翻倍（4 个去重夹具）+
 #      container-runtime 正常/异常路径（2 个 shim 夹具）
+#   E. SF-08 鲁棒性矩阵：畸形环境下真跑 6 包与 vm-host 专项夹具（超长单行、非 UTF-8 字节、
+#      C/ja locale、TZ、逐命令缺失 df/free/awk/python3、/proc/meminfo 与 /proc/loadavg 异常、
+#      符号链接环、含空格与中文的挂载路径、5000 挂载点），断言退出码 0 且产物仍为合法协议 JSON，
+#      并逐场景给出「是否降级 + 降级理由」结论
 #
 # 用法：
-#   sh verify.sh                跑全部脚本包（夹具始终全跑）
+#   sh verify.sh                跑全部脚本包（夹具与鲁棒性矩阵始终全跑）
 #   sh verify.sh <slug> [...]   只跑指定脚本包
 #   SB01_STATIC_ONLY=1 sh verify.sh   只跑 A0（不需要 docker/python/shellcheck）
+#   SB01_ROBUST_ONLY=1 sh verify.sh   只跑 E 鲁棒性矩阵
 #
 # 环境变量：
 #   SB01_STATIC_ONLY  1 = 只跑 A0 静态契约层
+#   SB01_ROBUST_ONLY  1 = 只跑 E 鲁棒性矩阵
 #   SB01_IMG_PYTHON   含 python3 的镜像（默认 doops-t2-agent:v0.3.21）
 #   SB01_IMG_SHELL    无 python3 的镜像（默认 alpine:3）
 #   SB01_DOCKER / SB01_PYTHON / SB01_SHELLCHECK   工具路径覆盖
@@ -35,6 +41,8 @@ done
 W="$REPO/backend/agent/internal/server/skills_builtin"
 ASSERT="$VROOT/assert_payload.py"
 FIX="$VROOT/fixtures"
+ROBUST="$FIX/robust"
+ROBUST_CHECK="$VROOT/robust_check.py"
 
 DOCKER=${SB01_DOCKER:-docker}
 PY=${SB01_PYTHON:-python3}
@@ -46,6 +54,9 @@ CANARY=sb01-canary-pass
 ALL_SLUGS="inspect-vm-host inspect-container-runtime inspect-k8s-cluster inspect-app-web inspect-package-vuln inspect-proxy-evasion"
 ALL_PKGS="inspect-vm-host inspect-container-runtime inspect-k8s-cluster inspect-app-web inspect-package-vuln inspect-proxy-evasion inspect-database inspect-ssh-host"
 STATIC_ONLY=${SB01_STATIC_ONLY:-0}
+ROBUST_ONLY=${SB01_ROBUST_ONLY:-0}
+ROBUST_ALL_PKGS="inspect-vm-host;inspect-container-runtime;inspect-k8s-cluster;inspect-app-web;inspect-package-vuln;inspect-proxy-evasion"
+ROBUST_ALL_FALLBACK=$(printf '%s\n' "$ROBUST_ALL_PKGS" | tr ';' '\n' | sed 's/$/:status=warning,degraded=1/' | tr '\n' ';')
 if [ "$#" -gt 0 ]; then
   SLUGS="$*"
 else
@@ -79,6 +90,8 @@ fatal() {
 }
 
 [ -f "$ASSERT" ] || fatal "缺少协议校验器 $ASSERT"
+[ -f "$ROBUST_CHECK" ] || fatal "缺少鲁棒性校验器 $ROBUST_CHECK"
+[ -d "$ROBUST" ] || fatal "缺少鲁棒性夹具目录 $ROBUST"
 if [ "$STATIC_ONLY" != 1 ]; then
   command -v "$DOCKER" >/dev/null 2>&1 || [ -x "$DOCKER" ] || fatal "未找到 docker（${DOCKER}）"
   command -v "$PY" >/dev/null 2>&1 || [ -x "$PY" ] || fatal "未找到 python3（${PY}）"
@@ -161,6 +174,16 @@ check_static() { # slug -> 包目录/frontmatter/路径/字节/执行位/require
     record FAIL "static:$slug" "0" "required_mcp 应为 $want，实际 ${have:-无}"
     return
   fi
+  if [ "$slug" = inspect-ssh-host ]; then
+    if ! grep -q 'managed_ssh_channel' "$md"; then
+      record FAIL "static:$slug" "0" "SKILL.md 未声明受管通道退化分支 check id=managed_ssh_channel"
+      return
+    fi
+    if ! grep -q 'doops_ssh' "$md"; then
+      record FAIL "static:$slug" "0" "SKILL.md 未点名唯一受管 SSH 通道 doops_ssh"
+      return
+    fi
+  fi
   files=$(find "$dir" -type f | wc -l | tr -d ' ')
   att=$((files - 1))
   if [ "$att" -gt 16 ]; then
@@ -199,6 +222,14 @@ check_pkg() {
   if ! "$SHELLCHECK" -s sh "$script" > "$TMP/sc" 2>&1; then
     record FAIL "$slug" "$(($(now) - t0))" "shellcheck: $(head -1 "$TMP/sc")"
     return
+  fi
+  if [ "$slug" = inspect-proxy-evasion ]; then
+    pports=$(sed -n 's/^PROXY_PORTS = //p' "$script" | head -1)
+    pwanted='{"1080", "3128", "7890", "7891", "8118", "10808", "20170"}'
+    if [ "$pports" != "$pwanted" ]; then
+      record FAIL "$slug" "$(($(now) - t0))" "PROXY_PORTS 未与 spec 2.4 端口表严格一致: $pports"
+      return
+    fi
   fi
   if ! image_ok "$IMG_PY"; then
     record FAIL "$slug" "$(($(now) - t0))" "缺少镜像 ${IMG_PY}（不静默跳过）"
@@ -287,35 +318,119 @@ check_fixture() { # name file marker [docker-run-args...]
   record PASS "fixture:$name" "$(($(now) - t0))" ""
 }
 
+check_robust() { # name file spec [docker-run-args...]
+  name=$1
+  rfile=$2
+  rspec=$3
+  shift 3
+  t0=$(now)
+  for f in "$ROBUST/_lib.sh" "$ROBUST/$rfile" "$ROBUST_CHECK"; do
+    [ -f "$f" ] || { record FAIL "robust:$name" "0" "缺少 $f"; return; }
+  done
+  for f in "$ROBUST/_lib.sh" "$ROBUST/$rfile"; do
+    if ! sh -n "$f" 2>"$TMP/rsyn"; then
+      record FAIL "robust:$name" "$(($(now) - t0))" "sh -n 失败 ${f##*/}: $(head -1 "$TMP/rsyn")"
+      return
+    fi
+    if ! "$SHELLCHECK" -s sh "$f" > "$TMP/rsc" 2>&1; then
+      record FAIL "robust:$name" "$(($(now) - t0))" "shellcheck ${f##*/}: $(head -1 "$TMP/rsc")"
+      return
+    fi
+  done
+  if ! image_ok "$IMG_PY"; then
+    record FAIL "robust:$name" "$(($(now) - t0))" "缺少镜像 ${IMG_PY}（不静默跳过）"
+    return
+  fi
+  rdir="$TMP/robust-$name"
+  mkdir -p "$rdir"
+  log="$TMP/robust-$name.log"
+  if ! "$DOCKER" run --rm --entrypoint sh "$@" \
+      -v "$W:/w:ro" -v "$FIX:/f:ro" -v "$rdir:/out" \
+      -e "CASE=$name" -e "OUT=/out" -e "W=/w" \
+      "$IMG_PY" -c "sh /f/robust/$rfile" > "$log" 2>&1; then
+    record FAIL "robust:$name" "$(($(now) - t0))" "夹具执行失败: $(tail -1 "$log")"
+    return
+  fi
+  if ! grep -q -- "ROBUST_OK $name" "$log"; then
+    record FAIL "robust:$name" "$(($(now) - t0))" "缺少 ROBUST_OK 标记: $(tail -1 "$log")"
+    return
+  fi
+  printf '%s\n' "$rspec" | tr ';' '\n' > "$TMP/rspec-$name"
+  summary=""
+  while IFS= read -r item; do
+    item=$(printf '%s' "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -n "$item" ] || continue
+    rslug=${item%%:*}
+    ropts=""
+    case "$item" in
+      *:*) ropts=${item#*:} ;;
+    esac
+    rout="$rdir/$name.$rslug.md"
+    if [ ! -f "$rout" ]; then
+      record FAIL "robust:$name" "$(($(now) - t0))" "缺少产物 $rslug"
+      return
+    fi
+    if ! rline=$("$PY" "$ROBUST_CHECK" "$rout" "$rslug" --spec "$ropts" 2>&1); then
+      record FAIL "robust:$name" "$(($(now) - t0))" "$rline"
+      return
+    fi
+    summary="${summary}${rline#ROBUST_CHECK }; "
+  done < "$TMP/rspec-$name"
+  record PASS "robust:$name" "$(($(now) - t0))" "$summary"
+}
+
 echo "SB-01 校验开始：python3 镜像=${IMG_PY}；无 python3 镜像=${IMG_SH}"
 echo "工作区 W=$W"
 echo ""
-echo "-- 包静态契约（spec 2.1 / 2.2 / 2.4；全部 8 包） --"
-for pkg in $ALL_PKGS; do
-  check_static "$pkg"
-done
+if [ "$ROBUST_ONLY" != 1 ]; then
+  echo "-- 包静态契约（spec 2.1 / 2.2 / 2.4；全部 8 包） --"
+  for pkg in $ALL_PKGS; do
+    check_static "$pkg"
+  done
+else
+  echo "（SB01_ROBUST_ONLY=1：只跑 E 鲁棒性矩阵）"
+fi
 
 if [ "$STATIC_ONLY" = 1 ]; then
   echo ""
   echo "（SB01_STATIC_ONLY=1：跳过 docker 动态检查）"
 else
-  echo ""
-  echo "-- 脚本包 --"
-  for slug in $SLUGS; do
-    check_pkg "$slug"
-  done
+  if [ "$ROBUST_ONLY" != 1 ]; then
+    echo ""
+    echo "-- 脚本包 --"
+    for slug in $SLUGS; do
+      check_pkg "$slug"
+    done
+
+    echo ""
+    echo "-- 红线 2 去重夹具 --"
+    check_fixture dedup_mount dedup_vmhost.sh DEDUP_MOUNT_OK --privileged
+    check_fixture dedup_overlay_shim dedup_overlay_shim.sh DEDUP_OVERLAY_OK
+    check_fixture dedup_overlay_lowerdir dedup_overlay_lowerdir.sh DEDUP_LOWERDIR_OK --privileged
+    check_fixture dedup_virtual_approx dedup_virtual_approx_shim.sh DEDUP_APPROX_OK
+
+    echo ""
+    echo "-- 运行时正常/异常路径夹具 --"
+    check_fixture runtime_stats runtime_stats_shim.sh RUNTIME_STATS_OK
+    check_fixture runtime_stats_fail runtime_stats_fail_shim.sh RUNTIME_STATS_FAIL_OK
+  fi
 
   echo ""
-  echo "-- 红线 2 去重夹具 --"
-  check_fixture dedup_mount dedup_vmhost.sh DEDUP_MOUNT_OK --privileged
-  check_fixture dedup_overlay_shim dedup_overlay_shim.sh DEDUP_OVERLAY_OK
-  check_fixture dedup_overlay_lowerdir dedup_overlay_lowerdir.sh DEDUP_LOWERDIR_OK --privileged
-  check_fixture dedup_virtual_approx dedup_virtual_approx_shim.sh DEDUP_APPROX_OK
-
-  echo ""
-  echo "-- 运行时正常/异常路径夹具 --"
-  check_fixture runtime_stats runtime_stats_shim.sh RUNTIME_STATS_OK
-  check_fixture runtime_stats_fail runtime_stats_fail_shim.sh RUNTIME_STATS_FAIL_OK
+  echo "-- SF-08 鲁棒性矩阵（畸形环境真跑；每行给出是否降级与理由） --"
+  check_robust longline case_longline.sh 'inspect-vm-host:max=262144'
+  check_robust nonutf8 case_nonutf8.sh 'inspect-vm-host:minmounts=1,forbid=未采集到可去重'
+  check_robust locale_c case_locale_c.sh "$ROBUST_ALL_PKGS"
+  check_robust locale_ja case_locale_ja.sh "$ROBUST_ALL_PKGS"
+  check_robust tz case_tz.sh 'inspect-vm-host;inspect-k8s-cluster'
+  check_robust no_df case_no_df.sh 'inspect-vm-host:status=warning,degraded=1,check=host.disk'
+  check_robust no_free case_no_free.sh "$ROBUST_ALL_PKGS"
+  check_robust no_awk case_no_awk.sh "$ROBUST_ALL_PKGS"
+  check_robust no_python3 case_no_python3.sh "$ROBUST_ALL_FALLBACK"
+  check_robust proc_meminfo case_proc_meminfo.sh 'inspect-vm-host:status=warning,degraded=1' --privileged
+  check_robust proc_loadavg case_proc_loadavg.sh 'inspect-vm-host:degraded=1' --privileged
+  check_robust mounts_symlink case_mounts_symlink.sh 'inspect-vm-host:mount=/tmp/lp/a'
+  check_robust mounts_space case_mounts_space.sh 'inspect-vm-host:mount=/mnt/我的 数据'
+  check_robust mounts_many case_mounts_many.sh 'inspect-vm-host:check=output.size'
 fi
 
 echo ""
