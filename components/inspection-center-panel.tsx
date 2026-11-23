@@ -24,6 +24,7 @@ import {
 import { fetchPlatformSkills, type PlatformSkillRecord } from "@/lib/skills-registry"
 import { HistoryIcon, RefreshIcon, RocketIcon } from "./icons"
 import { InspectionArtifactViewer } from "./inspection-artifact-viewer"
+import { toInspectionViewerProps } from "@/lib/monitor-metrics"
 import {
   Badge,
   Button,
@@ -612,6 +613,7 @@ export function InspectionCenterPanel({
                         jsonData={effectiveJson}
                         rawOutput={it.raw_output}
                         filePrefix={`${selectedRunId}-${it.cluster}-${it.instance}-${it.asset_id}`}
+                        {...toInspectionViewerProps(it, session, drivenSkillSlug)}
                       />
                     </CardContent>
                   </Card>

@@ -249,3 +249,43 @@ export function diffHasChanges(diff: MonitorRunDiff | null | undefined): boolean
 function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
+
+/** 详情接口 item 上可选的 diff 字段（仅 GET /v1/monitor/runs/<id> 提供）。 */
+export interface MonitorDiffSourceItem {
+  diff?: MonitorRunDiff | null
+  cluster?: string | null
+  instance?: string | null
+}
+
+/** InspectionArtifactViewer 需要的外部上下文（跨次 diff + 趋势取数目标）。 */
+export interface MonitorInspectionViewerProps {
+  diff?: MonitorRunDiff | null
+  session?: Session
+  trendSkill?: string
+  trendCluster?: string
+  trendInstance?: string
+}
+
+/**
+ * 把巡检详情的 run item 映射成 InspectionArtifactViewer 的 Diff/趋势 props。
+ *
+ * 语义要点：只有详情响应真的带了 diff 键才传下去（undefined 表示该响应没有 diff
+ * 概念，viewer 不渲染对比区块）；diff: null 表示后端明确回答"没有前次基线"，viewer
+ * 渲染空态。创建接口（POST /v1/monitor/runs）不含 diff，不能假设有值。
+ * 趋势需要 session 与 skill/cluster/instance 齐全，缺一就不展示。
+ */
+export function toInspectionViewerProps(
+  item: MonitorDiffSourceItem | null | undefined,
+  session: Session | null | undefined,
+  skillSlug: string | null | undefined,
+): MonitorInspectionViewerProps {
+  const hasDiff = Boolean(item) && Object.prototype.hasOwnProperty.call(item, "diff")
+  const diff = hasDiff ? item?.diff ?? null : undefined
+  const cluster = item?.cluster || undefined
+  const instance = item?.instance || undefined
+  const skill = skillSlug || undefined
+  if (!session || !skill || !cluster || !instance) {
+    return { diff }
+  }
+  return { diff, session, trendSkill: skill, trendCluster: cluster, trendInstance: instance }
+}

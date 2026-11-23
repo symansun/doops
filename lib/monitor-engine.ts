@@ -1,4 +1,5 @@
 import type { Session } from "./client.ts"
+import type { MonitorRunDiff } from "./monitor-metrics.ts"
 import { consoleFetch } from "./network-error.ts"
 
 export type MonitorRange = "1h" | "6h" | "24h" | "7d"
@@ -144,6 +145,8 @@ export interface MonitorRunItemRecord {
   artifact_markdown?: string
   artifact_json?: unknown
   raw_output?: string
+  /** 跨次对比，仅 GET /v1/monitor/runs/<id> 详情响应提供；创建响应不含该字段。 */
+  diff?: MonitorRunDiff | null
 }
 
 export interface MonitorResourceSnapshot {
