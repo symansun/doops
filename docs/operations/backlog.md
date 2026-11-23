@@ -11,7 +11,6 @@
 |---|---|---|---|---|---|
 | QA-02 | 全仓回归：`go test ./...` 全包 + pytest + verify.sh + 残留扫描（SF-09 删 2186 行的保险） | qa-skill-01 | 只新增 `docs/reviews/2026-11-24-main-regression.md` | 01:52 | 运行中 |
 | SF-14 | 把 `verify.sh` 接进 CI（现在 34 项真跑证据只在开发者机器上）：新增 `skills-packages` job、CI 镜像、`SB01_NO_PRIVILEGED` 显式降级、本地干净树等价验证 | skill-dev-01 | `.github/workflows/ci.yml`、`testdata/skills_builtin_verify/**`、`BUILD_DEPLOY_SOP.md` CI 小节 | 02:01 | 运行中 |
-| INT-08 | MySQL 列级守卫推广到全部导出表 + "NOT NULL 无默认且被真实 INSERT 省略"守卫（从源码 AST 抽列，不手维护清单） | integrator-ars | `backend/agent/internal/server/gateway_mysql_*_test.go`、`gateway_mysql_schema.sql`、`testdata/gateway-sqlite-schema.sql` | 01:59 | 运行中 |
 
 ## 待办（排队/待决策）
 
@@ -27,6 +26,7 @@
 
 | 编号 | 任务 | 提交 | 结论摘要 |
 |---|---|---|---|
+| INT-08 | 列级守卫推广到全部导出表 + "NOT NULL 无默认且被真实 INSERT 省略"守卫（AST 抽列，无 allowlist）；当轮修 18 列/10 表：13 个 TEXT 列改在 INSERT 显式写 `''`，5 个可内联默认的列补 DDL 字面默认 | 655fd9de | `TestGatewayMySQLColumnsMatchExport`（61 表列集合双向）+ `TestGatewayMySQLInsertDefaultsMatchSchema`（无列清单的 INSERT 记 skip，零覆盖即失败）；build/vet/`-run GatewayMySQL`（真机 mysql:8.4）/`-run 'Resource\|Agent\|Registry'` 全绿（干净树 `git archive 655fd9de` 复跑）；反向实验：删 `revoked_at` → 红且指名 `credentials.revoked_at`、逐个删 5 个 DDL 默认 → 全红（`skills_registry.go:255`/`mcp_registry.go:81`）、给 TEXT 加 `DEFAULT ('x')` → copier `mysql_copy_schema_mismatch`；真机修复前 `Error 1364 Field 'error' doesn't have a default value`、修复后回读 `''`；10 张未迁移表入 `gatewayMySQLUnmigratedTables` 交 INT-09；导出未重抓（保留 4 个遗留索引） |
 | INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）+ `agent_status` 两列 + census 刷新 + 真机回读 | 15e75cf1、755e4bab、998e536c | B 方案原子三方写回 `console-shell.tsx`（sha256 二次比对一致）一次成功；`kubernetes_available` 改 `TINYINT(1) NULL`（`NOT NULL` 被真机 `Error 1048` 拒）、`archived_at` 改 `VARCHAR(64)`（`TEXT DEFAULT ('')` 是 `DEFAULT_GENERATED`，被离线 copier fail closed）；真机 mysql:8.4 反向实验三组；未覆盖：浏览器实测、Gateway↔Agent 端到端（INT-07 接手部分） |
 | SF-05 | 前端接 SF-04：viewer Diff/Trends + 删死开关 + 停发 strategies/ssh_hosts；补丁：详情页把 diff 传给 viewer | 3e1e6d8a | tsc/13-13/699-699/build 全绿；反向实验（demo 加回 strategies → 红）；ego-browser 四张截图；**更正**：后端无 actions 字段，只收 skills[] |
 | INT-07 | 真 Skill 包执行链路 e2e（inspect.sh 经 doops_shell 回流产物与指标） | 33c7147f | 仅新增 skills_builtin_e2e_test.go 372 行；真容器 python:3.12-slim 跑通；11 个指标落库且 metrics 接口可读回；4 组反向实验全红。**缺口**：只覆盖 vm-host 一包 → 已立项 INT-10 |
