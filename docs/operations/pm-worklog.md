@@ -298,3 +298,5 @@
 - 在跑 1：integrator-gm（INT-12）。CI 侧 d4638735 的 run 45246804181 还在排队（19:14 创建），稍后核结论。`origin/main = d4638735`。
 
 - 03:19 第 25 轮（03:15 提醒）：无实质变化——integrator-gm 在跑 INT-12、无后台 job、HEAD 1f5d251a 已同步；队列除 INT-12 外只剩需凭据或需用户拍板的事项，不派活。观察到 CI 侧积压 11 个 run（8 in_progress / 3 queued，`ci.yml` 没有 concurrency 组，每次 push 都排一个全量 run），本轮不动它——改门禁语义要能观察到 run 列表才能验，先记待议。
+
+- 03:26 第 26 轮（03:25 提醒）：integrator-gm 仍在跑 INT-12，其代码已进 main（564f3d5e「让 6 条运行期 INSERT 写明列清单，守卫退化为硬禁止」），等它的真机回读与反向实验报告再关单；CI 上 c122c181、dd80ce53 已 success，d4638735/458e1d68/1f5d251a/1d828288 仍在跑（排队积压未消）。无后台 job，不派新活。
