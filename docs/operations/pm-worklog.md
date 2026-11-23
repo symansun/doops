@@ -262,3 +262,10 @@
 - 我查了 API 文档是否需要同批补字段：`DOOPS_API_GUIDE.md:1240` 只描述 `/v1/monitor/runs*` 的语义边界，明细字段的权威表在 spec（Topic Ownership 归巡检 spec），所以没有第二份文档要改；前端不专门渲染 `dispatch_mode`，但它随 evidence 在「原始输出」里可见，不需要为此新开活。
 - QA-03（qa-recheck-01）02:38 派出，已 28 分钟无报告，我发消息要它在 03:15 前先交已完成部分（六条反向实验逐条给红/绿原始输出），不再等全做完；QA-05（发布前分片重跑）继续等 SF-21 落定再开，避免又跑一个马上漂移的基线。
 - 在跑 2 + 1：qa-recheck-01（QA-03，催收尾）、dev-viewer-01（SF-21）。qa-skill-01、integrator-e2e-01 释放。origin/main = c1b62473 起步。
+## 03:09 第 20 轮巡检：SF-21 收口并补上它够不到的两个尾巴；QA-05（发布前基线重跑）开跑
+
+- **SF-21 完成**（ba0ec523，2 文件 +50/−9）：`lib/skills-registry.ts` 删掉 `driver_mode`/`strategy_id` 字段、整个 `SKILL_DRIVER_LABELS`、`upsertPlatformSkill` 的旧载荷键；新建 `lib/skills-registry.test.mjs` 守 4 个退役 token，扫 `lib`+`components` 共 224 个源码文件。反向实验分辨力够：加回 `driver_mode: "builtin_strategy"` 后报 `lib/skills-registry.ts:16` 的两处 token 并失败。验收 tsc 0、test:console 706/706、build 0、干净树守卫 1/1。
+- **它够不到的两个尾巴我补了**（都在它禁改范围，是真实的悬空而非它偷懒）：① `package.json:14` 的 `test:console` 是硬编码清单、`.github/workflows/ci.yml` 只跑这一条，新建守卫原本进不了 CI——已插进清单第 43 项（`lib/shell-blocks.test.mjs` 之后），否则守卫等于只在我本机有效；② `backend/docs/DOOPS_ACCEPTANCE_USER_MANUAL.md:203` 还写着「Gateway 均按驱动模式自动执行（内置策略直采或只读 Agent Skill 执行）」，这句在 SF-02/SF-09 之后已不成立，改为「一律按 Skill 包执行（脚本直跑或 AI 按契约驱动），实际路径见巡检记录的 `dispatch_mode` 与 `collector_method`」。合并提交 6c3fb171。
+- **QA-05 开跑**（03:08 派 qa-skill-01）：QA-04 自己报了基线漂移（实测时 main 从 0e749395 走到 8001ce4f），现在 HEAD 是 6c3fb171，又多出 SB-02 两条采集能力与 SF-21 守卫，测试数必然变。要求照 QA-04 口径重跑 6 路分片、新 FAIL 逐条定性、前端 test:console 应比 706 多一条，结果追加进同一份基线报告的第二节，30 分钟硬上限。不换方法是为了两份基线可比。
+- **QA-03 仍未交**：03:06 已催「03:15 前先交已完成部分」，至今无报告。若 03:20 仍无输出，按 R30 我直接判它放弃并把它已写的内容接管，不再干等。
+- 在跑 2：qa-skill-01（QA-05）、qa-recheck-01（QA-03）。origin/main = 6c3fb171，ahead/behind 0。D11 仍待用户拍板（tag v0.3.29 已含整批巡检改造，CHANGELOG 还留在 Unreleased）。

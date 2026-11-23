@@ -9,7 +9,7 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
-| SF-21 | 清掉 `lib/skills-registry.ts` 里 `driver_mode`/`strategy_id`/`SKILL_DRIVER_LABELS` 死代码 + 「旧概念不得复活」静态守卫 | dev-viewer-01 | `lib/skills-registry.ts` 及其测试 | 03:00 | 运行中（合规复核第七节 #1 的唯一残留） |
+| QA-05 | 发布前基线重跑：以当时 HEAD 重跑 QA-04 的 6 路分片（测试数会随之变化），作为对外基线 | qa-skill-01 | 只追加 docs/reviews/2026-11-24-main-full-suite-baseline.md | 03:08 | 运行中（基线 6c3fb171，30 分钟硬上限） |
 | QA-03 | 对抗性复核 6 条反向实验（SF-08 x2 / INT-08 / SF-16 / SF-15 / 审计 cutoff F5），干净树重做、破坏只在 /tmp | qa-recheck-01 | 只新增 `docs/reviews/2026-11-24-adversarial-recheck.md` | 02:38 | 运行中 |
 
 ## 待办（排队/待决策）
@@ -18,13 +18,13 @@
 |---|---|---|---|
 | SF-11 | 真实 Gateway↔Agent 隧道端到端验收（SF-06 §5 红线5「未覆盖」） | 需要可用 target 与凭据 | 未派：需先确认有可连的 agent 与允许的 canary 凭据，不能编造证据 |
 | INT-06 | Console 侧展示 agent_resource 同步状态 | INT-05 | **已阻塞（02:38）**：`target-manifest-card.tsx` 已具备四态同步状态 + 五态资源徽章 + 八类资源（`manifestStatus()`/`resourceStates`/`resourceKinds`），由 `console-shell.tsx:64/:936` 渲染；剩余「TS 校验 + 浏览器实测」需真实 target，与 SF-11/D8 同条件 |
-| QA-05 | 发布前基线重跑：以当时 HEAD 重跑 QA-04 的 6 路分片（测试数会随 SF-18/SF-21 变化），作为对外基线 | SF-18、SF-21 落定 | QA-04 的基线 `0e749395` 已漂移（实测期间 main 到 `8001ce4f`）；重跑口径照旧：干净树 `git archive`、`-list` 集合比对、逐片墙钟与 PASS/FAIL/SKIP |
 | — | `CHANGELOG.md` [Unreleased] 统一补写（SF-04/SF-05/SF-09/INT-05 的用户可见变化） | SF-05/SF-09 完成 | 该文件被前端会话占用，由我或前端会话统一写，避免共享索引互扫 |
 
 ## 已完成
 
 | 编号 | 任务 | 提交 | 结论摘要 |
 |---|---|---|---|
+| SF-21 | 清掉前端 driver_mode/strategy_id/SKILL_DRIVER_LABELS 双轨残留 + 「旧概念不得复活」静态守卫（并把守卫接进 CI、订正过时手册） | ba0ec523、6c3fb171 | lib/skills-registry.ts 删三处：字段 driver_mode/strategy_id（原 :16-17）、整个 SKILL_DRIVER_LABELS（原 :57-59，含「内置策略直采」）、upsertPlatformSkill 载荷旧键（原 :219-220）；全仓无消费者，后端无对应 JSON tag（只剩 gateway_store_schema.go:362-363 历史 DDL 列）。新建 lib/skills-registry.test.mjs：RETIRED_TOKENS 4 个、扫 lib+components 共 224 文件、assert.ok(scanned > 100) 防路径写错静默变绿；反向实验加回 driver_mode: builtin_strategy → 红并指名 lib/skills-registry.ts:16 两处 token。验收 tsc 0、test:console 706/706、build 0、干净树守卫 1/1。我补的两个尾巴：守卫原本进不了 CI（package.json:14 的 test:console 是硬编码清单）→ 已加入清单；DOOPS_ACCEPTANCE_USER_MANUAL.md:203 仍写「按驱动模式自动执行（内置策略直采或只读 Agent Skill 执行）」→ 改为「一律按 Skill 包执行，实际路径看 dispatch_mode/collector_method」 |
 | SF-18 | evidence 记录真实调度结果：保留声明 `exec_mode`，新增 `evidence.dispatch_mode` 与明细项顶层投影 `dispatch_mode`（`script`/`agent`），四次改动 + 两处调度点各解析一次传下去 | 8001ce4f | `monitor_engine_types.go` 加 `DispatchMode string json:"dispatch_mode,omitempty"`；`monitor_engine_runner.go` 两处调度点解析一次并传参、AI 路径补记声明 `exec_mode`（此前根本不写）；`monitor_engine_store.go` 从 `evidence_json` 回填；e2e 增脚本包断言与 `TestBuiltinSkillE2EAgentDispatchMode`。两处反向实验红：(a) `resolveSkillDispatchMode` 恒返回 agent → `item dispatch_mode = "agent", want script`；(b) tag 改空 → `run detail item JSON does not expose the top-level dispatch_mode key`。干净树 build/vet rc=0、`-run 'Skill|Monitor'` ok 51.998s（1 SKIP 需真 GPU）。**DB 影响无**：只加 `evidence_json` 内键，无新列无迁移；旧 run 省略该键，读取按「未知」不得推断为 agent。语义写进 spec §2.3.1（:89-107），含三种合法 mismatch 与「跑了什么看 collector_method、本应怎么调度看 dispatch_mode」三元读法 |
 | QA-04 | clean tree 分片跑完 `internal/server` 全量 + `go test -list` 集合比对 + Top10 慢测试归因 + clean tree 的 `test:console`/`pnpm build` | 5afc95b6、9e70e567 | 干净树 `0e749395`：`-list` 枚举 1113 个顶层测试（QA-02 时 1095），轮转取模 6 路并行跑完，`=== RUN` 名与 `-list` 集合比对 missing 0/extra 0，最慢一片 401s；结果 **1092 PASS + 5 FAIL + 16 SKIP = 1113**。5 个 FAIL 里 4 个是 6 路并行下 `5s Client.Timeout` 的争用假阳性（隔离 `-count=3` 3/3 过），1 个 `TestDoSQLVersionJournalVerifiesHistoricalEscapedReplacementEntry` 确定失败，属本机 Go 1.27.4 与 CI 1.25.14 的 `json.Marshal` 转义差异（QA-02 已记录）；16 SKIP 全是环境门控（MySQL 5、DoSQL 真实 DSN 9、NVIDIA 1、macOS 无 setsid 1）。Top 慢测试归因为「重复起脚本/子进程 + 固定超时」而非卡死（`TestSelfUpgradeRBACTransitionStopsBeforeMutation` 111.0s = 39 个子测试 × 2.85s 均值），不建议为提速改断言。前端干净树 `test:console` 706/706（37.68s）、`pnpm build` rc=0（90s）；干净树无 `node_modules` 须用 APFS clone（`cp -Rc`）而非符号链接，否则 Turbopack 报 `Symlink [project]/node_modules is invalid` |
 | SF-17 | 前端消费 `artifact_state`：missing 时正文区中文明示、指标/趋势照常、纯函数三态 + 接线锁 | 0e749395 | 新增 `describeArtifactState()`/`ARTIFACT_MISSING_NOTICE`（missing 只把正文换成清理说明，diff/趋势/指标照常；present+truncated 仍是 present 子态）；tsc 0、node --test 17/17、pnpm build 0；反向实验两组红（判定恒 present、删接线锁）；ego-browser `PORT=3011 pnpm dev` + `/console?demo=1` 两态截图实测 |
