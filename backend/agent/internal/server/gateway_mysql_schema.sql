@@ -1,11 +1,15 @@
 -- Gateway native MySQL 8.4 schema (reviewable, explicit conversion).
 --
--- Source of truth: the production SQLite export with 61 tables, 50 named
--- indexes, 12 triggers and 38 foreign keys. The first 58 tables come from the
+-- Source of truth: the production SQLite export with 69 tables, 54 named
+-- indexes, 12 triggers and 43 foreign keys. The first 58 tables come from the
 -- production dump; platform_skills, platform_mcp_servers and
 -- inspection_metric_points were re-captured from the runtime migration in
--- gateway_store_schema.go (the dump predated them). Every object is converted
--- explicitly; nothing is silently dropped. Conventions:
+-- gateway_store_schema.go, and the eight tables that only the operator
+-- migrations create (agent_resource_state, agent_observations,
+-- agent_resource_audit, inventory_cluster_profiles, inventory_resource_catalog,
+-- inventory_agent_assets, inventory_machine_tags, personal_asset_records) come
+-- from backend/docs/migrations/*.sql. The dump predated all of them. Every
+-- object is converted explicitly; nothing is silently dropped. Conventions:
 --
 --   * InnoDB, utf8mb4 / utf8mb4_0900_bin everywhere, so text comparison is
 --     binary-exact like SQLite BINARY collation (the copier hashes bytes).
@@ -958,6 +962,110 @@ CREATE TABLE inventory_machine_login_key (
     key_mac VARCHAR(191) NOT NULL
 ) ENGINE=InnoDB;
 
+
+
+-- ===========================================================================
+-- Tables created by the operator migrations (backend/docs/migrations/*.sql)
+--
+-- The production dump predates these eight tables, so the SQLite runtime
+-- migration was the only definition. They are converted from those migrations
+-- plus the real INSERT column lists in the package; TEXT columns keep no
+-- default (see the header convention), so every column a shortened INSERT
+-- omits carries a literal default that MySQL can express.
+-- ===========================================================================
+
+CREATE TABLE agent_resource_state (
+    cluster VARCHAR(64) NOT NULL,
+    instance VARCHAR(64) NOT NULL,
+    mode VARCHAR(16) NOT NULL DEFAULT '' CHECK (mode IN ('', 'kubernetes', 'docker', 'linux')),
+    kubernetes_available BIGINT NULL CHECK (kubernetes_available IN (0, 1)),
+    supported BIGINT NOT NULL DEFAULT 0 CHECK (supported IN (0, 1)),
+    manifest_revision BIGINT NOT NULL DEFAULT 0 CHECK (manifest_revision >= 0),
+    manifest_hash VARCHAR(191) NOT NULL DEFAULT '',
+    generated_at VARCHAR(64) NOT NULL DEFAULT '',
+    connection_at VARCHAR(64) NOT NULL DEFAULT '',
+    observation_hash VARCHAR(191) NOT NULL DEFAULT '',
+    last_observed_at VARCHAR(64) NOT NULL DEFAULT '',
+    applied_revision BIGINT NOT NULL DEFAULT 0 CHECK (applied_revision >= 0),
+    PRIMARY KEY (cluster, instance),
+    FOREIGN KEY (cluster, instance) REFERENCES agent_status(cluster, instance) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE agent_observations (
+    cluster VARCHAR(64) NOT NULL,
+    instance VARCHAR(64) NOT NULL,
+    kind VARCHAR(16) NOT NULL CHECK (kind IN ('machine', 'cluster', 'namespace', 'container', 'site', 'database')),
+    `key` VARCHAR(128) NOT NULL CHECK (CHAR_LENGTH(`key`) BETWEEN 1 AND 128),
+    details TEXT NOT NULL,
+    first_seen VARCHAR(64) NOT NULL,
+    last_seen VARCHAR(64) NOT NULL,
+    generation BIGINT NOT NULL CHECK (generation >= 0),
+    misses BIGINT NOT NULL DEFAULT 0 CHECK (misses >= 0),
+    PRIMARY KEY (cluster, instance, kind, `key`),
+    FOREIGN KEY (cluster, instance) REFERENCES agent_resource_state(cluster, instance) ON DELETE CASCADE,
+    KEY idx_agent_observations_target (cluster, instance, kind, `key`)
+) ENGINE=InnoDB;
+
+-- audit_id mirrors SQLite's rowid alias (INTEGER PRIMARY KEY). Values are
+-- always supplied explicitly from audit_events.id, so the AUTO_INCREMENT is
+-- only a type-compatibility declaration for the copier; the foreign key keeps
+-- every inserted row anchored to an existing audit event.
+CREATE TABLE agent_resource_audit (
+    audit_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    manifest_revision BIGINT NOT NULL CHECK (manifest_revision >= 0),
+    resource_refs_json TEXT NOT NULL,
+    FOREIGN KEY (audit_id) REFERENCES audit_events(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE inventory_cluster_profiles (
+    asset_id VARCHAR(128) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    environment VARCHAR(64) NOT NULL,
+    contact VARCHAR(191) NOT NULL,
+    created_by VARCHAR(64) NOT NULL,
+    revision BIGINT NOT NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE inventory_resource_catalog (
+    id VARCHAR(128) PRIMARY KEY,
+    kind VARCHAR(32) NOT NULL,
+    cluster VARCHAR(64) NOT NULL,
+    instance VARCHAR(64) NOT NULL,
+    created_by VARCHAR(64) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    environment VARCHAR(64) NOT NULL,
+    details TEXT NOT NULL,
+    identity_key VARCHAR(191) NOT NULL,
+    revision BIGINT NOT NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE inventory_agent_assets (
+    cluster VARCHAR(64) NOT NULL,
+    instance VARCHAR(64) NOT NULL,
+    kind VARCHAR(16) NOT NULL CHECK (kind IN ('machine', 'cluster', 'system')),
+    asset_id VARCHAR(128) NOT NULL,
+    PRIMARY KEY (cluster, instance, kind, asset_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE inventory_machine_tags (
+    asset_id VARCHAR(128) NOT NULL,
+    tag VARCHAR(64) NOT NULL,
+    PRIMARY KEY (asset_id, tag),
+    FOREIGN KEY (asset_id) REFERENCES inventory_machines(asset_id) ON DELETE CASCADE,
+    KEY inventory_machine_tags_by_tag (tag, asset_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE personal_asset_records (
+    owner VARCHAR(64) NOT NULL,
+    kind VARCHAR(32) NOT NULL,
+    asset_id VARCHAR(128) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    environment VARCHAR(64) NOT NULL,
+    revision BIGINT NOT NULL,
+    PRIMARY KEY (owner, kind, asset_id),
+    FOREIGN KEY (owner) REFERENCES users(id)
+) ENGINE=InnoDB;
+
 -- ===========================================================================
 -- Triggers
 --
@@ -1126,6 +1234,54 @@ BEGIN
         WHERE plan_id = NEW.plan_id AND due = NEW.due AND trigger_kind = 'manual'
           AND id <> NEW.id) THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'duplicate manual inspection cycle';
+    END IF;
+END;;
+
+-- inventory_resource_catalog replaces SQLite's two partial UNIQUE INDEXes:
+-- catalog_bound_identity (kind, cluster, instance, identity_key) WHERE
+-- cluster<>'' and catalog_pending_identity (kind, created_by, identity_key)
+-- WHERE cluster=''. A conditional unique index cannot be expressed as a plain
+-- MySQL index, so INSERT and UPDATE are guarded separately; UPDATE excludes the
+-- row by its primary key id.
+CREATE TRIGGER catalog_bound_identity_insert BEFORE INSERT ON inventory_resource_catalog
+FOR EACH ROW
+BEGIN
+    IF NEW.cluster <> '' AND EXISTS (SELECT 1 FROM inventory_resource_catalog
+        WHERE kind = NEW.kind AND cluster = NEW.cluster
+          AND instance = NEW.instance AND identity_key = NEW.identity_key) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'catalog_bound_identity';
+    END IF;
+END;;
+
+CREATE TRIGGER catalog_bound_identity_update BEFORE UPDATE ON inventory_resource_catalog
+FOR EACH ROW
+BEGIN
+    IF NEW.cluster <> '' AND EXISTS (SELECT 1 FROM inventory_resource_catalog
+        WHERE kind = NEW.kind AND cluster = NEW.cluster
+          AND instance = NEW.instance AND identity_key = NEW.identity_key
+          AND id <> NEW.id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'catalog_bound_identity';
+    END IF;
+END;;
+
+CREATE TRIGGER catalog_pending_identity_insert BEFORE INSERT ON inventory_resource_catalog
+FOR EACH ROW
+BEGIN
+    IF NEW.cluster = '' AND EXISTS (SELECT 1 FROM inventory_resource_catalog
+        WHERE kind = NEW.kind AND created_by = NEW.created_by
+          AND identity_key = NEW.identity_key) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'catalog_pending_identity';
+    END IF;
+END;;
+
+CREATE TRIGGER catalog_pending_identity_update BEFORE UPDATE ON inventory_resource_catalog
+FOR EACH ROW
+BEGIN
+    IF NEW.cluster = '' AND EXISTS (SELECT 1 FROM inventory_resource_catalog
+        WHERE kind = NEW.kind AND created_by = NEW.created_by
+          AND identity_key = NEW.identity_key
+          AND id <> NEW.id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'catalog_pending_identity';
     END IF;
 END;;
 

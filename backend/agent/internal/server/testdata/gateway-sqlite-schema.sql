@@ -57,6 +57,14 @@ CREATE INDEX inventory_import_attempts_batch ON inventory_import_attempts(batch_
 CREATE INDEX inventory_machines_host ON inventory_machines(host_asset_id) WHERE host_asset_id IS NOT NULL;
 CREATE INDEX inventory_machines_target ON inventory_machines(cluster, instance);
 CREATE INDEX inventory_node_links_machine ON inventory_node_links(machine_id);
+-- The four indexes and the eight tables from agent_resource_state to
+-- personal_asset_records below come from the operator migrations under
+-- backend/docs/migrations (the production dump predated them);
+-- agent_observations uses "key" as a column name, exactly as the migration does.
+CREATE UNIQUE INDEX catalog_bound_identity ON inventory_resource_catalog(kind,cluster,instance,identity_key) WHERE cluster<>'';
+CREATE UNIQUE INDEX catalog_pending_identity ON inventory_resource_catalog(kind,created_by,identity_key) WHERE cluster='';
+CREATE INDEX idx_agent_observations_target ON agent_observations(cluster, instance, kind, key);
+CREATE INDEX inventory_machine_tags_by_tag ON inventory_machine_tags(tag, asset_id);
 CREATE TABLE agent_connection_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			cluster TEXT NOT NULL,
@@ -751,6 +759,81 @@ CREATE TABLE users (
 			disabled INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL
 		, password_hash TEXT NOT NULL DEFAULT '', account_type TEXT NOT NULL DEFAULT 'person', is_admin INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE agent_resource_state (
+    cluster TEXT NOT NULL,
+    instance TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT '' CHECK (mode IN ('', 'kubernetes', 'docker', 'linux')),
+    kubernetes_available INTEGER CHECK (kubernetes_available IN (0, 1)),
+    supported INTEGER NOT NULL DEFAULT 0 CHECK (supported IN (0, 1)),
+    manifest_revision INTEGER NOT NULL DEFAULT 0 CHECK (manifest_revision >= 0),
+    manifest_hash TEXT NOT NULL DEFAULT '',
+    generated_at TEXT NOT NULL DEFAULT '',
+    connection_at TEXT NOT NULL DEFAULT '',
+    observation_hash TEXT NOT NULL DEFAULT '',
+    last_observed_at TEXT NOT NULL DEFAULT '',
+    applied_revision INTEGER NOT NULL DEFAULT 0 CHECK (applied_revision >= 0),
+    PRIMARY KEY(cluster, instance),
+    FOREIGN KEY(cluster, instance) REFERENCES agent_status(cluster, instance) ON DELETE CASCADE
+) STRICT;
+CREATE TABLE agent_observations (
+    cluster TEXT NOT NULL,
+    instance TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('machine', 'cluster', 'namespace', 'container', 'site', 'database')),
+    "key" TEXT NOT NULL CHECK (length("key") BETWEEN 1 AND 128),
+    details TEXT NOT NULL CHECK (json_valid(details) AND json_type(details) = 'object'),
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation >= 0),
+    misses INTEGER NOT NULL DEFAULT 0 CHECK (misses >= 0),
+    PRIMARY KEY(cluster, instance, kind, "key"),
+    FOREIGN KEY(cluster, instance) REFERENCES agent_resource_state(cluster, instance) ON DELETE CASCADE
+) STRICT;
+CREATE TABLE agent_resource_audit (
+    audit_id INTEGER PRIMARY KEY REFERENCES audit_events(id) ON DELETE CASCADE,
+    manifest_revision INTEGER NOT NULL CHECK (manifest_revision >= 0),
+    resource_refs_json TEXT NOT NULL CHECK (json_valid(resource_refs_json) AND json_type(resource_refs_json) = 'array')
+) STRICT;
+CREATE TABLE inventory_cluster_profiles (
+    asset_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    contact TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    revision INTEGER NOT NULL
+) STRICT;
+CREATE TABLE inventory_resource_catalog (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    cluster TEXT NOT NULL,
+    instance TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    name TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    details TEXT NOT NULL CHECK (json_valid(details) AND json_type(details) = 'object'),
+    identity_key TEXT NOT NULL,
+    revision INTEGER NOT NULL
+) STRICT;
+CREATE TABLE inventory_agent_assets (
+    cluster TEXT NOT NULL,
+    instance TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('machine','cluster','system')),
+    asset_id TEXT NOT NULL,
+    PRIMARY KEY(cluster,instance,kind,asset_id)
+) STRICT;
+CREATE TABLE inventory_machine_tags (
+    asset_id TEXT NOT NULL REFERENCES inventory_machines(asset_id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    PRIMARY KEY(asset_id, tag)
+);
+CREATE TABLE personal_asset_records (
+    owner TEXT NOT NULL REFERENCES users(id),
+    kind TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    PRIMARY KEY(owner, kind, asset_id)
+);
 CREATE TRIGGER asset_runtime_deployment_drop AFTER DELETE ON inventory_business_deployments WHEN NOT EXISTS (
  SELECT 1 FROM inventory_business_deployments WHERE (cluster,instance,namespace,application)=(OLD.cluster,OLD.instance,OLD.namespace,OLD.application) AND verified_at<>'') BEGIN
  DELETE FROM asset_runtime_bindings WHERE (cluster,instance,namespace,application)=(OLD.cluster,OLD.instance,OLD.namespace,OLD.application);

@@ -9,25 +9,6 @@ import (
 	"testing"
 )
 
-// gatewayMySQLUnmigratedTables lists tables the runtime INSERTs into but that
-// neither the frozen SQLite export nor the MySQL DDL defines yet. They are
-// created by backend/docs/migrations/*.sql, which the offline copier does not
-// read, so MySQL cannot serve them at all. Migrating them is a separate task;
-// until then the column and default guards skip them explicitly instead of
-// silently treating an empty column list as coverage.
-var gatewayMySQLUnmigratedTables = []string{
-	"agent_observations",
-	"agent_resource_audit",
-	"agent_resource_state",
-	"credential_bundle_items_v2",
-	"credential_verifications_v2",
-	"grants_v2",
-	"inventory_agent_assets",
-	"inventory_machine_tags",
-	"inventory_resource_catalog",
-	"personal_asset_records",
-}
-
 // TestGatewayMySQLColumnsMatchExport is the column-level guard for every table
 // that exists on both sides. A column that only one side defines breaks the
 // online path in both directions: too few on MySQL and the runtime INSERT hits
@@ -40,12 +21,7 @@ var gatewayMySQLUnmigratedTables = []string{
 func TestGatewayMySQLColumnsMatchExport(t *testing.T) {
 	export := gatewayMySQLTestSQLiteExport(t)
 	ddl := string(gatewayMySQLSchemaSQL)
-	unmigrated := gatewayMySQLUnmigratedTableSet()
 	for _, table := range gatewayMySQLExportTables(t, export) {
-		if unmigrated[table] {
-			t.Logf("skip %s: created by backend/docs/migrations/*.sql, absent from the MySQL DDL (unmigrated)", table)
-			continue
-		}
 		want := gatewayMySQLSQLiteColumnNames(t, export, table)
 		got := gatewayMySQLDDLColumnNames(t, ddl, table)
 		if !reflect.DeepEqual(want, got) {
@@ -67,7 +43,7 @@ func TestGatewayMySQLColumnsMatchExport(t *testing.T) {
 func TestGatewayMySQLInsertDefaultsMatchSchema(t *testing.T) {
 	export := gatewayMySQLTestSQLiteExport(t)
 	ddl := string(gatewayMySQLSchemaSQL)
-	unmigrated := gatewayMySQLUnmigratedTableSet()
+	transient := gatewayMySQLTransientTableSet()
 	statements := gatewayMySQLRuntimeSQLLiterals(t)
 	seen := map[string]bool{}
 	guarded := 0
@@ -80,21 +56,27 @@ func TestGatewayMySQLInsertDefaultsMatchSchema(t *testing.T) {
 			}
 			continue
 		}
-		if unmigrated[table] {
+		// A transient table exists only inside one migrate* function: the
+		// SQLite upgrade creates it, fills it, and renames or drops it in the same
+		// transaction, so it never persists and MySQL (offline DDL + copier, no
+		// migrate()) never sees it. The exemption is deliberately narrow: an
+		// INSERT into the same name from a live-path function still fails.
+		if transient[table] {
+			if !strings.HasPrefix(literal.funcName, "migrate") {
+				t.Fatalf("%s is a transient one-shot migration table, but %s:%d inserts into it from %q; only a migrate* function may do that",
+					table, literal.file, literal.line, literal.funcName)
+			}
 			if !seen[table] {
 				seen[table] = true
-				t.Logf("skip %s: created by backend/docs/migrations/*.sql, absent from the MySQL DDL (unmigrated)", table)
+				t.Logf("skip %s: transient table created and renamed/dropped inside %s (never persisted)", table, literal.funcName)
 			}
 			continue
 		}
-		// A table missing from the export is a schema gap, not an INSERT problem;
-		// list it once so the skip is visible.
+		// A table the runtime writes but the frozen export does not describe is a
+		// real gap: MySQL cannot serve it and the guard cannot see its columns.
 		if !gatewayMySQLTableInExport(t, export, table) {
-			if !seen[table] {
-				seen[table] = true
-				t.Logf("skip %s: not in the frozen SQLite export, so its MySQL columns cannot be compared", table)
-			}
-			continue
+			t.Fatalf("%s is missing from the frozen export and the MySQL DDL, but %s:%d inserts into it; migrate it before guarding INSERTs",
+				table, literal.file, literal.line)
 		}
 		present := make(map[string]bool, len(columns))
 		for _, column := range columns {
@@ -112,6 +94,7 @@ func TestGatewayMySQLInsertDefaultsMatchSchema(t *testing.T) {
 	if guarded == 0 {
 		t.Fatalf("no INSERT statements were checked; the guard is not covering the runtime")
 	}
+	t.Logf("checked %d INSERT statements against the MySQL DDL", guarded)
 }
 
 type gatewayMySQLColumnSpec struct {
@@ -303,9 +286,9 @@ func gatewayMySQLSQLiteColumnNames(t *testing.T, db *sql.DB, table string) []str
 	return columns
 }
 
-func gatewayMySQLUnmigratedTableSet() map[string]bool {
-	set := make(map[string]bool, len(gatewayMySQLUnmigratedTables))
-	for _, table := range gatewayMySQLUnmigratedTables {
+func gatewayMySQLTransientTableSet() map[string]bool {
+	set := make(map[string]bool, len(gatewayMySQLTestTransientTables))
+	for _, table := range gatewayMySQLTestTransientTables {
 		set[table] = true
 	}
 	return set

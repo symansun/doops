@@ -15,12 +15,15 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// gatewayMySQLTestTables is the expected set of 61 application tables from
-// the production export. Keeping the list literal makes an accidental drop of
-// a CREATE TABLE a hard test failure, not a silent omission. The schema must
-// contain exactly these tables — the copier refuses any extra table.
+// gatewayMySQLTestTables is the expected set of 69 application tables: the 61
+// tables of the production export plus the eight tables that only the operator
+// migrations under backend/docs/migrations create. Keeping the list literal
+// makes an accidental drop of a CREATE TABLE a hard test failure, not a silent
+// omission. The schema must contain exactly these tables — the copier refuses
+// any extra table.
 var gatewayMySQLTestTables = []string{
-	"agent_connection_events", "agent_enrollments", "agent_status",
+	"agent_connection_events", "agent_enrollments", "agent_observations",
+	"agent_resource_audit", "agent_resource_state", "agent_status",
 	"asset_coverage_baselines", "asset_coverage_cluster_versions",
 	"asset_coverage_registers", "asset_monitor_alerts", "asset_monitor_rules",
 	"asset_monitor_samples", "asset_monitor_series", "asset_runtime_bindings",
@@ -32,13 +35,15 @@ var gatewayMySQLTestTables = []string{
 	"gateway_secret_key_check", "git_repos", "grants",
 	"inspection_items", "inspection_metric_points", "inspection_plans",
 	"inspection_receipts", "inspection_runs",
-	"inspection_scope", "inventory_business_deployments", "inventory_business_systems",
+	"inspection_scope", "inventory_agent_assets", "inventory_business_deployments",
+	"inventory_business_systems", "inventory_cluster_profiles",
 	"inventory_import_attempts", "inventory_machine_login_accounts",
-	"inventory_machine_login_key", "inventory_machines", "inventory_node_links",
+	"inventory_machine_login_key", "inventory_machine_tags", "inventory_machines",
+	"inventory_node_links", "inventory_resource_catalog",
 	"machine_diagnostic_bindings", "machine_diagnostic_samples",
 	"monitor_resource_snapshots", "monitor_run_items", "monitor_runs",
-	"monitor_schedules", "platform_load_samples", "platform_mcp_servers",
-	"platform_skills", "proxy_routes", "release_events",
+	"monitor_schedules", "personal_asset_records", "platform_load_samples",
+	"platform_mcp_servers", "platform_skills", "proxy_routes", "release_events",
 	"release_tickets", "scheduler_issues", "scheduler_job_leases", "scheduler_jobs",
 	"tokens", "upgrade_operations", "users",
 }
@@ -47,6 +52,8 @@ var gatewayMySQLTestTriggers = []string{
 	"asset_monitor_one_open_insert", "asset_monitor_one_open_update",
 	"asset_runtime_deployment_drop", "asset_runtime_ns_drop",
 	"asset_runtime_ns_recreated", "asset_runtime_source_drop",
+	"catalog_bound_identity_insert", "catalog_bound_identity_update",
+	"catalog_pending_identity_insert", "catalog_pending_identity_update",
 	"edge_route_revision_singleton",
 	"gateway_secret_key_check_singleton",
 	"inspection_cycle_insert", "inspection_cycle_update",
@@ -224,9 +231,11 @@ func TestGatewayMySQLTablesMatchExport(t *testing.T) {
 }
 
 // TestGatewayMySQLTriggersMatchExport compares trigger names. The SQLite
-// export has 12 triggers; MySQL has 15 because two partial/expression unique
-// indexes became enforcer triggers, and machine_diagnostic_target_changed is
-// intentionally not ported (documented in the SQL header).
+// export has 12 triggers; MySQL has 22 because
+// asset_monitor_one_open, inventory_machine_login_key and the two catalog
+// partial/expression unique indexes each became an insert/update enforcer pair,
+// while machine_diagnostic_target_changed is intentionally not ported
+// (documented in the SQL header).
 func TestGatewayMySQLTriggersMatchExport(t *testing.T) {
 	text := gatewayMySQLTestExportText(t)
 	re := regexp.MustCompile(`(?im)^CREATE TRIGGER ([a-z_][a-z0-9_]*)`)
@@ -252,11 +261,15 @@ func TestGatewayMySQLTriggersMatchExport(t *testing.T) {
 		}
 		want = append(want, name)
 	}
-	// The partial/expression unique indexes became four enforcer triggers, and
-	// the three singleton CHECK constraints on AUTO_INCREMENT columns became
-	// three more (MySQL forbids a CHECK referencing an auto-increment column).
+	// The four partial/expression unique indexes of the production export and
+	// the two catalog identities added by the operator migrations became eight
+	// enforcer triggers, and the three singleton CHECK constraints on
+	// AUTO_INCREMENT columns became three more (MySQL forbids a CHECK
+	// referencing an auto-increment column).
 	want = append(want,
 		"asset_monitor_one_open_insert", "asset_monitor_one_open_update",
+		"catalog_bound_identity_insert", "catalog_bound_identity_update",
+		"catalog_pending_identity_insert", "catalog_pending_identity_update",
 		"inspection_cycle_insert", "inspection_cycle_update",
 		"edge_route_revision_singleton", "gateway_secret_key_check_singleton",
 		"inventory_machine_login_key_singleton")
@@ -337,6 +350,11 @@ func gatewayMySQLTestMySQLPrimaryKey(ddl, table string) []string {
 			continue
 		}
 		name := field[0]
+		// Strip identifier quoting: SQLite names the column "key", MySQL must
+		// spell it `key` because KEY is reserved.
+		if i := strings.IndexByte(name, '`'); i >= 0 {
+			name = strings.ReplaceAll(name, string('`'), "")
+		}
 		// Strip a prefix length such as name(191).
 		if i := strings.IndexByte(name, '('); i >= 0 {
 			name = name[:i]
@@ -546,9 +564,12 @@ func TestGatewayMySQLInstallThenCopierAccepts(t *testing.T) {
 
 // gatewayMySQLTestTransientTables are created and then renamed or dropped by
 // the same one-shot migration, so they never persist in a live store and must
-// not appear in the export.
+// not appear in the export. asset_monitor_series_new is the staging table that
+// asset_monitor_devices.sql and asset_monitor_disk_io.sql rename to
+// asset_monitor_series.
 var gatewayMySQLTestTransientTables = []string{
 	"grants_v2", "credential_bundle_items_v2", "credential_verifications_v2",
+	"asset_monitor_series_new",
 }
 
 // TestGatewayMySQLSchemaCoversRuntimeDDL closes the gap that let
@@ -610,9 +631,13 @@ func TestGatewayMySQLSchemaCoversRuntimeDDL(t *testing.T) {
 }
 
 // gatewayMySQLTestRuntimeDDLTables scans every non-test Go file in the server
-// package for CREATE TABLE statements, which is where the SQLite runtime
-// schema lives. It intentionally does not parse the SQL strings: it only needs
-// the set of table names to prove the export covers the runtime schema.
+// package and every operator migration under backend/docs/migrations for
+// CREATE TABLE statements, which is where the SQLite runtime schema lives. The
+// migrations used to be invisible here: they create the agent resource and
+// asset tables, so a table that only a migration creates never reached the
+// export or the native DDL. It intentionally does not parse the SQL strings: it
+// only needs the set of table names to prove the export covers the runtime
+// schema.
 func gatewayMySQLTestRuntimeDDLTables(t *testing.T) []string {
 	t.Helper()
 	re := regexp.MustCompile(`CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["']?([a-z0-9_]+)`)
@@ -626,6 +651,22 @@ func gatewayMySQLTestRuntimeDDLTables(t *testing.T) []string {
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range re.FindAllStringSubmatch(string(data), -1) {
+			seen[match[1]] = true
+		}
+	}
+	migrations, err := filepath.Glob("../../../docs/migrations/*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrations) == 0 {
+		t.Fatal("no operator migrations found under backend/docs/migrations")
+	}
+	for _, name := range migrations {
 		data, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

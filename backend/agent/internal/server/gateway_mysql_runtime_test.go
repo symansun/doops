@@ -24,6 +24,11 @@ type gatewayMySQLRuntimeSQLLiteral struct {
 	file  string
 	line  int
 	query string
+	// funcName is the enclosing top-level declaration: a function or method
+	// name, or "" for a package-level var/const. Guards that need to tell a
+	// one-shot migration statement from a statement on the live path (the
+	// transient *_v2 tables) branch on it.
+	funcName string
 }
 
 func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
@@ -193,19 +198,25 @@ func gatewayMySQLRuntimeSQLLiterals(t *testing.T) []gatewayMySQLRuntimeSQLLitera
 		if err != nil {
 			t.Fatalf("parse %s: %v", base, err)
 		}
-		ast.Inspect(file, func(node ast.Node) bool {
-			literal, ok := node.(*ast.BasicLit)
-			if !ok || literal.Kind != token.STRING {
-				return true
+		for _, decl := range file.Decls {
+			name := ""
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name != nil {
+				name = fn.Name.Name
 			}
-			value, err := strconv.Unquote(literal.Value)
-			if err != nil || !gatewayMySQLLooksLikeSQL(value) {
+			ast.Inspect(decl, func(node ast.Node) bool {
+				literal, ok := node.(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					return true
+				}
+				value, err := strconv.Unquote(literal.Value)
+				if err != nil || !gatewayMySQLLooksLikeSQL(value) {
+					return true
+				}
+				position := fset.Position(literal.Pos())
+				literals = append(literals, gatewayMySQLRuntimeSQLLiteral{file: base, line: position.Line, query: value, funcName: name})
 				return true
-			}
-			position := fset.Position(literal.Pos())
-			literals = append(literals, gatewayMySQLRuntimeSQLLiteral{file: base, line: position.Line, query: value})
-			return true
-		})
+			})
+		}
 	}
 	return literals
 }
