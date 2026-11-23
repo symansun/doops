@@ -11,7 +11,6 @@
 |---|---|---|---|---|---|
 | SF-05 | 前端接 SF-04：viewer Diff/Trends + 删 `builtin_strategy` 死开关 | dev-artifact-01 | `components/inspection-artifact-viewer.tsx`、`components/skill-registry-panel.tsx`、`lib/demo.ts`、新增 `lib/monitor-metrics.ts`(+test) | 01:26 | 运行中 |
 | SF-08 | 内置巡检包鲁棒性矩阵（10 场景真跑）+ 端口表收紧 + ssh-host 退化分支 + 消费 `DOOPS_TARGET_*` | skill-dev-01 | `skills_builtin/**`、`testdata/skills_builtin_verify/**` | 01:15，01:27 加附录 | 运行中 |
-| SF-09 | 彻底移除 legacy native strategy 双轨（`monitorStrategyCatalog`、`plan.Strategies` 分支、HTTP `strategies` 参数） | dev-sf-01 | `monitor_engine_{agent,runner,http}.go`、spec §1.1/§2.3、`DOOPS_WEBUI.md` | 01:26 | 运行中 |
 | SF-12 | SF-10 两条低危性能项：diff `ORDER BY` 避 TEMP B-TREE、series `skill_slug` 残差过滤（不改 schema） | integrator-gm | 只 `monitor_metric_store.go` + `monitor_metric_test.go` | 01:35 | 运行中 |
 | INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）+ `agent_status` 两列 + census 刷新 + 真机回读 | integrator-ars | `gateway_mysql_schema.sql`、`testdata/gateway-sqlite-schema.sql`、`gateway_mysql_runtime_test.go`、`gateway_store_schema.go` | 01:23 | 运行中 |
 
@@ -31,6 +30,7 @@
 | SF-02 | 移除 `DriverMode`/`StrategyID` 双轨，分派只从 SKILL.md 派生 | ee192275、a47ed50d | 8 slug 全产出，20/20 绿（60.3s），主工作区 build rc=0 |
 | SF-03 | 产物 File-First 落盘 + 索引列 + 截断脱敏 | daada95c | 5 测试绿；D4 定为"每文件 ≤256 KiB" |
 | SF-04 | `inspection_metric_points` 时序 + metrics API + run diff | 0c000b1c | 4 索引、30.16s 绿、两次反向实验；待 SF-10 独立复验 |
+| SF-09 | 彻底移除 legacy native strategy 双轨：删 `monitor_engine_agent.go`（6 采集器 + `doops_monitor_inspect`）、`strategies`/`ssh_hosts` 请求 400、老 run 只读 + retest 经 Skill 包重放、spec §1.1/§2.3/§2.4/§4.3 | 0226da5a | build/vet 绿，`-run 'Monitor\|Skill\|Strategy'` 47.2s 绿（干净树 51.9s），两条新测试反向实验变红 |
 | SF-10 | 独立复验 SF-04（§4.2/§4.3） | d311cf33 | **符合 2 · 部分 1 · 不符合 0**；只读产物 JSON、多 target 不串行、三组反向实验均红；两条低危性能项转 SF-12，run 级状态语义进 spec（SF-09） |
 | SF-06 | 架构符合性核验（模板 B，只读） | 102711e6 | 符合 13 · 部分 6 · 不符合 0 · 进行中 3 · 未覆盖 1 |
 | SF-07 | 内置包真跑 + 静态契约（`testdata/skills_builtin_verify/verify.sh`） | 6 提交至 8371e99a | 20/20 PASS；6 个 inspect.sh 0644→0755 真缺陷 |
