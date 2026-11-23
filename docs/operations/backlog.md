@@ -10,7 +10,6 @@
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
 | QA-02 | 全仓回归：`go test ./...` 全包 + pytest + verify.sh + 残留扫描（SF-09 删 2186 行的保险） | qa-skill-01 | 只新增 `docs/reviews/2026-11-24-main-regression.md` | 01:52 | 运行中 |
-| SF-14 | 把 `verify.sh` 接进 CI（现在 34 项真跑证据只在开发者机器上）：新增 `skills-packages` job、CI 镜像、`SB01_NO_PRIVILEGED` 显式降级、本地干净树等价验证 | skill-dev-01 | `.github/workflows/ci.yml`、`testdata/skills_builtin_verify/**`、`BUILD_DEPLOY_SOP.md` CI 小节 | 02:01 | 运行中 |
 
 ## 待办（排队/待决策）
 
@@ -26,6 +25,7 @@
 
 | 编号 | 任务 | 提交 | 结论摘要 |
 |---|---|---|---|
+| SF-14 | 把 `verify.sh`（34 项真跑）接进 CI：新增 `skills-packages` job（apt shellcheck + 现场 build `sb01-inspect-test:ci` + 预拉 `alpine:3` + 跑 verify.sh）、`SB01_NO_PRIVILEGED` 显式降级分支（4 个特权场景记 WARN、不删场景）、`BUILD_DEPLOY_SOP.md` 第五节第 8 条 | 686b2076、70a7727e | [CI run 45239179874](https://github.com/symansun/doops/actions/runs/45239179874) 该 job 2m27s 绿（verify step 110s）、34/34 PASS、降级 0；首跑红因 verify.sh 把缺镜像当硬失败而 CI 未预拉 `alpine:3`，补 pull 步骤后绿（反向实验：`docker rmi alpine:3` 后 28/29 复现同一红）；本地干净树 `git archive 686b2076` 34/34、257s；`SB01_NO_PRIVILEGED=1` 30 通过 4 降级 |
 | INT-08 | 列级守卫推广到全部导出表 + "NOT NULL 无默认且被真实 INSERT 省略"守卫（AST 抽列，无 allowlist）；当轮修 18 列/10 表：13 个 TEXT 列改在 INSERT 显式写 `''`，5 个可内联默认的列补 DDL 字面默认 | 655fd9de | `TestGatewayMySQLColumnsMatchExport`（61 表列集合双向）+ `TestGatewayMySQLInsertDefaultsMatchSchema`（无列清单的 INSERT 记 skip，零覆盖即失败）；build/vet/`-run GatewayMySQL`（真机 mysql:8.4）/`-run 'Resource\|Agent\|Registry'` 全绿（干净树 `git archive 655fd9de` 复跑）；反向实验：删 `revoked_at` → 红且指名 `credentials.revoked_at`、逐个删 5 个 DDL 默认 → 全红（`skills_registry.go:255`/`mcp_registry.go:81`）、给 TEXT 加 `DEFAULT ('x')` → copier `mysql_copy_schema_mismatch`；真机修复前 `Error 1364 Field 'error' doesn't have a default value`、修复后回读 `''`；10 张未迁移表入 `gatewayMySQLUnmigratedTables` 交 INT-09；导出未重抓（保留 4 个遗留索引） |
 | INT-05 | 合入 `rescue/agent-resource-sync-v2`（9ae10d93）+ `agent_status` 两列 + census 刷新 + 真机回读 | 15e75cf1、755e4bab、998e536c | B 方案原子三方写回 `console-shell.tsx`（sha256 二次比对一致）一次成功；`kubernetes_available` 改 `TINYINT(1) NULL`（`NOT NULL` 被真机 `Error 1048` 拒）、`archived_at` 改 `VARCHAR(64)`（`TEXT DEFAULT ('')` 是 `DEFAULT_GENERATED`，被离线 copier fail closed）；真机 mysql:8.4 反向实验三组；未覆盖：浏览器实测、Gateway↔Agent 端到端（INT-07 接手部分） |
 | SF-05 | 前端接 SF-04：viewer Diff/Trends + 删死开关 + 停发 strategies/ssh_hosts；补丁 bbe4b9c8 详情页铺开 toInspectionViewerProps + 纯函数映射 + 接线锁测试 | 3e1e6d8a / bbe4b9c8 | tsc/13-13/699-699/build 全绿；反向实验（demo 加回 strategies → 红）；ego-browser 四张截图；**更正**：后端无 actions 字段，只收 skills[] |
