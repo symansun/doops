@@ -22,8 +22,7 @@ func (s *GatewayStore) GrantUser(userID string, grant ScopeGrant) error {
 	if instance == "" {
 		instance = "*"
 	}
-	_, err := s.db.Exec(`INSERT INTO grants (user_id, cluster, instance, created_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT(user_id, cluster, instance) DO NOTHING`,
+	_, err := s.db.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO grants (user_id, cluster, instance, created_at) VALUES (?, ?, ?, ?)", target: []string{"user_id", "cluster", "instance"}, doNothing: true}),
 		userID, cluster, instance, formatTime(time.Now().UTC()))
 	return err
 }
@@ -134,8 +133,7 @@ func (s *GatewayStore) migrateGrantActions() error {
 		}
 	}
 	for _, g := range keep {
-		if _, err := tx.Exec(`INSERT INTO grants_v2 (id, user_id, cluster, instance, created_at) VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(user_id, cluster, instance) DO NOTHING`,
+		if _, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO grants_v2 (id, user_id, cluster, instance, created_at) VALUES (?, ?, ?, ?, ?)", target: []string{"user_id", "cluster", "instance"}, doNothing: true}),
 			g.id, g.userID, g.cluster, g.instance, g.created); err != nil {
 			return err
 		}

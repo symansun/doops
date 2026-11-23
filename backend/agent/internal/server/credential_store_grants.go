@@ -167,15 +167,7 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 	)`, grant.CredentialID, grant.CreatedBy, string(scopeJSON), CredentialStateRevoked); err != nil {
 		return CredentialGrant{}, err
 	}
-	_, err = tx.Exec(`INSERT INTO credential_grants
-		(id, credential_id, grantee_id, scope_json, state, revoked_at, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, '', ?, ?)
-		ON CONFLICT(credential_id, grantee_id, scope_json)
-		DO UPDATE SET
-			state = excluded.state,
-			created_by = excluded.created_by,
-			created_at = excluded.created_at,
-			revoked_at = ''`,
+	_, err = tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO credential_grants\n\t\t(id, credential_id, grantee_id, scope_json, state, revoked_at, created_by, created_at)\n\t\tVALUES (?, ?, ?, ?, ?, '', ?, ?)", target: []string{"credential_id", "grantee_id", "scope_json"}, set: []string{"state = excluded.state", "created_by = excluded.created_by", "created_at = excluded.created_at", "revoked_at = ''"}}),
 		grant.ID, grant.CredentialID, grant.CreatedBy, string(scopeJSON), grant.State,
 		grant.CreatedBy, formatTime(grant.CreatedAt))
 	if err != nil {

@@ -106,7 +106,7 @@ func (h *GatewayHub) HandleClusterProfiles(w http.ResponseWriter, r *http.Reques
 		}
 		switch req.Op {
 		case "update":
-			_, e = tx.Exec("INSERT INTO inventory_cluster_profiles(asset_id,name,environment,contact,created_by,revision) VALUES(?,?,?,?,?,1) ON CONFLICT(asset_id) DO UPDATE SET name=excluded.name,environment=excluded.environment,contact=excluded.contact,revision=revision+1", req.ID, req.Name, req.Environment, req.Contact, a.UserID)
+			_, e = tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO inventory_cluster_profiles(asset_id,name,environment,contact,created_by,revision) VALUES(?,?,?,?,?,1)", target: []string{"asset_id"}, set: []string{"name=excluded.name", "environment=excluded.environment", "contact=excluded.contact", "revision=revision+1"}}), req.ID, req.Name, req.Environment, req.Contact, a.UserID)
 			if e == nil {
 				_, e = tx.Exec("UPDATE cluster_inventory_sources SET name=? WHERE asset_id=?", req.Name, req.ID)
 			}

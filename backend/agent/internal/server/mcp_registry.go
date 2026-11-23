@@ -186,23 +186,7 @@ func (s *GatewayStore) UpsertPlatformMCPServer(ctx context.Context, rec platform
 	if rec.AutoStart {
 		autoInt = 1
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO platform_mcp_servers (
-		slug, name, description, scope, transport, command, args_json, url, env_json, headers_json,
-		enabled, auto_start, tool_timeout_secs, tools_json, owner_id, owner_name, last_probe_error, created_at_ms, updated_at_ms
-	) VALUES (?, ?, ?, 'custom', ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, '', ?, ?)
-	ON CONFLICT(slug) DO UPDATE SET
-		name=excluded.name,
-		description=excluded.description,
-		transport=excluded.transport,
-		command=excluded.command,
-		args_json=excluded.args_json,
-		url=excluded.url,
-		env_json=excluded.env_json,
-		headers_json=excluded.headers_json,
-		enabled=excluded.enabled,
-		auto_start=excluded.auto_start,
-		tool_timeout_secs=excluded.tool_timeout_secs,
-		updated_at_ms=excluded.updated_at_ms`,
+	_, err := s.db.ExecContext(ctx, gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO platform_mcp_servers (\n\t\tslug, name, description, scope, transport, command, args_json, url, env_json, headers_json,\n\t\tenabled, auto_start, tool_timeout_secs, tools_json, owner_id, owner_name, last_probe_error, created_at_ms, updated_at_ms\n\t) VALUES (?, ?, ?, 'custom', ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, '', ?, ?)", target: []string{"slug"}, set: []string{"name=excluded.name", "description=excluded.description", "transport=excluded.transport", "command=excluded.command", "args_json=excluded.args_json", "url=excluded.url", "env_json=excluded.env_json", "headers_json=excluded.headers_json", "enabled=excluded.enabled", "auto_start=excluded.auto_start", "tool_timeout_secs=excluded.tool_timeout_secs", "updated_at_ms=excluded.updated_at_ms"}}),
 		rec.Slug, rec.Name, rec.Description, rec.Transport, rec.Command, string(argsJSON), rec.URL,
 		string(envJSON), string(headersJSON), enabledInt, autoInt, rec.ToolTimeoutSecs,
 		rec.OwnerID, rec.OwnerName, rec.CreatedAtMs, rec.UpdatedAtMs,

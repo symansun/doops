@@ -70,22 +70,7 @@ func (s *GatewayStore) MarkAgentOnline(agent AgentStatus) error {
 	if agent.KubernetesAvailable != nil {
 		kubernetesAvailable = *agent.KubernetesAvailable
 	}
-	_, err := s.db.Exec(`INSERT INTO agent_status
-		(cluster, instance, token_id, remote, release_commit, status, generation, mode, kubernetes_available, connected_at, last_seen, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'online', ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(cluster, instance) DO UPDATE SET
-			token_id = excluded.token_id,
-			remote = excluded.remote,
-			release_commit = CASE WHEN excluded.release_commit = '' THEN agent_status.release_commit ELSE excluded.release_commit END,
-			status = 'online',
-			generation = excluded.generation,
-			mode = excluded.mode,
-			kubernetes_available = excluded.kubernetes_available,
-			connected_at = excluded.connected_at,
-			last_seen = excluded.last_seen,
-			updated_at = excluded.updated_at,
-			archived_at = '',
-			archived_by = ''`,
+	_, err := s.db.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO agent_status\n\t\t(cluster, instance, token_id, remote, release_commit, status, generation, mode, kubernetes_available, connected_at, last_seen, updated_at)\n\t\tVALUES (?, ?, ?, ?, ?, 'online', ?, ?, ?, ?, ?, ?)", target: []string{"cluster", "instance"}, set: []string{"token_id = excluded.token_id", "remote = excluded.remote", "release_commit = CASE WHEN excluded.release_commit = '' THEN agent_status.release_commit ELSE excluded.release_commit END", "status = 'online'", "generation = excluded.generation", "mode = excluded.mode", "kubernetes_available = excluded.kubernetes_available", "connected_at = excluded.connected_at", "last_seen = excluded.last_seen", "updated_at = excluded.updated_at", "archived_at = ''", "archived_by = ''"}}),
 		agent.Cluster, agent.Instance, agent.TokenID, agent.Remote, agent.ReleaseCommit, agent.Generation,
 		agent.Mode, kubernetesAvailable, formatTime(connectedUTC), formatTime(agent.LastSeen.UTC()), formatTime(now))
 	if err != nil {
@@ -260,16 +245,7 @@ func (s *GatewayStore) RecordPlatformLoadSample(sample PlatformLoadSample) error
 	if sample.AtMs <= 0 {
 		sample.AtMs = time.Now().UTC().UnixMilli()
 	}
-	_, err := s.db.Exec(`INSERT INTO platform_load_samples
-		(at_ms, online_agents, busy_agents, active_ops, queued_ops, active_sessions, resource_locks)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(at_ms) DO UPDATE SET
-			online_agents = MAX(platform_load_samples.online_agents, excluded.online_agents),
-			busy_agents = MAX(platform_load_samples.busy_agents, excluded.busy_agents),
-			active_ops = MAX(platform_load_samples.active_ops, excluded.active_ops),
-			queued_ops = MAX(platform_load_samples.queued_ops, excluded.queued_ops),
-			active_sessions = MAX(platform_load_samples.active_sessions, excluded.active_sessions),
-			resource_locks = MAX(platform_load_samples.resource_locks, excluded.resource_locks)`,
+	_, err := s.db.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO platform_load_samples\n\t\t(at_ms, online_agents, busy_agents, active_ops, queued_ops, active_sessions, resource_locks)\n\t\tVALUES (?, ?, ?, ?, ?, ?, ?)", target: []string{"at_ms"}, set: []string{"online_agents = MAX(platform_load_samples.online_agents, excluded.online_agents)", "busy_agents = MAX(platform_load_samples.busy_agents, excluded.busy_agents)", "active_ops = MAX(platform_load_samples.active_ops, excluded.active_ops)", "queued_ops = MAX(platform_load_samples.queued_ops, excluded.queued_ops)", "active_sessions = MAX(platform_load_samples.active_sessions, excluded.active_sessions)", "resource_locks = MAX(platform_load_samples.resource_locks, excluded.resource_locks)"}}),
 		sample.AtMs, sample.OnlineAgents, sample.BusyAgents, sample.ActiveOps,
 		sample.QueuedOps, sample.ActiveSessions, sample.ResourceLocks)
 	return err

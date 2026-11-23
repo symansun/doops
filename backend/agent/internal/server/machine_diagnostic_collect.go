@@ -195,7 +195,7 @@ func (h *GatewayHub) pullMachineDiagnostic(ctx context.Context, auth TokenAuth, 
 		return nil, monitorErr(409, "host_sample_stale")
 	}
 	if req.Action == "bind" {
-		res, err := tx.Exec(`INSERT INTO machine_diagnostic_bindings(asset_id,cluster,instance,host_sha256) VALUES(?,?,?,?) ON CONFLICT DO NOTHING`, req.AssetID, req.Cluster, req.Instance, fp)
+		res, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO machine_diagnostic_bindings(asset_id,cluster,instance,host_sha256) VALUES(?,?,?,?)", doNothing: true}), req.AssetID, req.Cluster, req.Instance, fp)
 		if err != nil {
 			return nil, err
 		}

@@ -66,10 +66,7 @@ func saveInventoryObservation(tx *sql.Tx, row inventoryCluster) error {
 	if conflict {
 		return inventoryFailure{409, "cluster_identity_conflict"}
 	}
-	_, err := tx.Exec(`INSERT INTO cluster_inventory_sources
- (cluster,instance,asset_id,name,kube_system_uid,verified_at,verified_by,scope) VALUES (?,?,?,?,?,?,?,?)
- ON CONFLICT(cluster,instance) DO UPDATE SET verified_at=excluded.verified_at, verified_by=excluded.verified_by,
- scope=excluded.scope, kube_system_uid=COALESCE(NULLIF(excluded.kube_system_uid,''),cluster_inventory_sources.kube_system_uid)`,
+	_, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO cluster_inventory_sources\n (cluster,instance,asset_id,name,kube_system_uid,verified_at,verified_by,scope) VALUES (?,?,?,?,?,?,?,?)", target: []string{"cluster", "instance"}, set: []string{"verified_at=excluded.verified_at", "verified_by=excluded.verified_by", "scope=excluded.scope", "kube_system_uid=COALESCE(NULLIF(excluded.kube_system_uid,''),cluster_inventory_sources.kube_system_uid)"}}),
 		row.Cluster, row.Instance, row.AssetID, row.Name, systemUID, row.VerifiedAt, row.VerifiedBy, row.Scope)
 	if err != nil {
 		return err
@@ -91,13 +88,7 @@ func saveInventoryObservation(tx *sql.Tx, row inventoryCluster) error {
 		}
 	}
 	for _, ns := range row.Namespaces {
-		_, err := tx.Exec(`INSERT INTO cluster_inventory_namespaces (cluster,instance,name,uid,verified_at,verified_by,scope,namespace_observed_at,pods_listed_at)
- VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(cluster,instance,name) DO UPDATE SET
- uid=COALESCE(NULLIF(excluded.uid,''),cluster_inventory_namespaces.uid),
- namespace_observed_at=COALESCE(NULLIF(excluded.namespace_observed_at,''),cluster_inventory_namespaces.namespace_observed_at),
- pods_listed_at=CASE WHEN excluded.uid<>'' AND cluster_inventory_namespaces.uid<>'' AND excluded.uid<>cluster_inventory_namespaces.uid THEN ''
- ELSE COALESCE(NULLIF(excluded.pods_listed_at,''),cluster_inventory_namespaces.pods_listed_at) END,
- verified_at=excluded.verified_at, verified_by=excluded.verified_by, scope=excluded.scope`,
+		_, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO cluster_inventory_namespaces (cluster,instance,name,uid,verified_at,verified_by,scope,namespace_observed_at,pods_listed_at)\n VALUES (?,?,?,?,?,?,?,?,?)", target: []string{"cluster", "instance", "name"}, set: []string{"uid=COALESCE(NULLIF(excluded.uid,''),cluster_inventory_namespaces.uid)", "namespace_observed_at=COALESCE(NULLIF(excluded.namespace_observed_at,''),cluster_inventory_namespaces.namespace_observed_at)", "pods_listed_at=CASE WHEN excluded.uid<>'' AND cluster_inventory_namespaces.uid<>'' AND excluded.uid<>cluster_inventory_namespaces.uid THEN ''\n ELSE COALESCE(NULLIF(excluded.pods_listed_at,''),cluster_inventory_namespaces.pods_listed_at) END", "verified_at=excluded.verified_at", "verified_by=excluded.verified_by", "scope=excluded.scope"}}),
 			row.Cluster, row.Instance, ns.Name, ns.UID, ns.VerifiedAt, ns.VerifiedBy, ns.Scope, ns.NamespaceObservedAt, ns.PodsListedAt)
 		if err != nil {
 			return err

@@ -215,7 +215,7 @@ func (h *GatewayHub) applyRuntime(ctx context.Context, auth TokenAuth, r runtime
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`INSERT INTO asset_runtime_snapshots(cluster,instance,namespace,asset_id,revision,observed_at,objects) VALUES(?,?,?,?,?,?,?) ON CONFLICT(cluster,instance,namespace) DO UPDATE SET asset_id=excluded.asset_id,revision=excluded.revision,observed_at=excluded.observed_at,objects=excluded.objects`, r.Cluster, r.Instance, r.Namespace, r.AssetID, session, formatTime(time.Now()), string(raw))
+		_, err = tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO asset_runtime_snapshots(cluster,instance,namespace,asset_id,revision,observed_at,objects) VALUES(?,?,?,?,?,?,?)", target: []string{"cluster", "instance", "namespace"}, set: []string{"asset_id=excluded.asset_id", "revision=excluded.revision", "observed_at=excluded.observed_at", "objects=excluded.objects"}}), r.Cluster, r.Instance, r.Namespace, r.AssetID, session, formatTime(time.Now()), string(raw))
 		if err != nil {
 			return err
 		}
@@ -246,7 +246,7 @@ func (h *GatewayHub) applyRuntime(ctx context.Context, auth TokenAuth, r runtime
 			if !valid {
 				return inventoryFailure{409, "runtime_binding_subject_changed"}
 			}
-			_, err = tx.Exec(`INSERT INTO asset_runtime_bindings(cluster,instance,namespace,application,workload_uid,verified_at) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`, r.Cluster, r.Instance, r.Namespace, r.Application, r.Workload, formatTime(time.Now()))
+			_, err = tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO asset_runtime_bindings(cluster,instance,namespace,application,workload_uid,verified_at) VALUES(?,?,?,?,?,?)", doNothing: true}), r.Cluster, r.Instance, r.Namespace, r.Application, r.Workload, formatTime(time.Now()))
 		} else {
 			_, err = tx.Exec(`DELETE FROM asset_runtime_bindings WHERE cluster=? AND instance=? AND namespace=? AND application=? AND workload_uid=?`, r.Cluster, r.Instance, r.Namespace, r.Application, r.Workload)
 		}

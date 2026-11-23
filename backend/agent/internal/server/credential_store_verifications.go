@@ -56,15 +56,7 @@ func recordCredentialVerificationWith(execer auditExecer, verification Credentia
 	if verification.VerifiedAt.IsZero() {
 		verification.VerifiedAt = time.Now().UTC()
 	}
-	_, err = execer.Exec(`INSERT INTO credential_verifications
-		(id, credential_id, version_id, grant_id, use, context_key, request_json, evidence_json, status, verified_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', ?)
-		ON CONFLICT(version_id, grant_id, use, context_key) DO UPDATE SET
-			id = excluded.id,
-			request_json = excluded.request_json,
-			evidence_json = excluded.evidence_json,
-			status = excluded.status,
-			verified_at = excluded.verified_at`,
+	_, err = execer.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO credential_verifications\n\t\t(id, credential_id, version_id, grant_id, use, context_key, request_json, evidence_json, status, verified_at)\n\t\tVALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', ?)", target: []string{"version_id", "grant_id", "use", "context_key"}, set: []string{"id = excluded.id", "request_json = excluded.request_json", "evidence_json = excluded.evidence_json", "status = excluded.status", "verified_at = excluded.verified_at"}}),
 		verification.ID, verification.CredentialID, verification.VersionID, verification.GrantID,
 		verification.Use, contextKey, string(requestJSON), string(evidenceJSON), formatTime(verification.VerifiedAt))
 	return err

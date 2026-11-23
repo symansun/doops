@@ -155,7 +155,7 @@ func (s *GatewayStore) applyNodeLink(ctx context.Context, auth TokenAuth, req no
 	if !parents {
 		return machineInventoryProblem{404, "asset_not_found", "machine or imported cluster source not found"}
 	}
-	query := `INSERT INTO inventory_node_links(cluster,instance,node_name,machine_id) VALUES(?,?,?,?) ON CONFLICT(cluster,instance,node_name) DO NOTHING`
+	query := gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO inventory_node_links(cluster,instance,node_name,machine_id) VALUES(?,?,?,?)", target: []string{"cluster", "instance", "node_name"}, doNothing: true})
 	if req.Action == "unbind" {
 		query = `DELETE FROM inventory_node_links WHERE cluster=? AND instance=? AND node_name=? AND machine_id=?`
 	}

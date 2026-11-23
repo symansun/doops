@@ -314,7 +314,7 @@ func (s *GatewayStore) coverageTransaction(r *http.Request, auth TokenAuth, q ur
 			if err != nil {
 				return report, err
 			}
-			result, err := tx.Exec(`INSERT INTO asset_coverage_baselines(id,frozen_at,frozen_by,snapshot) VALUES(?,?,?,?) ON CONFLICT(id) DO NOTHING`, req.BaselineID, formatTime(now), auth.UserID, string(payload))
+			result, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO asset_coverage_baselines(id,frozen_at,frozen_by,snapshot) VALUES(?,?,?,?)", target: []string{"id"}, doNothing: true}), req.BaselineID, formatTime(now), auth.UserID, string(payload))
 			if err != nil {
 				return report, err
 			}

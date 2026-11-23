@@ -217,7 +217,7 @@ func inspectionItemAction(tx *sql.Tx, a TokenAuth, q inspectionRequest, now time
 			return nil, f, inspectErr(409, "item is not eligible for this attempt")
 		}
 		if status == "missing" {
-			_, err = tx.Exec(`INSERT INTO inspection_receipts(item_id,generation,actor,received,status,reason,evidence,digest) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(item_id,generation) DO NOTHING`, q.Item, gen, a.UserID, now.Unix(), status, reason, "null", "")
+			_, err = tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO inspection_receipts(item_id,generation,actor,received,status,reason,evidence,digest) VALUES(?,?,?,?,?,?,?,?)", target: []string{"item_id", "generation"}, doNothing: true}), q.Item, gen, a.UserID, now.Unix(), status, reason, "null", "")
 			if err != nil {
 				return nil, f, err
 			}

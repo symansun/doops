@@ -488,25 +488,14 @@ func (s *GatewayStore) ListEdgeEnrollments() ([]EdgeEnrollment, error) {
 
 func (s *GatewayStore) MarkEdgeAgentOnline(cluster, instance, remote string, sessions int, generation uint64) error {
 	now := formatTime(time.Now().UTC())
-	_, err := s.db.Exec(`INSERT INTO edge_agent_status
-		(cluster, instance, status, sessions, remote, generation, connected_at, last_seen, updated_at)
-		VALUES (?, ?, 'online', ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(cluster, instance) DO UPDATE SET
-			status = 'online', sessions = excluded.sessions, remote = excluded.remote,
-			generation = excluded.generation, connected_at = excluded.connected_at,
-			last_seen = excluded.last_seen, updated_at = excluded.updated_at`,
+	_, err := s.db.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO edge_agent_status\n\t\t(cluster, instance, status, sessions, remote, generation, connected_at, last_seen, updated_at)\n\t\tVALUES (?, ?, 'online', ?, ?, ?, ?, ?, ?)", target: []string{"cluster", "instance"}, set: []string{"status = 'online'", "sessions = excluded.sessions", "remote = excluded.remote", "generation = excluded.generation", "connected_at = excluded.connected_at", "last_seen = excluded.last_seen", "updated_at = excluded.updated_at"}}),
 		cluster, instance, sessions, remote, generation, now, now, now)
 	return err
 }
 
 func (s *GatewayStore) MarkEdgeAgentOffline(cluster, instance string, sessions int) error {
 	now := formatTime(time.Now().UTC())
-	_, err := s.db.Exec(`INSERT INTO edge_agent_status
-		(cluster, instance, status, sessions, remote, generation, connected_at, last_seen, updated_at)
-		VALUES (?, ?, 'offline', ?, '', 0, '', ?, ?)
-		ON CONFLICT(cluster, instance) DO UPDATE SET
-			status = 'offline', sessions = excluded.sessions, last_seen = excluded.last_seen,
-			updated_at = excluded.updated_at`,
+	_, err := s.db.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO edge_agent_status\n\t\t(cluster, instance, status, sessions, remote, generation, connected_at, last_seen, updated_at)\n\t\tVALUES (?, ?, 'offline', ?, '', 0, '', ?, ?)", target: []string{"cluster", "instance"}, set: []string{"status = 'offline'", "sessions = excluded.sessions", "last_seen = excluded.last_seen", "updated_at = excluded.updated_at"}}),
 		cluster, instance, sessions, now, now)
 	return err
 }

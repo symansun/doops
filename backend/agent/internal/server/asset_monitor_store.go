@@ -13,7 +13,7 @@ func monitorKey(req monitorRequest, a monitorAsset, origin, metric, device strin
 
 func storeMonitorPoint(tx *sql.Tx, req monitorRequest, p monitorInput, origin string) error {
 	keys := monitorKey(req, p.monitorAsset, origin, p.Metric, p.DeviceID)
-	if _, err := tx.Exec(`INSERT INTO asset_monitor_series(cluster,instance,type,asset_id,namespace,origin,metric,device_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`, keys...); err != nil {
+	if _, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO asset_monitor_series(cluster,instance,type,asset_id,namespace,origin,metric,device_id) VALUES(?,?,?,?,?,?,?,?)", doNothing: true}), keys...); err != nil {
 		return err
 	}
 	var id int64
@@ -63,7 +63,7 @@ func storeMonitorPoint(tx *sql.Tx, req monitorRequest, p monitorInput, origin st
 			since = sql.NullInt64{Int64: p.At, Valid: true}
 		}
 		if p.At-since.Int64 >= duration*1000 {
-			if _, err := tx.Exec(`INSERT INTO asset_monitor_alerts(series_id,opened_ms,threshold,duration_seconds,state) VALUES(?,?,?,?,'open') ON CONFLICT DO NOTHING`, id, p.At, threshold, duration); err != nil {
+			if _, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO asset_monitor_alerts(series_id,opened_ms,threshold,duration_seconds,state) VALUES(?,?,?,?,'open')", doNothing: true}), id, p.At, threshold, duration); err != nil {
 				return err
 			}
 		}
@@ -88,7 +88,7 @@ func saveMonitorRule(tx *sql.Tx, req monitorRequest, at int64) error {
 		}
 		return err
 	}
-	result, err := tx.Exec(`INSERT INTO asset_monitor_rules(series_id,threshold,duration_seconds,effective_ms) VALUES(?,?,?,?) ON CONFLICT(series_id) DO UPDATE SET threshold=excluded.threshold,duration_seconds=excluded.duration_seconds,effective_ms=excluded.effective_ms,first_above_ms=NULL WHERE threshold<>excluded.threshold OR duration_seconds<>excluded.duration_seconds`, id, req.Threshold, req.Duration, at)
+	result, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO asset_monitor_rules(series_id,threshold,duration_seconds,effective_ms) VALUES(?,?,?,?)", target: []string{"series_id"}, set: []string{"threshold=excluded.threshold", "duration_seconds=excluded.duration_seconds", "effective_ms=excluded.effective_ms", "first_above_ms=NULL"}, where: "threshold<>excluded.threshold OR duration_seconds<>excluded.duration_seconds"}), id, req.Threshold, req.Duration, at)
 	if err != nil {
 		return err
 	}

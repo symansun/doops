@@ -96,7 +96,7 @@ func (s *GatewayStore) writePersonalAsset(w http.ResponseWriter, r *http.Request
 		if req.Revision != 0 {
 			return nil, machineBadRequest("invalid_revision", "新登记不应指定版本。")
 		}
-		query = "INSERT INTO personal_asset_records(owner,kind,asset_id,name,environment,revision) VALUES(?,?,?,?,?,1) ON CONFLICT DO NOTHING"
+		query = gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO personal_asset_records(owner,kind,asset_id,name,environment,revision) VALUES(?,?,?,?,?,1)", doNothing: true})
 		args = []any{a.UserID, req.Kind, req.ID, req.Name, req.Environment}
 	case "update":
 		query = "UPDATE personal_asset_records SET name=?,environment=?,revision=revision+1 WHERE owner=? AND kind=? AND asset_id=? AND revision=?"

@@ -539,22 +539,7 @@ func (s *GatewayStore) UpsertPlatformSkill(ctx context.Context, rec platformSkil
 	if rec.Enabled {
 		enabledInt = 1
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO platform_skills (
-		slug, name, description, scope, category,
-		enabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,
-		created_at_ms, updated_at_ms, last_run_at_ms, run_count
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(slug) DO UPDATE SET
-		name=excluded.name,
-		description=excluded.description,
-		category=excluded.category,
-		enabled=excluded.enabled,
-		skill_md=excluded.skill_md,
-		files_json=excluded.files_json,
-		file_count=excluded.file_count,
-		storage_dir=excluded.storage_dir,
-		sha256=excluded.sha256,
-		updated_at_ms=excluded.updated_at_ms`,
+	_, err := s.db.ExecContext(ctx, gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO platform_skills (\n\t\tslug, name, description, scope, category,\n\t\tenabled, skill_md, files_json, file_count, storage_dir, sha256, owner_id, owner_name,\n\t\tcreated_at_ms, updated_at_ms, last_run_at_ms, run_count\n\t) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", target: []string{"slug"}, set: []string{"name=excluded.name", "description=excluded.description", "category=excluded.category", "enabled=excluded.enabled", "skill_md=excluded.skill_md", "files_json=excluded.files_json", "file_count=excluded.file_count", "storage_dir=excluded.storage_dir", "sha256=excluded.sha256", "updated_at_ms=excluded.updated_at_ms"}}),
 		rec.Slug, rec.Name, rec.Description, rec.Scope, rec.Category,
 		enabledInt, dbSkillMD, dbFilesJSON, rec.FileCount, storageDir, rec.SHA256, rec.OwnerID, rec.OwnerName,
 		rec.CreatedAtMs, rec.UpdatedAtMs, rec.LastRunAtMs, rec.RunCount,

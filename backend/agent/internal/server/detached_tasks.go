@@ -289,17 +289,7 @@ func (s *GatewayStore) upsertDetachedTask(task detachedTask) error {
 	if task.CancelRequested {
 		cancelInt = 1
 	}
-	_, err := s.db.Exec(`INSERT INTO detached_tasks
-		(audit_id, operation_id, user_id, cluster, instance, session, command_summary, status,
-		 started_at, finished_at, finished_at_ms, task_id, cancel_requested, output)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(audit_id) DO UPDATE SET
-			status = excluded.status,
-			finished_at = excluded.finished_at,
-			finished_at_ms = excluded.finished_at_ms,
-			task_id = excluded.task_id,
-			cancel_requested = excluded.cancel_requested,
-			output = excluded.output`,
+	_, err := s.db.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO detached_tasks\n\t\t(audit_id, operation_id, user_id, cluster, instance, session, command_summary, status,\n\t\t started_at, finished_at, finished_at_ms, task_id, cancel_requested, output)\n\t\tVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", target: []string{"audit_id"}, set: []string{"status = excluded.status", "finished_at = excluded.finished_at", "finished_at_ms = excluded.finished_at_ms", "task_id = excluded.task_id", "cancel_requested = excluded.cancel_requested", "output = excluded.output"}}),
 		task.AuditID, task.OperationID, task.UserID, task.Cluster, task.Instance, task.Session,
 		task.CommandSummary, task.Status, formatTime(task.StartedAt.UTC()),
 		finishedRaw, finishedMs, task.TaskID, cancelInt, sanitizeSecretText(task.output))

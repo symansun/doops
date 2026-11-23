@@ -191,7 +191,7 @@ func (s *GatewayStore) applyWorkspaceChange(w http.ResponseWriter, r *http.Reque
 	}
 	query := `DELETE FROM inventory_agent_assets WHERE cluster=? AND instance=? AND kind=? AND asset_id=?`
 	if *req.Assigned {
-		query = `INSERT INTO inventory_agent_assets(cluster,instance,kind,asset_id) VALUES(?,?,?,?) ON CONFLICT DO NOTHING`
+		query = gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO inventory_agent_assets(cluster,instance,kind,asset_id) VALUES(?,?,?,?)", doNothing: true})
 	}
 	if _, err = tx.Exec(query, req.Cluster, req.Instance, req.Kind, req.ID); err != nil {
 		return err

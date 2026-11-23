@@ -86,17 +86,7 @@ func (s *GatewayStore) RecordCredentialMaterializationIntent(
 	case !errors.Is(err, sql.ErrNoRows):
 		return CredentialMaterializationRecord{}, err
 	}
-	if _, err := tx.Exec(`INSERT INTO credential_materializations
-		(id, credential_id, version_id, grant_id, use, context_key, request_json,
-		 evidence_json, status, error_category, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, '{}', 'pending', '', ?, ?)
-		ON CONFLICT(version_id, grant_id, use, context_key) DO UPDATE SET
-			id = excluded.id,
-			request_json = excluded.request_json,
-			evidence_json = '{}',
-			status = 'pending',
-			error_category = '',
-			updated_at = excluded.updated_at`,
+	if _, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO credential_materializations\n\t\t(id, credential_id, version_id, grant_id, use, context_key, request_json,\n\t\t evidence_json, status, error_category, created_at, updated_at)\n\t\tVALUES (?, ?, ?, ?, ?, ?, ?, '{}', 'pending', '', ?, ?)", target: []string{"version_id", "grant_id", "use", "context_key"}, set: []string{"id = excluded.id", "request_json = excluded.request_json", "evidence_json = '{}'", "status = 'pending'", "error_category = ''", "updated_at = excluded.updated_at"}}),
 		record.ID, record.CredentialID, record.VersionID, record.GrantID, record.Use,
 		record.ContextKey, string(requestJSON), formatTime(now), formatTime(now)); err != nil {
 		return CredentialMaterializationRecord{}, err

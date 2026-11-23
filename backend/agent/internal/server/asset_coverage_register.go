@@ -101,7 +101,7 @@ func saveCoverageRegister(tx *sql.Tx, scope string, reg coverageRegister, source
 	}
 	var result sql.Result
 	if reg.Revision == 0 {
-		result, err = tx.Exec(`INSERT INTO asset_coverage_registers(scope,revision,document_ref,entries,updated_by,updated_at) VALUES(?,1,?,?,?,?) ON CONFLICT(scope) DO NOTHING`, scope, reg.Document, string(data), actor, at)
+		result, err = tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO asset_coverage_registers(scope,revision,document_ref,entries,updated_by,updated_at) VALUES(?,1,?,?,?,?)", target: []string{"scope"}, doNothing: true}), scope, reg.Document, string(data), actor, at)
 	} else {
 		result, err = tx.Exec(`UPDATE asset_coverage_registers SET revision=revision+1,document_ref=?,entries=?,updated_by=?,updated_at=? WHERE scope=? AND revision=?`, reg.Document, string(data), actor, at, scope, reg.Revision)
 	}
@@ -211,7 +211,7 @@ func freezeClusterCoverage(tx *sql.Tx, scope, id, actor, at string, reg coverage
 	if err != nil {
 		return err
 	}
-	r, err := tx.Exec(`INSERT INTO asset_coverage_cluster_versions(cluster_id,id,frozen_at,frozen_by,snapshot,document_ref,register_revision) VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`, scope, id, at, actor, string(data), reg.Document, reg.Revision)
+	r, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO asset_coverage_cluster_versions(cluster_id,id,frozen_at,frozen_by,snapshot,document_ref,register_revision) VALUES(?,?,?,?,?,?,?)", doNothing: true}), scope, id, at, actor, string(data), reg.Document, reg.Revision)
 	if err != nil {
 		return err
 	}
