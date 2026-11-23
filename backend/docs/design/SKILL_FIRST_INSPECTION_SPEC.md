@@ -144,7 +144,27 @@ required_mcp: doops
 - 新产生的巡检记录一律落盘至 `artifact_dir`，SQLite 对应文本列（`artifact_markdown` / `artifact_json` / `raw_output`）置空不再重复存储大文本。
 - 读取 `GET /v1/monitor/runs/<id>` 时，优先从 `artifact_dir` 透明加载；若 `artifact_dir` 为空（历史升级前旧数据），自动回读 SQLite 旧文本列，保证平滑无损升级。
 - 落盘前统一执行凭据脱敏（`redactSecretText`）与 `maxInspectionArtifactBytes` 字节上限保护：Markdown 与原始输出按字节截断并追加 `... [truncated]`；JSON 不得截断成非法结构，超限时改写为 `{"truncated":true,"original_bytes":N,"limit_bytes":262144}` 信封，截断后的原文保留在 `raw.txt`。上限按单个文件（`artifact.md` / `artifact.json` / `raw.txt`）各自 ≤256 KiB 执行，不做单条记录合计。
-- `PruneMonitorEngineHistory` 清理超期记录（默认 30 天）时，同步删除对应磁盘产物目录并回收空日期目录。
+- 超期记录由 §3.5 的保留策略清理：删除对应磁盘产物目录并回收空日期目录。
+
+### 3.5 产物与指标的生命周期（保留策略）
+
+巡检产物与指标点都不是只增不减。清理必须满足三条：不影响正在跑的巡检、不抹掉每个 schedule 的近期历史、指标比产物留得久。
+
+保留窗口（环境变量在每次清理时读取）：
+
+| 环境变量 | 默认 | 含义 |
+|---|---|---|
+| `DOOPS_MONITOR_ARTIFACT_RETENTION_DAYS` | 30 | 巡检 run 及其产物目录、`monitor_run_items`、`monitor_resource_snapshots` 的保留天数 |
+| `DOOPS_MONITOR_ARTIFACT_KEEP_RUNS` | 50 | 每个 schedule 最近 N 次 run 无条件保留，即使已超出保留天数 |
+| `DOOPS_MONITOR_METRIC_RETENTION_DAYS` | 90 | `inspection_metric_points` 的保留天数 |
+
+- 非法值（非整数、0、负数）回落默认并记一条日志；关闭清理不受支持（要留更久就把天数调大）。
+- 永不删除：`status='running'` 的 run；每个 schedule 分组（含 `schedule_id=''` 的手动巡检分组）最近 `DOOPS_MONITOR_ARTIFACT_KEEP_RUNS` 次 run。保留次数下限存在的原因：低频 schedule 一旦停跑几个月，超出天数的历史会在它下次运行的瞬间被全部清掉；保底最近 N 次让重新启用的 schedule 仍有可对比的基线。
+- 指标比产物留得久：产物是单次巡检的正文凭据，指标是 §4.2 趋势图的数据点；产物过期不影响曲线连续性，所以指标窗口默认更长（90 天）。
+- 顺序是先删文件、后删索引行：反过来的话，进程在两步之间被杀会留下「索引行指向已消失目录」的状态，详情接口读到空目录只能返回 200 空正文，用户看不出是数据没了还是采集失败。先删文件后删行，最坏结果是「目录已删、行还在」，该行下一轮扫描会重新命中并补删（自愈），期间详情退化为空正文；数据库写失败不属于可本地消除的风险，只能靠重试收敛。
+- 目录删不掉（只读挂载、权限不足）时记一条 warn（`run_id`、`artifact_dir`、错误），**仍然删除索引行**：否则索引永远指向删不掉的目录、每次扫描都重复失败刷日志。遗留的孤儿目录由运维回收，不阻塞清理。
+- 触发点两个：巡检落库后触发一次（进程内 15 分钟节流、单飞，同一时刻只有一个清理在跑，避免并发重复删除），以及 `instance_retention` 的每小时兜底（强制全扫，不受节流影响）。
+- 单次扫描有界：最多处理 50 个 run；指标按 500 行一批、最多 20 批。剩余量留给下一轮，避免一次清理长时间持有写锁。
 
 ---
 

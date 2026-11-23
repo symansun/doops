@@ -332,6 +332,12 @@ func TestMonitorArtifactMissingFilesFallBackToDatabase(t *testing.T) {
 }
 
 func TestMonitorArtifactPruneRemovesFiles(t *testing.T) {
+	// The original assertion (an expired run's payload directory is removed with
+	// the run) still holds, but SF-15 added a per-schedule keep-runs floor: the
+	// newest run of a schedule survives regardless of age, so a lone old run can
+	// never be pruned. Pin the floor to one and add a fresh run in the same
+	// (manual) group, which keeps this test about the age window.
+	t.Setenv(monitorArtifactKeepRunsEnv, "1")
 	store := openMonitorArtifactStore(t)
 	oldMs := time.Now().UTC().Add(-40 * 24 * time.Hour).UnixMilli()
 	run := persistMonitorArtifactRun(t, store, "run_artifact06", oldMs, monitorRunItemRecord{
@@ -350,6 +356,15 @@ func TestMonitorArtifactPruneRemovesFiles(t *testing.T) {
 	if _, err := os.Stat(itemDir); err != nil {
 		t.Fatalf("artifact dir missing before prune: %v", err)
 	}
+	persistMonitorArtifactRun(t, store, "run_artifact06_newer", time.Now().UTC().Add(-time.Hour).UnixMilli(), monitorRunItemRecord{
+		Cluster:         "local",
+		Instance:        "host-f",
+		AssetID:         "vm-host-f",
+		AssetKind:       "host",
+		Strategy:        "skill:inspect-vm-host",
+		CollectorMethod: "skill_script",
+		Status:          "pass",
+	})
 	store.PruneMonitorEngineHistory(time.Now().UTC())
 	if _, err := os.Stat(itemDir); !os.IsNotExist(err) {
 		t.Fatalf("artifact dir must be removed with the expired run, stat err=%v", err)

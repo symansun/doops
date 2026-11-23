@@ -451,6 +451,9 @@ func (h *GatewayHub) ExecuteMonitorRun(ctx context.Context, plan monitorRunPlan)
 		return run, allItems, err
 	}
 	run.MetricsWritten = written
+	// Retention runs after the payload is durable: a scan never races the run it
+	// just stored. It is throttled, so the common path costs one atomic read.
+	h.maybePruneMonitorRetention()
 	if auditID > 0 {
 		_ = h.store.FinishAudit(auditID, AuditFinish{
 			Status:         "success",

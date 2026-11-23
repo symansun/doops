@@ -1057,17 +1057,9 @@ func (h *GatewayHub) ReadMonitorResourceHistory(ctx context.Context, auth TokenA
 	return resp, nil
 }
 
+// PruneMonitorEngineHistory is the hourly fallback entrypoint. It always scans:
+// the throttle only applies to the post-run trigger, so a quiet gateway still
+// reclaims space (see monitor_retention.go).
 func (s *GatewayStore) PruneMonitorEngineHistory(now time.Time) {
-	if s == nil || s.db == nil {
-		return
-	}
-	cutoffMs := now.UTC().Add(-30 * 24 * time.Hour).UnixMilli()
-	artifactDirs := s.monitorArtifactDirsForPrune(cutoffMs)
-	_, _ = s.db.Exec(`DELETE FROM monitor_resource_snapshots WHERE collected_at_ms < ?`, cutoffMs)
-	_, _ = s.db.Exec(`DELETE FROM monitor_run_items WHERE run_id IN (SELECT id FROM monitor_runs WHERE started_at_ms < ?)`, cutoffMs)
-	_, _ = s.db.Exec(`DELETE FROM monitor_runs WHERE started_at_ms < ?`, cutoffMs)
-	// Remove the expired payload directories and reclaim now-empty date dirs.
-	for _, dir := range artifactDirs {
-		s.removeMonitorArtifactDir(dir)
-	}
+	s.PruneMonitorRetention(now, monitorRetentionPolicyFromEnv(), true)
 }

@@ -227,35 +227,27 @@ func (s *GatewayStore) readMonitorArtifactFiles(relDir string) (monitorArtifactC
 // removeMonitorArtifactDir deletes one item directory plus its now-empty run
 // and date parents.
 func (s *GatewayStore) removeMonitorArtifactDir(relDir string) {
+	_ = s.removeMonitorArtifactDirErr(relDir)
+}
+
+// removeMonitorArtifactDirErr is the retention path: it reports why a payload
+// directory survived so the scan can log it instead of failing silently.
+func (s *GatewayStore) removeMonitorArtifactDirErr(relDir string) error {
 	root := s.monitorArtifactRoot()
 	if root == "" {
-		return
+		return errMonitorArtifactStorageDisabled
 	}
 	clean, ok := cleanMonitorArtifactRelativeDir(relDir)
 	if !ok {
-		return
+		return errors.New("invalid monitor artifact directory")
 	}
 	dir := filepath.Join(root, filepath.FromSlash(clean))
-	_ = os.RemoveAll(dir)
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
 	// os.Remove only succeeds for empty directories, so shared run/date dirs
 	// are kept while any sibling item still exists.
 	_ = os.Remove(filepath.Dir(dir))
 	_ = os.Remove(filepath.Dir(filepath.Dir(dir)))
-}
-
-// monitorArtifactDirsForPrune lists file-backed directories about to expire.
-func (s *GatewayStore) monitorArtifactDirsForPrune(cutoffMs int64) []string {
-	rows, err := s.db.Query("SELECT DISTINCT artifact_dir FROM monitor_run_items WHERE artifact_dir != '' AND run_id IN (SELECT id FROM monitor_runs WHERE started_at_ms < ?)", cutoffMs)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	dirs := []string{}
-	for rows.Next() {
-		var dir string
-		if err := rows.Scan(&dir); err == nil && strings.TrimSpace(dir) != "" {
-			dirs = append(dirs, dir)
-		}
-	}
-	return dirs
+	return nil
 }
