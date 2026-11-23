@@ -215,3 +215,11 @@
 - 取到真实证据：run 45239179874（70a7727e）的 `Go tests` job **failure 604s**，`gh run view 45239179874 --log-failed` 只有一条红：`--- FAIL: TestAuditTimeRangePreservesSecondBoundary (0.04s)` + `FAIL github.com/user/doops/agent/internal/server 561.774s`。即 CI 红的原因是 **F5 这个产品缺陷本身**（1446b965 之前），不是 20 分钟超时；CI 机器上该包 561.774s，远低于 `ci.yml:42` 的 `-timeout 20m`，**我上一条记的「可能超时」是误判**（本地 1389s 是更慢的机器，且我混用了 QA-02 的本地观测）。
 - 由此：run 45236754183/45236684786/… 一路到 45239179874 的 failure 都是同一个 F5。1446b965（02:31）之后推送的 a8587ffc/f52a7888/b9229eb8 三个 run 的 `Go tests` 仍在跑（job 从 18:34:58Z 起），预期随修复转绿——**待绿后再关 F5，不提前宣布**。留下的真实问题只有一个：QA-02 在本机跑不完 `internal/server` 全量（1389s > 它的 20m 窗口），那是本机性能问题，不是 CI 风险。
 
+
+## 02:46 第 15 轮巡检：F5 在 CI 上确证转绿；外部会话开始切 v0.3.29 版本
+
+- 在跑 5，无后台 job，origin/main = 771755ea，ahead=0，dirty=15（前端会话与 INT-09 的未提交文件）。
+- **F5 正式关闭（CI 侧证据）**：run 45239914750（f52a7888，1446b965 之后）的 `Go tests` job **completed success**，即 604s 的那条红已随毫秒比较修复消失；修复前 run 45239179874 的失败点只有 `TestAuditTimeRangePreservesSecondBoundary (0.04s)`。本地 0.825s 绿 + CI 绿 + 原始守卫测试先红，三条证据齐。
+- **不是我的会话在切版本**：`771755ea docs(release): cut v0.3.29 with the audit purge boundary fix`（02:44，作者 `doops <doops@localhost>`，落款 Devin），推送了 tag `v0.3.29` 并触发 Release workflow（18:44:12Z 起 in_progress）。`1446b965`、`8416e673`（控制台终端停止）也是这条外部会话的产出。我不介入其发布流程，也不改 CHANGELOG（该文件与 tag 都在它手上），只记录状态。
+- **由此浮出一个需要用户拍板的事（D11）**：tag `v0.3.29` 的祖先已经包含我们整批巡检改造（SF-01…SF-16、INT-05/08），但 CHANGELOG 把它们整段留在 `## [Unreleased]`，0.3.29 只写了审计清理两条。也就是说这一版**代码进了 tag、更新内容没进版本**。要么把巡检改造明确顺延到下个版本并在发布说明里说清，要么现在补写进 0.3.29——这属于对外口径，我不替用户决定。
+- 队列里除已派在跑的 5 条外没有可开工任务：SF-11/D8（真实 target 端到端）、INT-06（同一前置）都等用户给凭据。本轮不空转派活。
