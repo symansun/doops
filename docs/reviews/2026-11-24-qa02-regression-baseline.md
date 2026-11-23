@@ -49,6 +49,14 @@
 ### F4 残留（低）前端死类型
 - lib/skills-registry.ts:16、:57-58、:219 仍定义 driver_mode: "builtin_strategy" | "agent_prompt"、strategy_id、SKILL_DRIVER_LABELS，全仓已无消费者（SF-05 已清组件侧）。建议删除（QA-02-2）。
 
+### F5 产品缺陷（中，两条基线均确定性复现）TestAuditTimeRangePreservesSecondBoundary
+- 复现：cd /tmp/qa02b-git/backend/agent && env -u GOROOT go test ./internal/server -run TestAuditTimeRangePreservesSecondBoundary -count=5 -v → 5/5 FAIL（0.04-0.06s）；同一用例在 b5765106 干净 clone 上 -count=2 也 2/2 FAIL，非本批引入。
+- 实际：backend/agent/internal/server/upgrade_audit_test.go:389: purge crossed the cutoff: count=2 err=<nil>（期望 deleted=1：只删除 base-1s 那条；实际删了 2 条，把 cutoff 之后 500ms 的那条也删了）。
+- 根因（已定位到代码）：backend/agent/internal/server/audit_purge.go:61/76 用字符串比较 "WHERE started_at < ?"，cutoff 由 backend/agent/internal/server/gateway_store.go:139-141 formatTime = RFC3339Nano 生成。base="2026-11-11T00:00:00Z"，base+500ms="2026-11-11T00:00:00.5Z"；字典序下 '.'(0x2E) < 'Z'(0x5A)，故 "…00:00:00.5Z" < "…00:00:00Z" 成立，cutoff 之后的行被误删。
+- 影响：审计保留清理可删除 cutoff 之后最多 <1s 的行（有小数秒的行被判为更早），属审计证据丢失；同一缺陷也会影响 PurgeExpiredAudit/PurgeLocalAuditBefore（同一字符串比较路径 audit_purge.go:61/76/219）。
+- 期望：按数值时间比较（如 started_at_ms 或 julianday/strftime 归一化），或把 cutoff 与存储值统一到固定小数位（如 9 位）后再比较；不要依赖 RFC3339Nano 的字典序。
+- 建议 owner：dev-audit（audit_purge.go 作者）；建议台账编号 QA-02-5（中）。
+
 > 共享树半成品：全部在 git archive 干净树执行，未遇到编译错误类半成品。
 
 ## 4. 未覆盖
@@ -62,7 +70,7 @@
 
 ## 5. 结论
 
-当前 main 不具备"本机一次性全绿"的发布级证据，但没有发现阻塞性产品缺陷。可发布依据：三模块 build/vet 全绿、除 internal/server 外全部包 ok、internal/server 三分组全 ok、Skill 自校验 20/20→34/34、契约测试真实检出 32 passed。红灯只有 F1（测试自身对 Go 版本敏感），F2/F3 为并发争用。发布判定建议以 CI（go1.25.14）为准。
+当前 main 不具备"本机一次性全绿"的发布级证据，但没有发现阻塞性产品缺陷。可发布依据：三模块 build/vet 全绿、除 internal/server 外全部包 ok、internal/server 三分组全 ok、Skill 自校验 20/20→34/34、契约测试真实检出 32 passed。红灯：F1（测试自身对 Go 版本敏感）、F5（审计清理 cutoff 边界误删，产品缺陷，建议发布前修复），F2/F3 为并发争用；另 b733e6fd 的全量跑在 02:38 完成（internal/server 1389s，即 20m 超时在 CI 同参下也可能触发，建议 CI 提高 timeout 或分片）。发布判定建议以 CI（go1.25.14）为准。
 
 ## 6. 复现清单
 
