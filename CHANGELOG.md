@@ -6,12 +6,11 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
-## [0.3.30] — 2026-11-24
+## [Unreleased]
 
 ### Fixed
 
-- 修复 v0.3.29 升级到该版本的 Agent 上 `exec`/`ask`/shell/k8s/helm 等远程操作全部返回 `target_manifest_unavailable` 的问题：数据库观测项的 Key 采用 `命名空间/服务/引擎` 层级格式，但快照校验的元数据令牌规则不允许 `/`，Agent 端 `invalid_agent_observations` 被 Gateway 折叠成统一错误。校验改为按 `/` 分段逐项校验层级 Key；名称与身份的校验规则不变。
-- 执行清单钉选降级：资源同步失败（迁移缺失、快照不可用等）不再否决 `exec`/`ask` 等执行调用——目标资源清单只用于审计引用与提示词事实，不是授权门控；同步失败时本次调用不带清单继续执行并在 Gateway 日志记录原因。
+- 目标清单卡片的资源类型补齐「容器」中文标签（后端观测到的 `container` 此前回退成英文 `container · Agent 观测`），「最后同步时间」更正为「最后观测时间」（展示的确实是 Agent 观测时间），并去掉「Agent 不支持同步」下与徽章矛盾的「已应用版本」一行。
 
 ## [0.3.31] — 2026-11-24
 
@@ -57,6 +56,13 @@
 - MySQL 后端下重复写入的冲突处理此前完全不可执行（SQLite 的 `ON CONFLICT` 语法在 MySQL 上直接报错）：31 处全部改为按原语义生成 `ON DUPLICATE KEY UPDATE`，冲突键沿用原语句目标，`DO NOTHING`、条件更新与 `max()/min()` 各自保持等价语义；SQLite 路径行为不变。
 - 修复 MySQL 后端下两处会**静默改坏数据**的写法：审计错误拼接 `error || '; ' || ?` 在 MySQL 默认 `sql_mode` 下是逻辑 OR，会把错误文本记成 0/1，现由方言层按后端生成 `CONCAT()`（NULL 语义与 `||` 一致，不用会跳过 NULL 的 `CONCAT_WS`）；四处 `INSERT OR IGNORE` 改为自赋值 `ON DUPLICATE KEY UPDATE col = col`，已存在的行不再被覆盖（SQLite 路径行为不变）。
 
+
+## [0.3.30] — 2026-11-24
+
+### Fixed
+
+- 修复 v0.3.29 升级到该版本的 Agent 上 `exec`/`ask`/shell/k8s/helm 等远程操作全部返回 `target_manifest_unavailable` 的问题：数据库观测项的 Key 采用 `命名空间/服务/引擎` 层级格式，但快照校验的元数据令牌规则不允许 `/`，Agent 端 `invalid_agent_observations` 被 Gateway 折叠成统一错误。校验改为按 `/` 分段逐项校验层级 Key；名称与身份的校验规则不变。
+- 执行清单钉选降级：资源同步失败（迁移缺失、快照不可用等）不再否决 `exec`/`ask` 等执行调用——目标资源清单只用于审计引用与提示词事实，不是授权门控；同步失败时本次调用不带清单继续执行并在 Gateway 日志记录原因。
 
 ## [0.3.29] — 2026-11-24
 
