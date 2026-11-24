@@ -360,3 +360,12 @@
 - **它如实上报的缺口照记**：k8s-cluster（kubectl/RBAC）、受管 SSH 与网站巡检的真实网络与凭据、Helm/exec 与 credential materialization 确实需要真集群，报告 §8.2 已列；CI 无需改动（`ci.yml:40-42` 在 `backend/agent` 跑 `go test ./timeout 20m ./...`，本用例自动纳入）。它推 `main` 时把本地的他人提交 `e7b5b262` 一并推上，属同分支正常前进，无妨。
 - **它顺带指出一个真问题，我当轮消掉（SF-22）**：Skill 运行的 `monitor_run_items.metrics_json` 恒为空（SF-09 退役原生采集器后全仓无代码给 `item.Metrics` 赋值），但 item JSON 仍对外暴露 `metrics: {}` —— 读方很容易把空对象解释成「本次没有指标」，而真实指标在产物 `metrics[]` 与 `inspection_metric_points`。裁决：**不删列**（退役前的历史 run 仍需如实回放），改为把读方契约写进 spec §4.2；同时确认 `monitor_engine_store.go:301/:525` 只是读写回放，没有隐藏的第二来源。
 - 状态：HEAD `2139e26c`（INT-17 的代码已进 main，等它的真机报告），INT-17 会话仍在跑。工作树里 `components/app-dialog.tsx`、`components/files-panel.tsx`、`lib/files-errors.ts`(+test) 仍是外部前端会话的改动，不碰。
+
+## 09:37 第 44 轮：INT-17 预验通过，我把它的两条声明钉成可证伪的断言（golden 位置钉 + 会话时区腿）
+
+- **INT-17 代码已在 main**（`2139e26c`，6 文件 +393/−18），报告未到，我不等报告先独立复验：`git archive 2139e26c` → /tmp/int17v，`go build ./...` 与 `go vet ./internal/server/` 均 rc=0；起 `mysql:8.4`（端口 13321，空 root 口令）后 `-run GatewayMySQL` **139 PASS / 2 SKIP**（两个 SKIP 是 `credential_store_migration.go:88`、`gateway_store_grants.go:136` 的迁移专用表，合法），无静默跳过。
+- **它的 golden 冲突报得对，我裁决维持不动**：剩余 `julianday` 只有 1 处，是 `gateway_store_schema.go:495` 的 `audit_events.started_at_ms` 毫秒回填，派活时明令不许改。它没有擅自改，而是把 golden 写成 `julianday: 1` 并加注释等我裁决。但**数量钉是弱钉**：删掉那处回填、在别处新增一处 `julianday`，数量仍是 1、测试仍绿。我补了位置钉（`6a4cbd2e`，test-only +7 行）：唯一一处必须位于 `gateway_store_schema.go`。反向实验（`/tmp/int17rev`）把回填改 `strftime('%s',...)` 并在 `cluster_inventory.go:177` 加 `julianday(status)` → 红，报文精确点名 `cluster_inventory.go:177`。
+- **它的核心声明原本不可观测，我补了会话时区腿**（`6f978c5a`，+26 行）。它避开 `NOW()`/`UNIX_TIMESTAMP(column)` 的理由是「跟随连接时区」，这个理由完全正确，但容器默认 UTC 下**这条性质在测试里根本看不见**：把 MySQL 分支换回 `UNIX_TIMESTAMP(column)`，默认时区下全套照样绿。新腿在 `SetMaxOpenConns(1)` 钉住的连接上 `SET time_zone = '+08:00'`，先断言 `@@session.time_zone` 真的是 `+08:00`（连接被换掉就失败，不许静默），再重跑五个固定时钟探针断言同一组 id。反向实验：`gatewayEpochSecondsFor` 返回 `UNIX_TIMESTAMP(expression)` → 只在 +08:00 腿红（`token freshness ... selected 1,3,5, want 1,3,4,5`、`diagnostic ... selected 1,2,3,4, want 3`），默认时区仍绿。
+- **教训（写给自己）**：① 数量型 golden 必须配位置钉，否则「豁免一处」会变成「任意一处可豁免」；② 凡「与时区/环境无关」这类声明，如果默认环境恰好让错误实现也正确，就必须显式改到那个环境里断言，否则断言测的是默认环境而不是设计；③ 复验不只看绿，要看「把实现改坏之后还绿不绿」——这两条都是先绿后红才成立。
+- 已发消息给 integrator-gm（`fe43156b-62ff-435a-80b4-ad8ae8ea4569`）：先 fetch+rebase 再提交，不许硬覆盖这两个 sha，报告里要把它们算成 lead 的产出并引用 +08:00 腿这条证据。
+- 状态：origin/main = `6f978c5a`，ahead/behind 0；工作树只剩 `backend/deploy/fleet-20261116/first-upgrade.py`（外部 Devin 会话在改，不碰）。INT-17 仍等它的报告来关单。
