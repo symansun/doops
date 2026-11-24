@@ -576,6 +576,9 @@ K8S Agent 完全不可用时，通过另一个已授权且可访问同集群的 
    main 的检查（Go、Web 和 `backend/test` 契约测试分别运行，全部通过才发布）。Web job 的冻结安装保留 pnpm 依赖供应链策略；Go job 成功不代表 Web 安装或发布门禁通过。
    secret scan 只在 branch push/PR 上运行——tag 和手工发布没有增量 commit 范围，
    全历史扫描会把历史上已存在的测试 fixture 当成泄漏，tag 指向的提交在合入 main 时已扫描。
+   同一分支上被后续 push 取代的那次运行没有价值：`ci.yml` 的 `concurrency` 按事件与 ref 分组，
+   `push` 会被同分支更新的 push 取消（最新树已包含旧提交），`workflow_call`（发布门禁）与
+   `pull_request` 永远不被取消。被取消的运行不是通过，最新树仍需自己跑绿。
 3. **构建**：`backend/scripts/build-cli.sh --all` 在固定 `go1.25.14` builder 身份下产出
    `doops-{darwin,linux}-{amd64,arm64}`、`doops-gateway-linux-amd64` 和 `checksums.txt`；
    发布前校验 sha256、`release=<tag> commit=<commit>` 身份和 `doops.sh/cli-contract/v3`。
