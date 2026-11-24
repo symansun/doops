@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,11 @@ type GatewayStore struct {
 	db    *sql.DB
 	rdb   *sql.DB
 	dbDir string
+
+	// The sensitive filter is file-first so it stays outside the frozen
+	// SQLite/MySQL schema contract. The mutex guards the cache and its file.
+	sensitiveMu     sync.Mutex
+	sensitiveFilter *sensitiveFilterState
 }
 
 // readDB returns the read-only SQLite connection pool when open, falling back

@@ -18,6 +18,10 @@ export function agentErrorMessage(raw: string | null | undefined): string | null
   const message = trimmed.replace(CONNECT_CODE_PREFIX, "").trim()
   if (!message) return "智能体连接失败"
   if (message === AGENT_MODEL_MISSING) return AGENT_MODEL_MISSING_HINT
+  // Gateway 敏感词过滤命中提示词时不回显命中词，只返回稳定类别。
+  if (/\bsensitive_prompt_blocked\b/.test(message)) {
+    return "提示词包含敏感内容，已被 Gateway 拦截。请修改提示词，或联系管理员调整敏感词规则或白名单"
+  }
   return message
 }
 

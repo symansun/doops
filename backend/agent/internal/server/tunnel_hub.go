@@ -187,6 +187,8 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	admin("/v1/admin/instances/archive", h.HandleAdminInstanceArchive)
 	admin("/v1/admin/instances/unarchive", h.HandleAdminInstanceUnarchive)
 	admin("/v1/admin/proxy-routes", h.HandleAdminProxyRoutes)
+	admin("/v1/admin/sensitive-filter", h.HandleAdminSensitiveFilter)
+	admin("/v1/admin/sensitive-filter/", h.HandleAdminSensitiveFilter)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if h.IsDraining() {
 			http.Error(w, "draining", http.StatusServiceUnavailable)

@@ -50,6 +50,7 @@ import { assetRequest } from "@/lib/assets"
 import type { TargetRef } from "@/lib/console-refresh"
 import { AdminConfigDispatch } from "./admin-config-dispatch"
 import { ProxyRoutesPanel } from "./proxy-routes-panel"
+import { SensitiveFilterPanel } from "./sensitive-filter-panel"
 import { useAppDialog } from "./app-dialog"
 import { RefreshIcon, PlusIcon, TrashIcon, BanIcon, CheckIcon, CopyIcon } from "./icons"
 
@@ -102,6 +103,7 @@ export function AdminConsole({
         {tab === "users" && <UsersView session={session} />}
         {tab === "grants" && <GrantsView session={session} />}
         {tab === "tokens" && <TokensView session={session} />}
+        {tab === "sensitive" && <SensitiveFilterPanel session={session} />}
         {tab === "proxy" && <ProxyRoutesPanel session={session} />}
       </div>
     </div>
