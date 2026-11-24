@@ -353,3 +353,10 @@
 - **D8/SF-11 转向**：不再等外部 target 与 canary 凭据——隧道两端都是本仓库代码，改成本机进程自建链路（真 HTTP/WS 编解码，不绕内部函数）即可覆盖同一批契约，外部集群差异另行如实标注未覆盖。这条转向是把「等用户给凭据」变成「自己能验」的关键，之前卡了两轮是判断错，不是条件不足。
 - **已派出两条**：INT-17（integrator-gm，批次 3A 时间/授权函数，`julianday` 3 + `unixepoch` 4，含 `cluster_inventory.go:206`）与 SF-11（新子会话，本机隧道 e2e）。两条都带拥有/禁改文件、验收命令、反向实验清单与时间上限。
 - 状态：HEAD 6d3e7d7c + 本轮台账提交；工作树另有三处前端改动（`components/app-dialog.tsx`、`components/files-panel.tsx`、`lib/files-errors.ts`(+test)）属外部前端会话，不碰。
+
+## 09:30 第 43 轮：SF-11 关单（本机真实隧道 e2e 闭合红线 5），顺手消掉它上报的读方陷阱
+
+- **SF-11 完成**（`630c14bc`，2 文件 +484/−1）。它没有绕过隧道：真 `GatewayStore` + 真 `httptest` TCP 端口 + 真 Agent 运行时（`NewGateway()` + `ServeGatewayWebSocketConnWithReady`，与 `cmd/agent` 同一入口），链路是 enrollment token 注册 → 用户 grant → `POST /v1/monitor/runs` 下发 `inspect-vm-host` → 回传 → `/v1/monitor/runs/<id>` 读回。**我独立复验**（`git archive 630c14bc` → /tmp/sf11v）：build/vet rc=0，`-run TestGatewayTunnelE2E -v` 4/4 PASS（3.425s，`run=run_35bc002281c61824 status=critical checks=5 metrics=9`），并 grep 确认测试只经 `httptest`+`websocket.DefaultDialer`，无 `dispatcher.`/`executeMonitor*` 直调。四组反向实验都真红：断隧道 64.6ms 返回 `failed/target_offline`（它断言 <10s，挂住即失败）、未授权 target 403 `monitor_target_forbidden` 且不建 run、异 target enrollment 401 `agent_enrollment_auth_failed`、删产物目录后 run/item 均 `artifact_state=missing` 而 `/v1/monitor/metrics` 仍按 run_id 可读。
+- **它如实上报的缺口照记**：k8s-cluster（kubectl/RBAC）、受管 SSH 与网站巡检的真实网络与凭据、Helm/exec 与 credential materialization 确实需要真集群，报告 §8.2 已列；CI 无需改动（`ci.yml:40-42` 在 `backend/agent` 跑 `go test ./timeout 20m ./...`，本用例自动纳入）。它推 `main` 时把本地的他人提交 `e7b5b262` 一并推上，属同分支正常前进，无妨。
+- **它顺带指出一个真问题，我当轮消掉（SF-22）**：Skill 运行的 `monitor_run_items.metrics_json` 恒为空（SF-09 退役原生采集器后全仓无代码给 `item.Metrics` 赋值），但 item JSON 仍对外暴露 `metrics: {}` —— 读方很容易把空对象解释成「本次没有指标」，而真实指标在产物 `metrics[]` 与 `inspection_metric_points`。裁决：**不删列**（退役前的历史 run 仍需如实回放），改为把读方契约写进 spec §4.2；同时确认 `monitor_engine_store.go:301/:525` 只是读写回放，没有隐藏的第二来源。
+- 状态：HEAD `2139e26c`（INT-17 的代码已进 main，等它的真机报告），INT-17 会话仍在跑。工作树里 `components/app-dialog.tsx`、`components/files-panel.tsx`、`lib/files-errors.ts`(+test) 仍是外部前端会话的改动，不碰。

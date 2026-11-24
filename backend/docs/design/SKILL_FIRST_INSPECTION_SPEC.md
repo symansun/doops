@@ -231,6 +231,7 @@ required_mcp: doops
 
 - Gateway 解析产物时，自动从 `metrics[]`（或合法数值型顶层指标字段）提取数值点，写入：
   `inspection_metric_points(id, collected_at_ms, run_id, schedule_id, cluster, instance, skill_slug, metric_key, metric_label, value, unit, status)`。
+- **`items[].metrics` 不是 Skill 巡检的指标来源**（SF-09 退役原生采集器后全仓已无代码给 item 级 `metrics_json` 赋值）：Skill 运行的 `items[].metrics` 恒为 `{}`，读方不得把空对象解释为「本次没有指标」；真实指标只有两处——产物 `artifact.json` 的 `metrics[]`，以及上面这张时序表（`GET /v1/monitor/metrics`）。该列保留只为让退役前写入的历史 run 仍能如实回放。
 - 当 `skill_slug` 输出标准主机/容器指标键（如 `cpu_percent`、`memory_percent`、`disk_percent`、`load_1m`、`uptime_seconds`、`memory_used_bytes`、`memory_total_bytes`、`disk_used_bytes`、`disk_total_bytes`）时，自动桥接写入 `monitor_resource_snapshots`，持续驱动「态势感知」真实快照。
 - 对外提供只读查询接口：
   `GET /v1/monitor/metrics?skill=<slug>&target=<cluster/instance>&range=<1h|6h|24h|7d|30d>`
