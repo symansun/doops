@@ -2099,4 +2099,30 @@ func TestGatewayMySQLTimeComparisonsExecuteOnMySQL(t *testing.T) {
 		}
 		t.Logf("token freshness/%s -> %q (%s)", name, ids, query)
 	}
+	// INT-17 claims the rendering is independent of the session time zone, which is
+	// the whole reason it avoided NOW() and UNIX_TIMESTAMP(column). Prove it: the
+	// same probes under +08:00 must select the same rows. A naive
+	// UNIX_TIMESTAMP(column) translation reinterprets the stored RFC3339 text in
+	// the session zone and shifts every comparison by the offset.
+	mysqlDB.SetMaxOpenConns(1)
+	if _, err := mysqlDB.ExecContext(ctx, "SET time_zone = '+08:00'"); err != nil {
+		t.Fatalf("set the MySQL session time zone: %v", err)
+	}
+	var sessionZone string
+	if err := mysqlDB.QueryRowContext(ctx, "SELECT @@session.time_zone").Scan(&sessionZone); err != nil {
+		t.Fatalf("read the MySQL session time zone: %v", err)
+	}
+	if sessionZone != "+08:00" {
+		t.Fatalf("the MySQL session time zone is %q, want +08:00", sessionZone)
+	}
+	for _, p := range probes {
+		query, args := p.build(gatewaySQLDialect("mysql"))
+		ids, err := gatewayMySQLTestCollectIDs(t, mysqlDB, query, args...)
+		if err != nil {
+			t.Fatalf("%s/mysql+08:00: %s: %v", p.name, query, err)
+		}
+		if ids != p.want {
+			t.Errorf("%s/mysql+08:00 selected %q, want %q", p.name, ids, p.want)
+		}
+	}
 }
