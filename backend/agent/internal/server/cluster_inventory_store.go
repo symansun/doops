@@ -83,7 +83,7 @@ func saveInventoryObservation(tx *sql.Tx, row inventoryCluster) error {
 			return err
 		}
 		if _, err := tx.Exec(`DELETE FROM cluster_inventory_namespaces WHERE cluster=? AND instance=?
- AND name NOT IN (SELECT value FROM json_each(?))`, row.Cluster, row.Instance, string(listed)); err != nil {
+ AND name NOT IN (` + gatewayJSONEachValuesSQL(gatewayDialectStore, "?") + `)`, row.Cluster, row.Instance, string(listed)); err != nil {
 			return err
 		}
 	}

@@ -219,7 +219,7 @@ func (h *GatewayHub) applyRuntime(ctx context.Context, auth TokenAuth, r runtime
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`DELETE FROM asset_runtime_bindings WHERE cluster=? AND instance=? AND namespace=? AND workload_uid NOT IN (SELECT key FROM json_each(?))`, r.Cluster, r.Instance, r.Namespace, string(raw))
+		_, err = tx.Exec(`DELETE FROM asset_runtime_bindings WHERE cluster=? AND instance=? AND namespace=? AND workload_uid NOT IN (` + gatewayJSONEachKeysSQL(gatewayDialectStore, "?") + `)`, r.Cluster, r.Instance, r.Namespace, string(raw))
 		if err != nil {
 			return err
 		}
@@ -239,7 +239,8 @@ func (h *GatewayHub) applyRuntime(ctx context.Context, auth TokenAuth, r runtime
 				return inventoryFailure{503, "runtime_source_offline"}
 			}
 			var valid bool
-			err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM inventory_business_deployments WHERE cluster=? AND instance=? AND namespace=? AND application=? AND verified_at<>'') AND EXISTS(SELECT 1 FROM asset_runtime_snapshots x,json_each(x.objects) o WHERE x.cluster=? AND x.instance=? AND x.namespace=? AND x.asset_id=? AND o.key=? AND json_extract(o.value,'$.kind')<>'Pod')`, r.Cluster, r.Instance, r.Namespace, r.Application, r.Cluster, r.Instance, r.Namespace, r.AssetID, r.Workload).Scan(&valid)
+			objectFrom, objectKey, objectKind := gatewayJSONObjectJoinSQL(gatewayDialectStore, "asset_runtime_snapshots x", "x.objects", "o")
+			err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM inventory_business_deployments WHERE cluster=? AND instance=? AND namespace=? AND application=? AND verified_at<>'') AND EXISTS(SELECT 1 FROM `+objectFrom+` WHERE x.cluster=? AND x.instance=? AND x.namespace=? AND x.asset_id=? AND `+objectKey+`=? AND `+objectKind+`<>'Pod')`, r.Cluster, r.Instance, r.Namespace, r.Application, r.Cluster, r.Instance, r.Namespace, r.AssetID, r.Workload).Scan(&valid)
 			if err != nil {
 				return err
 			}

@@ -105,10 +105,12 @@ func validInventoryCapacity(n *float64) bool { return n == nil || (*n > 0 && !ma
 
 // A single read snapshot controls both membership and the host reference. An
 // inventory record can outlive the gateway's offline agent-status retention.
-const machineInventoryColumns = `m.asset_id,m.name,m.kind,m.address,m.cpu_count,m.memory_gib,m.disk_gib,
- (SELECT json_group_array(t.tag ORDER BY t.tag) FROM inventory_machine_tags t WHERE t.asset_id=m.asset_id),
+func machineInventoryColumns(dialect gatewaySQLDialect) string {
+	return `m.asset_id,m.name,m.kind,m.address,m.cpu_count,m.memory_gib,m.disk_gib,
+ (SELECT ` + gatewayJSONOrderedArraySQL(dialect, "t.tag", "t.tag") + ` FROM inventory_machine_tags t WHERE t.asset_id=m.asset_id),
  COALESCE(host.asset_id,''),m.cluster,m.instance,m.revision,
  CASE WHEN m.cluster='' THEN 'unbound' ELSE COALESCE(a.status,'offline') END,COALESCE(a.last_seen,'')`
+}
 const machineStatusJoin = ` LEFT JOIN agent_status a ON a.cluster=m.cluster AND a.instance=m.instance `
 
 func scanInventoryMachine(row interface{ Scan(...any) error }) (m inventoryMachine, err error) {
@@ -117,7 +119,36 @@ func scanInventoryMachine(row interface{ Scan(...any) error }) (m inventoryMachi
 	if err == nil {
 		err = json.Unmarshal([]byte(tagJSON), &m.Tags)
 	}
+	if err == nil {
+		// Order belongs to the reader: SQLite's json_group_array sorts inline,
+		// MySQL's JSON_ARRAYAGG cannot, so both paths are normalized here.
+		sort.Strings(m.Tags)
+		m.LoginAccounts = normalizeLoginAccounts(m.LoginAccounts)
+	}
 	return
+}
+
+// normalizeLoginAccounts returns the account array sorted by username. MySQL
+// aggregates without ORDER BY, so the array arrives in an arbitrary order; the
+// JSON object field order is the struct's, which matches the json_object()
+// spelling both dialects emit.
+func normalizeLoginAccounts(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var accounts []struct {
+		Username     string `json:"username"`
+		CredentialID string `json:"credential_id"`
+	}
+	if err := json.Unmarshal(raw, &accounts); err != nil {
+		return raw
+	}
+	sort.Slice(accounts, func(i, j int) bool { return accounts[i].Username < accounts[j].Username })
+	out, err := json.Marshal(accounts)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 func listInventoryMachines(tx *sql.Tx, auth TokenAuth, tags ...string) ([]inventoryMachine, error) {
@@ -130,7 +161,7 @@ func listInventoryMachines(tx *sql.Tx, auth TokenAuth, tags ...string) ([]invent
 	rows, err := tx.Query(inventoryGrants+`, visible AS (
  SELECT m.* FROM inventory_machines m WHERE EXISTS (SELECT 1 FROM permitted p
  WHERE p.is_admin=1 OR (m.cluster<>'' AND m.instance<>'' AND p.cluster IN ('*',m.cluster) AND p.instance IN ('*',m.instance))))
- SELECT `+machineInventoryColumns+`, CASE WHEN (SELECT is_admin FROM actor)=1 THEN `+machineLoginAccountsJSON+` END FROM visible m LEFT JOIN visible host ON host.asset_id=m.host_asset_id `+machineStatusJoin+where+` ORDER BY m.asset_id`, args...)
+ SELECT `+machineInventoryColumns(gatewayDialectStore)+`, CASE WHEN (SELECT is_admin FROM actor)=1 THEN `+machineLoginAccountsSQL(gatewayDialectStore)+` END FROM visible m LEFT JOIN visible host ON host.asset_id=m.host_asset_id `+machineStatusJoin+where+` ORDER BY m.asset_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +180,7 @@ func listInventoryMachines(tx *sql.Tx, auth TokenAuth, tags ...string) ([]invent
 const machineByIDFrom = ` FROM inventory_machines m LEFT JOIN inventory_machines host ON host.asset_id=m.host_asset_id ` + machineStatusJoin + ` WHERE m.asset_id=?`
 
 func getInventoryMachine(tx *sql.Tx, id string) (inventoryMachine, error) {
-	return scanInventoryMachine(tx.QueryRow(`SELECT `+machineInventoryColumns+`, NULL`+machineByIDFrom, id))
+	return scanInventoryMachine(tx.QueryRow(`SELECT `+machineInventoryColumns(gatewayDialectStore)+`, NULL`+machineByIDFrom, id))
 }
 
 func insertInventoryMachine(tx *sql.Tx, m machineInventoryInput) error {
@@ -242,5 +273,5 @@ func saveInventoryMachine(tx *sql.Tx, m machineInventoryInput, revision *int64) 
 		}
 	}
 	// The mutation was authorized by requireInventoryAdmin in this transaction.
-	return scanInventoryMachine(tx.QueryRow(`SELECT `+machineInventoryColumns+`, `+machineLoginAccountsJSON+machineByIDFrom, m.AssetID))
+	return scanInventoryMachine(tx.QueryRow(`SELECT `+machineInventoryColumns(gatewayDialectStore)+`, `+machineLoginAccountsSQL(gatewayDialectStore)+machineByIDFrom, m.AssetID))
 }

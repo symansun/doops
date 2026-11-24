@@ -313,6 +313,55 @@ func gatewayExistingTableCountSQL(dialect gatewaySQLDialect, tableCount int) str
 	return "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN (" + placeholders + ")"
 }
 
+// gatewayJSONEachValuesSQL expands a JSON array of scalars into one row per
+// element, so a Go-side list can drive IN (...) / NOT IN (...). SQLite's
+// json_each is a table-valued function; MySQL has no such syntax and needs
+// JSON_TABLE with an explicit scalar column type.
+func gatewayJSONEachValuesSQL(dialect gatewaySQLDialect, expression string) string {
+	if dialect == gatewayDialectMySQL {
+		return "SELECT jt.value FROM JSON_TABLE(" + expression + ", '$[*]' COLUMNS(value VARCHAR(512) PATH '$[0]')) AS jt"
+	}
+	return "SELECT value FROM json_each(" + expression + ")"
+}
+
+// gatewayJSONEachKeysSQL expands a JSON object into one row per member key.
+// json_each yields the key column directly; MySQL must project JSON_KEYS first,
+// because JSON_TABLE iterates array elements, not object members.
+func gatewayJSONEachKeysSQL(dialect gatewaySQLDialect, expression string) string {
+	if dialect == gatewayDialectMySQL {
+		return "SELECT jk.k FROM JSON_TABLE(JSON_KEYS(" + expression + "), '$[*]' COLUMNS(k VARCHAR(512) PATH '$')) AS jk"
+	}
+	return "SELECT key FROM json_each(" + expression + ")"
+}
+
+// gatewayJSONObjectJoinSQL renders a join that walks a stored JSON object and
+// exposes each member key plus its $.kind value. The dialects differ twice:
+// SQLite iterates (key,value) pairs, while MySQL can only iterate keys and must
+// read the member back through an escaped JSON path (JSON_QUOTE keeps keys that
+// contain dots or quotes addressable).
+func gatewayJSONObjectJoinSQL(dialect gatewaySQLDialect, table, expression, alias string) (from, key, kind string) {
+	if dialect == gatewayDialectMySQL {
+		keyColumn := alias + "_key"
+		return table + " JOIN JSON_TABLE(JSON_KEYS(" + expression + "), '$[*]' COLUMNS(" + keyColumn + " VARCHAR(512) PATH '$')) " + alias + " ON TRUE",
+			alias + "." + keyColumn,
+			"JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(" + expression + ", CONCAT('$.' , JSON_QUOTE(" + keyColumn + "))), '$.kind'))"
+	}
+	return table + ", json_each(" + expression + ") " + alias, alias + ".key", "json_extract(" + alias + ".value,'$.kind')"
+}
+
+// gatewayJSONOrderedArraySQL aggregates values into a JSON array. SQLite orders
+// inside the aggregate; MySQL's JSON_ARRAYAGG accepts no ORDER BY and its row
+// order is not a contract, so the MySQL form aggregates unordered and every
+// caller that needs order sorts after decoding (order is owned by the reader).
+// COALESCE keeps the empty-set '[]' that json_group_array returns and
+// JSON_ARRAYAGG does not.
+func gatewayJSONOrderedArraySQL(dialect gatewaySQLDialect, expression, order string) string {
+	if dialect == gatewayDialectMySQL {
+		return "COALESCE(JSON_ARRAYAGG(" + expression + "), JSON_ARRAY())"
+	}
+	return "json_group_array(" + expression + " ORDER BY " + order + ")"
+}
+
 // gatewayUpdateIgnoreSQL renders SQLite's UPDATE OR IGNORE. MySQL spells the
 // same statement UPDATE IGNORE: a row whose update violates a constraint is
 // skipped instead of failing the statement, and RowsAffected stays 0 for it, so

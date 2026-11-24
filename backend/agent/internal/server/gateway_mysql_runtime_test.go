@@ -69,6 +69,8 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 		gatewayMySQLIssueUpdateOrIgnore:    "the one statement renders through gatewayUpdateIgnoreSQL: UPDATE IGNORE on MySQL skips the conflicting row and leaves RowsAffected 0",
 		gatewayMySQLIssueAggregateFilter:   "the two counts render through gatewayFilteredCountSQL: COALESCE(SUM(CASE WHEN c THEN 1 ELSE 0 END), 0)",
 		gatewayMySQLIssueNullSafeParameter: "the one comparison renders through gatewayNullSafeEqualsSQL: MySQL <=> keeps NULL matching NULL",
+		gatewayMySQLIssueJSONEach:          "the five expansions render through gatewayJSONEachValuesSQL / gatewayJSONEachKeysSQL / gatewayJSONObjectJoinSQL: MySQL JSON_TABLE over '$[*]' (or JSON_KEYS first, for object members) replaces SQLite's table-valued json_each",
+		gatewayMySQLIssueJSONAggregate:     "the two aggregates render through gatewayJSONOrderedArraySQL: MySQL JSON_ARRAYAGG has no ORDER BY, so the reader sorts after decoding and both dialects return the same order",
 	}
 	want := map[gatewayMySQLRuntimeIssueCode]int{
 		// INT-19 retired numbered_parameter, update_or_ignore,
@@ -80,8 +82,9 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 		// gatewayUpdateIgnoreSQL (UPDATE IGNORE on MySQL), FILTER through
 		// gatewayFilteredCountSQL (COALESCE(SUM(CASE ...), 0)) and IS ?
 		// through gatewayNullSafeEqualsSQL (<=>).
-		gatewayMySQLIssueJSONEach:      5,
-		gatewayMySQLIssueJSONAggregate: 2,
+		// INT-20 retired json_each and json_group_array from the source: the
+		// scalar/keys/object expansions render through JSON_TABLE and the two
+		// aggregates through JSON_ARRAYAGG with reader-owned ordering.
 		// The only remaining julianday is the one-shot audit_events
 		// backfill in gateway_store_schema.go; INT-17 excluded it, so the
 		// runtime sites are zero and the golden stays at one (see the

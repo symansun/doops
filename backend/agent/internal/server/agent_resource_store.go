@@ -172,7 +172,7 @@ func storeObservationEpoch(ctx context.Context, tx *sql.Tx, cluster, instance st
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE agent_observations SET misses=MIN(misses+1, ?) WHERE cluster=? AND instance=? AND kind IN (SELECT value FROM json_each(?))`, threshold, cluster, instance, string(complete)); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE agent_observations SET misses=MIN(misses+1, ?) WHERE cluster=? AND instance=? AND kind IN (` + gatewayJSONEachValuesSQL(gatewayDialectStore, "?") + `)`, threshold, cluster, instance, string(complete)); err != nil {
 		return err
 	}
 	stmt, err := tx.PrepareContext(ctx, gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO agent_observations(cluster,instance,kind,key,details,first_seen,last_seen,generation,misses) VALUES (?,?,?,?,?,?,?,?,0)", target: []string{"cluster", "instance", "kind", "key"}, set: []string{"details=excluded.details", "last_seen=excluded.last_seen", "generation=excluded.generation", "misses=0"}}))

@@ -124,7 +124,7 @@ func loadManifestAudit(ctx context.Context, db *sql.DB, events []AuditEvent) err
 	if err != nil {
 		return err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT audit_id,manifest_revision,resource_refs_json FROM agent_resource_audit WHERE audit_id IN (SELECT value FROM json_each(?))`, string(encoded))
+	rows, err := db.QueryContext(ctx, `SELECT audit_id,manifest_revision,resource_refs_json FROM agent_resource_audit WHERE audit_id IN (` + gatewayJSONEachValuesSQL(gatewayDialectStore, "?") + `)`, string(encoded))
 	if err != nil {
 		return err
 	}

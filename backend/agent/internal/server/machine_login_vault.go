@@ -16,8 +16,13 @@ const machineVaultScope CredentialScope = "machine_login"
 
 var ErrMachineLoginConflict = errors.New("a different password is already stored for this account")
 
-const machineLoginAccountsJSON = `(SELECT json_group_array(json_object('username', a.username, 'credential_id', a.credential_id) ORDER BY a.username)
+// machineLoginAccountsSQL aggregates the visible login accounts. SQLite orders
+// inside the aggregate; MySQL cannot, so scanInventoryMachine sorts the decoded
+// array and both dialects return the same order to callers.
+func machineLoginAccountsSQL(dialect gatewaySQLDialect) string {
+	return `(SELECT ` + gatewayJSONOrderedArraySQL(dialect, "json_object('username', a.username, 'credential_id', a.credential_id)", "a.username") + `
  FROM inventory_machine_login_accounts a WHERE a.asset_id=m.asset_id)`
+}
 
 func (s *GatewayStore) machineLoginMAC(purpose, text string) (string, error) {
 	key, err := s.secretKey()
