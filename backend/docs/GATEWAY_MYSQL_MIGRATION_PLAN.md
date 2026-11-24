@@ -131,6 +131,26 @@ The schema coverage guard scanned `CREATE TABLE` statements in the package sourc
 - 坏 JSON 两方言都在解析处拒绝（MySQL `Invalid JSON text`，SQLite `malformed JSON`），所以不需要 SQL 级 `json_valid` 前置守卫：`TestGatewayMySQLJSONRejectsMalformedInput` 把这条写死，应用层 Go 校验保持原样。
 - 反向实验：把 JSON_TABLE 根路径 `$[*]` 改成 `$[0]` 后 `scalar IN selected [2], want [2 3]`；去掉 `normalizeLoginAccounts` 的排序后 `normalized login accounts = [{"username":"zeta","credential_id":"c2"},{"username":"alpha","credential_id":"c1"}], want [{"alpha"...},{"zeta"...}]`。
 
+## Runtime wiring (INT-22)
+
+The rendering work above makes every audited statement acceptable to MySQL, but none of them has ever
+executed there: `OpenGatewayStore` (`backend/agent/internal/server/gateway_store.go:32`) still opens only
+SQLite, and `migrate()` (`gateway_store_schema.go:9`) runs `PRAGMA journal_mode=WAL` before any table DDL,
+which MySQL rejects with 1064. The wiring judgement, the minimal slice and the bootstrap plan live in
+[2026-11-24-mysql-wiring-plan.md](../../docs/reviews/2026-11-24-mysql-wiring-plan.md).
+
+- Entry point, per-store dialect and bootstrap are the three structural blocks; isolation/retry and the
+  schema upgrade path are the two semantic ones.
+- The minimal runnable slice is audit + grants + users, about 170 lines across five files, with zero changes
+  to `gateway_store_audit.go`, `gateway_store_grants.go` or `gateway_store_users.go`.
+- `installGatewayMySQLSchema` is the bootstrap, but it only accepts an empty schema and cannot own a version
+  table (the copier requires the exact SQLite table set); the migration ledger has to be decided first.
+- The audit purge needs a two-statement rewrite: MySQL rejects both `MATERIALIZED` and a subquery over the
+  table being deleted (1093), and `INDEXED BY` is SQLite-only.
+- The guards stay green while wiring is absent (`-run 'TestGatewayMySQL(RuntimeSQLAudit|ColumnsMatchExport|
+  UniqueKeysMatchExport|InsertsNameColumns|SchemaCoversRuntimeDDL)$'` passes), which is exactly why they
+  cannot substitute for a real MySQL run.
+
 ## 批次计划（第三批及以后）
 
 Third-batch classification of all 95 runtime-audit sites lives in
