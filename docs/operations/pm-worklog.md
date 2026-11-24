@@ -419,3 +419,21 @@
 - **变异实验真红**：把 `gatewayMySQLIdentifier` 的反引号包裹去掉（`parts[index] = strings.ReplaceAll(...)`）→ `TestGatewayMySQLIdentifierRendering` FAIL，报 `gateway_mysql_identifier_test.go:20/23/26/40/43`（`MySQL identifier rendering = use, want \`use\``、`prior lookup MySQL rendering does not quote the use column`），该次全量 111.861s FAIL；复原后绿。
 - **INT-19 已派 integrator-gm**（7 个站点类型 + 1 个需先论证的物化 CTE）：numbered_parameter 4（`?N` 必须重排参数顺序，唯一会静默错行的类型）、update_or_ignore 1、null_safe_parameter 1（`IS ?`→`<=>`）、aggregate_filter 1（`FILTER`→`SUM(CASE ...)`）、`audit_purge.go:52` 的 `AS MATERIALIZED` + `json_extract`（MySQL 无 MATERIALIZED，merge 后两次求值会改变 DELETE 可见性，要求先论证再改；JSON 部分要么成对渲染要么整体豁免，不许半改）。验收要求每站点真机**行值断言**与四组反向实验。70 分钟上限。
 - 队列：INT-06 仍由 dev-viewer-01 在跑（控制台同步态本机链路 + 浏览器截图）；INT-20（3B JSON）等 INT-19。
+
+## 10:40 发布：控制台 0.3.31 上线到 doops.aiedulab.cn（停止呈现修复）
+
+- **动因**：线上点「停止」后红字「远端终态未确认…(execution_outcome_unknown)」让用户以为命令失败；Go 侧 `uncertainIfInterrupted` 的 fail-closed 不改（`gateway_client_cancellation_test.go:51/:91` 断言），只改控制台呈现（提交 e7b5b262）。
+- **发版动作**：`CHANGELOG.md:16` 把 `[Unreleased]` 收敛为 `## [0.3.31] — 2026-11-24`；`docker buildx build --builder desktop-linux --platform linux/amd64 --provenance=false --sbom=false -f Dockerfile.web` 推送 `docker.cnb.cool/l8ai/ai/doops.sh/web@sha256:5e2fdf3a9e330a2ade395e130d0453f84f64ddf32248bb7fdac30b2f304f0dff`（tags v0.3.31 / commit-74af39e6），本地起容器自检 /console 200 后由 `backend/scripts/deploy-web-console.sh --host Gateway` 换容器，回滚点 `doops-web-rollback-20261124T023153Z-74096`。
+- **发布提交**：本地 main 落后（origin/main=191f636f）且工作树有他人 Go 改动，改用临时 worktree 只提交 CHANGELOG → 推送为 `47946471 docs(release): 发布 0.3.31`；本机 main 仍停在 74af39e6（等价重复提交，下次 rebase 会被丢弃）。
+- **线上证据**：`https://doops.aiedulab.cn/console` 200 / 86696 字节（与本机镜像同尺寸）；页面含 0.3.31；抓 42 个 JS chunk 确认新文案已生效（`/_next/static/chunks/0sdcz1206_vsv.js` 含「远端已确认取消，等待终态」「停止没有生效：」，`/_next/static/chunks/1hs302v3lmxgp.js` 含「已停止：Gateway 已确认取消」）。
+- **真机复测**（ego-browser，doops-zheyin/node-239）：`sleep 45 && echo LATE_MARKER` 点停止 → 「— 已请求停止…—」→「— 远端已确认取消，等待终态 —」→ 黄色「已停止：Gateway 已确认取消，但没有回传最终输出…」，输入解锁，45s 后无 LATE_MARKER；截图 /var/folders/dz/0ff06chn6_306l4l6m1bhtyc0000gn/T/ego-browser-shot-375704.png。
+- **待评审（未改）**：Gateway 在确认进程组已终止后是否把 Agent 的 `-32007 operation canceled` 转发成 canceled，而非 unknown。
+
+## 10:39 第 51 轮：INT-06 关单（四态真实浏览器证据），偏差立项 SF-24 交回 dev-viewer-01
+
+- **INT-06 关单**（dev-viewer-01，`49e558ae` 1 文件 +134）：链路完全由本仓库代码在本机自建——`git worktree add --detach /tmp/int06-src origin/main` → build `doops-gateway`/`doops-agent` → `gateway serve -port 42322 -db /tmp/int06/gw.db -monitor-tick 0` → `enroll create`/`user create admin`/`grant -admin` → Agent 连 `ws://127.0.0.1:42322 -cluster local -instance local-1` → `PORT=3014 pnpm dev` + ego-browser。没有 docker、没有集群、没有线上凭据，这条路径以后做前端验收可复用。
+- **两个环境坑（写进报告，值得复用）**：① 原生 SQLite 库没有资产表，`target-manifest` 会先返回 `target_manifest_migration_required`；迁移须在 `cluster_inventory.sql`/`business_inventory.sql`/`machine_inventory.sql` 之后重跑 4 个文件，而 `runAgentResourceSync()` 在 `agentResourceSyncReady()` 为 false 时直接 return（`agent_resource_store.go:57-75`），所以**必须先迁移再重连 Agent**（同一 token 可复用）。② 用 `127.0.0.1:3014` 打开时 Next dev 以跨源为由拒发 `/_next/webpack-hmr`，页面永久停在「正在恢复登录会话...」；必须用 `localhost:3014`。
+- **四态证据**：已同步（`资源清单 [已同步] 清单版本 4 / 已应用版本 4`，curl `applied_revision 4 == 4, online true`）、Agent 离线（杀 agent 后 `[Agent 离线]`、`online false`）、等待同步（构造 + 一次真实 `5|4` 在 12s 内被 Agent 追平）、不支持同步（`[Agent 不支持同步]` + 「重新同步」disabled）。判据就是 `components/target-manifest-card.tsx:21-28` 的 `manifestStatus()` 顺序 `!online` → `!supported` → `applied < revision` → 已同步。未覆盖如实记：自然发生的等待同步瞬时帧（<10s）、真实旧 Agent 的 unsupported、资源五态只验 `discovered`。
+- **三处偏差没有留在报告里**：`resourceKinds` 有 `container_engine` 但后端 kind 是 `container` → UI 回退英文「container · Agent 观测」；「最后同步时间」渲染的是 `last_observed_at`；unsupported 态仍显示「已应用版本」与徽章矛盾。按闭环第 6 条立项 **SF-24** 派回 dev-viewer-01（messageId b16b686e-270e-46a1-a926-9874546db98f）：修三处 + 把纯逻辑抽到 `lib/target-manifest.ts` 并写测试、**把测试加进 `package.json` 的 `test:console` 清单**（SF-21 踩过的坑：不加就进不了 CI），两组反向实验 + 本机链路真浏览器复验，40 分钟上限。
+- **git 分支分叉处置**：本地 HEAD 曾停在 `edb9e81c`（叠在外部会话作废的 `74af39e6` 上），远端是同内容 cherry-pick 的 `49e558ae`。先确认 `git diff edb9e81c 49e558ae` 为空（两棵树逐字节相同），再 `git reset --soft 49e558ae` 把 HEAD 指回远端提交，index 无残留、ahead/behind 0 0，integrator-gm 正在改的 8 个文件未受任何影响。
+- 状态：`origin/main = 49e558ae`；在跑 INT-19（integrator-gm）与 SF-24（dev-viewer-01），文件不重叠。
