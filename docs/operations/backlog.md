@@ -9,6 +9,7 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
+| INT-22 | MySQL 存储模式接线可行性判定与分步计划（含 materialized CTE 两步改写方案） | integrator-gm | docs/reviews/2026-11-24-mysql-wiring-plan.md、GATEWAY_MYSQL_MIGRATION_PLAN.md 一小节 | 11:16 | 进行中（只出判定与计划，禁止改运行代码；60 分钟） |
 
 ## 待办（排队/待决策）
 
