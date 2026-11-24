@@ -47,7 +47,7 @@ export const DEPLOY_SECTIONS: { id: DeploySection; label: string; needsTarget: b
 export const assetKinds = { database: "数据库", website: "网站", k8s: "Kubernetes", image: "镜像", credentials: "凭据" } as const
 export type CatalogKind = keyof typeof assetKinds
 
-export type AdminTab = "scope" | "instances" | "config" | "users" | "grants" | "tokens" | "proxy"
+export type AdminTab = "scope" | "instances" | "config" | "users" | "grants" | "tokens" | "sensitive" | "proxy"
 
 export const ADMIN_TABS: { id: AdminTab; label: string }[] = [
   { id: "instances", label: "实例" },
@@ -55,6 +55,7 @@ export const ADMIN_TABS: { id: AdminTab; label: string }[] = [
   { id: "users", label: "用户" },
   { id: "grants", label: "权限" },
   { id: "tokens", label: "令牌" },
+  { id: "sensitive", label: "敏感词" },
   { id: "proxy", label: "代理路由" },
   { id: "scope", label: "Agent管理" },
 ]

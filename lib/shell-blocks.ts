@@ -427,6 +427,10 @@ function classifyShellFailure(
   if (classifyAgentAdmission(raw).kind === "unknown") {
     return { kind: "unknown", text: `远端终态未确认：请先核对实际状态，不要直接重放原命令（${raw}）` }
   }
+  // Gateway 的敏感词过滤发生在派发前；命中词不回显，只返回稳定类别。
+  if (/\bsensitive_command_blocked\b/.test(raw)) {
+    return { kind: "blocked", text: "命令包含敏感内容，已被 Gateway 拦截。请修改命令，或联系管理员调整敏感词规则或白名单" }
+  }
   const blocked = /blocked_command\(([^)]+)\):\s*(.*)/.exec(raw)
   if (blocked) return { kind: "blocked", text: `Agent 拒绝执行（${blocked[1]}）：${blocked[2]}` }
   const upgrade = gatewayUpgradeStatus(raw)

@@ -201,6 +201,22 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 		return nil
 	}
+	for _, segment := range sensitiveFilterSegmentsForTool(params.Name, params.Arguments) {
+		ruleID, blocked := h.store.MatchSensitiveText(auth.UserID, cluster, instance, segment.text, segment.scope)
+		if !blocked {
+			continue
+		}
+		category := "sensitive_command_blocked"
+		if segment.scope == sensitiveScopePrompt {
+			category = "sensitive_prompt_blocked"
+		}
+		// The rule text stays private; the caller only learns the category.
+		log.Printf("[gateway] sensitive_filter_blocked: category=%s rule=%s user=%s target=%s/%s",
+			category, ruleID, auth.UserID, cluster, instance)
+		finishAudit("blocked", category, "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32003, category))
+		return nil
+	}
 	agent := h.registry.Wait(ctx, cluster, instance, h.targetReconnectGrace(params.Name))
 	if agent == nil || agent.Cluster != cluster || agent.Instance != instance {
 		errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
