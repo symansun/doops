@@ -65,13 +65,12 @@ func (s *GatewayStore) agentResourceSyncReady(ctx context.Context) bool {
 		"cluster_inventory_namespaces", "inventory_business_systems", "inventory_business_deployments",
 		"inventory_resource_catalog", "inventory_agent_assets",
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")
 	args := make([]any, len(names))
 	for i, name := range names {
 		args[i] = name
 	}
 	var count int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN ("+placeholders+")", args...).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, gatewayExistingTableCountSQL(gatewayDialectStore, len(names)), args...).Scan(&count); err != nil {
 		return false
 	}
 	return count == len(names)
@@ -299,8 +298,8 @@ func (s *GatewayStore) saveAgentResourceApplied(ctx context.Context, agent *Gate
 
 func declaredAgentResources(ctx context.Context, tx *sql.Tx, cluster, instance string) ([]declaredAgentResource, error) {
 	// Project named columns only. Assignment alone does not identify the host or cluster observed by this Agent.
-	const query = `SELECT kind,id,name,key,identity,credential_type,use FROM (
-		 SELECT 'machine' AS kind, m.asset_id AS id, m.name AS name, 'host' AS key, COALESCE(b.host_sha256,'') AS identity, '' AS credential_type, '' AS use
+	query := `SELECT kind,id,name,key,identity,credential_type,` + gatewayUseColumn + ` FROM (
+		 SELECT 'machine' AS kind, m.asset_id AS id, m.name AS name, 'host' AS key, COALESCE(b.host_sha256,'') AS identity, '' AS credential_type, '' AS ` + gatewayUseColumn + `
 		 FROM inventory_machines m JOIN inventory_agent_assets aa ON aa.asset_id=m.asset_id AND aa.kind='machine' AND aa.cluster=?1 AND aa.instance=?2
 		 LEFT JOIN machine_diagnostic_bindings b ON b.asset_id=m.asset_id AND b.cluster=?1 AND b.instance=?2
 		 UNION ALL SELECT 'cluster', c.asset_id, c.name, 'current', c.kube_system_uid, '', '' FROM cluster_inventory_sources c WHERE c.cluster=?1 AND c.instance=?2

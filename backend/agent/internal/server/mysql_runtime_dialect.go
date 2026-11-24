@@ -283,6 +283,36 @@ func gatewayEpochSecondsFor(dialect gatewaySQLDialect, expression string) string
 	return "CAST(strftime('%s', " + expression + ") AS INTEGER)"
 }
 
+// gatewayIdentifierFor renders one identifier for the dialect. SQLite keeps the
+// caller's spelling bare because every name the Gateway uses is a plain
+// identifier there; MySQL renders a backticked name, which is the only spelling
+// MySQL 8.4 accepts for a reserved word such as the credential use column.
+func gatewayIdentifierFor(dialect gatewaySQLDialect, name string) string {
+	if dialect == gatewayDialectMySQL {
+		return gatewayMySQLIdentifier(name)
+	}
+	return name
+}
+
+// gatewayUseColumn renders the credential "use" column for the dialect the live
+// store speaks. USE is reserved in MySQL, so the bare spelling is a syntax error
+// there (ERROR 1064); SQLite keeps the statements byte-identical to before.
+var gatewayUseColumn = gatewayIdentifierFor(gatewayDialectStore, "use")
+
+// gatewayExistingTableCountSQL renders a count of how many of the named tables
+// exist in the schema this connection reads. SQLite keeps its catalog in
+// sqlite_schema; MySQL exposes information_schema.tables for DATABASE(). Both
+// count 0 for a missing table, so callers keep a fail-closed comparison: a
+// missing table can never be read as present, and the count query itself does
+// not need the table to exist.
+func gatewayExistingTableCountSQL(dialect gatewaySQLDialect, tableCount int) string {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", tableCount), ",")
+	if dialect == gatewayDialectMySQL {
+		return "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (" + placeholders + ")"
+	}
+	return "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN (" + placeholders + ")"
+}
+
 func (upsert gatewayUpsert) render(dialect gatewaySQLDialect) string {
 	if dialect == gatewayDialectMySQL {
 		return upsert.mysqlSQL()
@@ -325,7 +355,15 @@ func gatewayMySQLUpsertInsert(insert string) string {
 	columns := strings.Split(match[3], ",")
 	quoted := make([]string, 0, len(columns))
 	for _, column := range columns {
-		quoted = append(quoted, gatewayMySQLIdentifier(strings.TrimSpace(column)))
+		column = strings.TrimSpace(column)
+		// A column that already carries backticks is left alone: the literal
+		// spells the reserved word itself, which SQLite accepts as a quoted
+		// identifier, and double-quoting would produce invalid MySQL.
+		if strings.HasPrefix(column, "`") && strings.HasSuffix(column, "`") {
+			quoted = append(quoted, column)
+			continue
+		}
+		quoted = append(quoted, gatewayMySQLIdentifier(column))
 	}
 	return match[1] + gatewayMySQLIdentifier(match[2]) + " (" + strings.Join(quoted, ", ") + ")" + insert[len(match[0]):]
 }

@@ -76,16 +76,32 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 		// backfill in gateway_store_schema.go; INT-17 excluded it, so the
 		// runtime sites are zero and the golden stays at one (see the
 		// absent-map comment above).
-		gatewayMySQLIssueJulianDay:           1,
-		gatewayMySQLIssueMaterializedCTE:     1,
-		gatewayMySQLIssueNullSafeParameter:   1,
-		gatewayMySQLIssueSQLiteIntrospection: 8,
+		gatewayMySQLIssueJulianDay:         1,
+		gatewayMySQLIssueMaterializedCTE:   1,
+		gatewayMySQLIssueNullSafeParameter: 1,
+		// INT-18: 8 -> 5. The three runtime existence guards render through
+		// gatewayExistingTableCountSQL (information_schema.tables on MySQL,
+		// sqlite_schema on SQLite). The remaining five are exempt: the
+		// audit-index probe (audit_indexes.go), the one-shot schema migration
+		// probes (credential_store_migration.go, gateway_store_schema.go) and
+		// the PRAGMA calls that configure SQLite itself (gateway_store.go,
+		// gateway_store_schema.go) only ever run on the SQLite store.
+		gatewayMySQLIssueSQLiteIntrospection: 5,
 		gatewayMySQLIssueSQLiteExplainPlan:   13,
 		gatewayMySQLIssueCreateIndexIfAbsent: 29,
 		gatewayMySQLIssueDropIndexIfAbsent:   2,
 		gatewayMySQLIssueAutoIncrement:       8,
 		gatewayMySQLIssuePartialIndex:        1,
-		gatewayMySQLIssueReservedUse:         12,
+		// INT-18: 12 -> 4. The eight runtime sites (declaredAgentResources and
+		// the credential materialization/verification statements) render the
+		// use column through gatewayIdentifierFor, which backticks it on MySQL.
+		// The four left are DDL: MySQL's schema authority is
+		// gateway_mysql_schema.sql (parity + runtime-DDL coverage guards), so
+		// editing the SQLite migration text would change no MySQL table, and
+		// gateway_store_schema.go / credential_store_migration.go only create
+		// SQLite tables. The rule stays in the table, so a bare runtime use
+		// reappearing anywhere fails here.
+		gatewayMySQLIssueReservedUse: 4,
 	}
 	for code, found := range counts {
 		expected, wanted := want[code]
@@ -112,6 +128,26 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 	// somewhere else would keep the count at one and stay green.
 	if locs := locations[gatewayMySQLIssueJulianDay]; len(locs) == 1 && !strings.Contains(locs[0], "gateway_store_schema.go") {
 		t.Errorf("MySQL runtime audit attributes the remaining julianday to %s, want the audit_events backfill in gateway_store_schema.go", locs[0])
+	}
+
+	// INT-18 pins the two counts it lowered to their exact remaining files, so a
+	// future site cannot hide behind a swap that keeps the total unchanged.
+	for _, loc := range locations[gatewayMySQLIssueReservedUse] {
+		if !strings.Contains(loc, "gateway_store_schema.go") && !strings.Contains(loc, "credential_store_migration.go") {
+			t.Errorf("MySQL runtime audit attributes a remaining reserved_use to %s, want SQLite-only DDL", loc)
+		}
+	}
+	introspectionFloor := map[string]bool{
+		"audit_indexes.go":              true,
+		"credential_store_migration.go": true,
+		"gateway_store.go":              true,
+		"gateway_store_schema.go":       true,
+	}
+	for _, loc := range locations[gatewayMySQLIssueSQLiteIntrospection] {
+		file := loc[:strings.Index(loc, ":")]
+		if !introspectionFloor[file] {
+			t.Errorf("MySQL runtime audit attributes a remaining sqlite_introspection to %s, want the SQLite-only probes", loc)
+		}
 	}
 
 	for _, rule := range gatewayMySQLRuntimeIssueRules {

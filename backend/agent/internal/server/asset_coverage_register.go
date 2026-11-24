@@ -30,9 +30,9 @@ type coverageMembership struct {
 type coverageKey struct{ kind, id string }
 
 func registerSchema(tx *sql.Tx) (bool, error) {
-	var ok bool
-	err := tx.QueryRow(`SELECT count(*)=2 FROM sqlite_schema WHERE type='table' AND name IN ('asset_coverage_registers','asset_coverage_cluster_versions')`).Scan(&ok)
-	return ok, err
+	var count int
+	err := tx.QueryRow(gatewayExistingTableCountSQL(gatewayDialectStore, 2), "asset_coverage_registers", "asset_coverage_cluster_versions").Scan(&count)
+	return count == 2, err
 }
 func coverageClusterSources(tx *sql.Tx) (map[coverageTarget]string, error) {
 	rows, err := tx.Query(`SELECT cluster,instance,asset_id FROM cluster_inventory_sources`)

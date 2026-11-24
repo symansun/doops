@@ -110,8 +110,8 @@ func loadManifestAudit(ctx context.Context, db *sql.DB, events []AuditEvent) err
 	if len(events) == 0 {
 		return nil
 	}
-	var installed bool
-	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='agent_resource_audit')`).Scan(&installed); err != nil || !installed {
+	var installed int
+	if err := db.QueryRowContext(ctx, gatewayExistingTableCountSQL(gatewayDialectStore, 1), "agent_resource_audit").Scan(&installed); err != nil || installed != 1 {
 		return err
 	}
 	ids := make([]int64, len(events))

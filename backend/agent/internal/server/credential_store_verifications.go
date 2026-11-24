@@ -56,16 +56,16 @@ func recordCredentialVerificationWith(execer auditExecer, verification Credentia
 	if verification.VerifiedAt.IsZero() {
 		verification.VerifiedAt = time.Now().UTC()
 	}
-	_, err = execer.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO credential_verifications\n\t\t(id, credential_id, version_id, grant_id, use, context_key, request_json, evidence_json, status, verified_at)\n\t\tVALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', ?)", target: []string{"version_id", "grant_id", "use", "context_key"}, set: []string{"id = excluded.id", "request_json = excluded.request_json", "evidence_json = excluded.evidence_json", "status = excluded.status", "verified_at = excluded.verified_at"}}),
+	_, err = execer.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO credential_verifications\n\t\t(id, credential_id, version_id, grant_id, `use`, context_key, request_json, evidence_json, status, verified_at)\n\t\tVALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', ?)", target: []string{"version_id", "grant_id", "use", "context_key"}, set: []string{"id = excluded.id", "request_json = excluded.request_json", "evidence_json = excluded.evidence_json", "status = excluded.status", "verified_at = excluded.verified_at"}}),
 		verification.ID, verification.CredentialID, verification.VersionID, verification.GrantID,
 		verification.Use, contextKey, string(requestJSON), string(evidenceJSON), formatTime(verification.VerifiedAt))
 	return err
 }
 
 func (s *GatewayStore) CredentialVerifications(credentialID, versionID string) ([]CredentialVerification, error) {
-	rows, err := s.db.Query(`SELECT id, credential_id, version_id, grant_id, use, request_json, evidence_json, status, verified_at
+	rows, err := s.db.Query(`SELECT id, credential_id, version_id, grant_id, `+gatewayUseColumn+`, request_json, evidence_json, status, verified_at
 		FROM credential_verifications WHERE credential_id = ? AND version_id = ? AND status = 'verified'
-		ORDER BY grant_id, use, context_key`, strings.TrimSpace(credentialID), strings.TrimSpace(versionID))
+		ORDER BY grant_id, `+gatewayUseColumn+`, context_key`, strings.TrimSpace(credentialID), strings.TrimSpace(versionID))
 	if err != nil {
 		return nil, err
 	}

@@ -75,9 +75,7 @@ func (s *GatewayStore) RecordCredentialMaterializationIntent(
 		return CredentialMaterializationRecord{}, err
 	}
 	var prior credentialMaterializationPrior
-	err = tx.QueryRow(`SELECT status, error_category, request_json, evidence_json
-		FROM credential_materializations
-		WHERE version_id = ? AND grant_id = ? AND use = ? AND context_key = ?`,
+	err = tx.QueryRow(credentialMaterializationPriorSQLFor(gatewayDialectStore),
 		record.VersionID, record.GrantID, record.Use, record.ContextKey,
 	).Scan(&prior.status, &prior.errorCategory, &prior.requestJSON, &prior.evidenceJSON)
 	switch {
@@ -86,7 +84,7 @@ func (s *GatewayStore) RecordCredentialMaterializationIntent(
 	case !errors.Is(err, sql.ErrNoRows):
 		return CredentialMaterializationRecord{}, err
 	}
-	if _, err := tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO credential_materializations\n\t\t(id, credential_id, version_id, grant_id, use, context_key, request_json,\n\t\t evidence_json, status, error_category, created_at, updated_at)\n\t\tVALUES (?, ?, ?, ?, ?, ?, ?, '{}', 'pending', '', ?, ?)", target: []string{"version_id", "grant_id", "use", "context_key"}, set: []string{"id = excluded.id", "request_json = excluded.request_json", "evidence_json = '{}'", "status = 'pending'", "error_category = ''", "updated_at = excluded.updated_at"}}),
+	if _, err := tx.Exec(credentialMaterializationIntentUpsertFor(gatewayDialectStore).render(gatewayDialectStore),
 		record.ID, record.CredentialID, record.VersionID, record.GrantID, record.Use,
 		record.ContextKey, string(requestJSON), formatTime(now), formatTime(now)); err != nil {
 		return CredentialMaterializationRecord{}, err
@@ -95,6 +93,39 @@ func (s *GatewayStore) RecordCredentialMaterializationIntent(
 		return CredentialMaterializationRecord{}, err
 	}
 	return record, nil
+}
+
+// credentialMaterializationPriorSQLFor renders the prior-record lookup. The
+// credential use column goes through the dialect layer because MySQL reserves
+// USE; the SQLite spelling stays bare.
+func credentialMaterializationPriorSQLFor(dialect gatewaySQLDialect) string {
+	return `SELECT status, error_category, request_json, evidence_json
+		FROM credential_materializations
+		WHERE version_id = ? AND grant_id = ? AND ` + gatewayIdentifierFor(dialect, "use") + ` = ? AND context_key = ?`
+}
+
+// credentialMaterializationIntentUpsertFor renders the intent upsert. The insert
+// text quotes the use column itself, because
+// gatewayMySQLUpsertInsert quotes the whole column list for MySQL.
+func credentialMaterializationIntentUpsertFor(dialect gatewaySQLDialect) gatewayUpsert {
+	return gatewayUpsert{
+		insert: "INSERT INTO credential_materializations\n\t\t(id, credential_id, version_id, grant_id, `use`, context_key, request_json,\n\t\t evidence_json, status, error_category, created_at, updated_at)\n\t\tVALUES (?, ?, ?, ?, ?, ?, ?, '{}', 'pending', '', ?, ?)",
+		target: []string{"version_id", "grant_id", "use", "context_key"},
+		set:    []string{"id = excluded.id", "request_json = excluded.request_json", "evidence_json = '{}'", "status = 'pending'", "error_category = ''", "updated_at = excluded.updated_at"},
+	}
+}
+
+// credentialMaterializationCleanedSQLFor renders the cleanup update used by
+// revocation. byVersion selects the version scope; both spellings filter on the
+// use column, which MySQL requires quoted.
+func credentialMaterializationCleanedSQLFor(dialect gatewaySQLDialect, byVersion bool) string {
+	scope := "credential_id"
+	if byVersion {
+		scope = "version_id"
+	}
+	return `UPDATE credential_materializations
+		SET status = 'cleaned', error_category = '', updated_at = ?
+		WHERE ` + scope + ` = ? AND grant_id = ? AND ` + gatewayIdentifierFor(dialect, "use") + ` = ? AND context_key = ?`
 }
 
 type credentialRowQuerier interface {
@@ -259,18 +290,14 @@ func (s *GatewayStore) MarkCredentialMaterializationFailed(intent CredentialMate
 }
 
 func (s *GatewayStore) MarkCredentialMaterializationCleaned(request CredentialMaterializeRequest) error {
-	_, err := s.db.Exec(`UPDATE credential_materializations
-		SET status = 'cleaned', error_category = '', updated_at = ?
-		WHERE version_id = ? AND grant_id = ? AND use = ? AND context_key = ?`,
+	_, err := s.db.Exec(credentialMaterializationCleanedSQLFor(gatewayDialectStore, true),
 		formatTime(time.Now().UTC()), request.VersionID, request.GrantID, request.Scope.Use,
 		credentialMaterializationContextKey(request))
 	return err
 }
 
 func (s *GatewayStore) MarkCredentialMaterializationContextCleaned(request CredentialMaterializeRequest) error {
-	_, err := s.db.Exec(`UPDATE credential_materializations
-		SET status = 'cleaned', error_category = '', updated_at = ?
-		WHERE credential_id = ? AND grant_id = ? AND use = ? AND context_key = ?`,
+	_, err := s.db.Exec(credentialMaterializationCleanedSQLFor(gatewayDialectStore, false),
 		formatTime(time.Now().UTC()), request.CredentialID, request.GrantID, request.Scope.Use,
 		credentialMaterializationContextKey(request))
 	return err
@@ -286,7 +313,7 @@ func (s *GatewayStore) CredentialMaterializations(
 	versionID string,
 	grantID string,
 ) ([]CredentialMaterializationRecord, error) {
-	query := `SELECT id, credential_id, version_id, grant_id, use, context_key,
+	query := `SELECT id, credential_id, version_id, grant_id, ` + gatewayUseColumn + `, context_key,
 		request_json, evidence_json, status, error_category, created_at, updated_at
 		FROM credential_materializations
 		WHERE credential_id = ? AND status NOT IN ('cleaned', 'not_applied')`
@@ -299,7 +326,7 @@ func (s *GatewayStore) CredentialMaterializations(
 		query += ` AND grant_id = ?`
 		args = append(args, strings.TrimSpace(grantID))
 	}
-	query += ` ORDER BY grant_id, use, context_key, updated_at DESC, created_at DESC`
+	query += ` ORDER BY grant_id, ` + gatewayUseColumn + `, context_key, updated_at DESC, created_at DESC`
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
