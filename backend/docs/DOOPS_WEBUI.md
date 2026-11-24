@@ -418,3 +418,36 @@ and runs, so tool rows are not rendered a second time inline. Titles that repeat
 workspace path or translated tool label are omitted by the SDK; the patch keeps
 textual progress stages/messages on the tool row, including progress without a
 fraction.
+
+## 本机自建链路验收（Gateway + Agent + Console）
+
+控制台里与隧道、目标清单、资源同步有关的行为，都可以用本仓库代码在本机拉起一条完整链路来验收，
+不需要真实集群、docker 或线上凭据。2026-11-24 的 Console 同步状态验收就是这样做的
+（`docs/reviews/2026-11-24-int06-console-sync-browser-check.md`），四态都取到了真实浏览器证据。
+
+步骤（模块根 `backend/agent`，Go 命令一律 `env -u GOROOT go ...`）：
+
+1. 在干净树里构建：`git worktree add --detach /tmp/webui-src origin/main`，然后
+   `env -u GOROOT go build -o /tmp/webui-gw ./cmd/gateway`（或 `backend/gateway`）与
+   `env -u GOROOT go build -o /tmp/webui-agent ./cmd/agent`。
+2. 起 Gateway：`/tmp/webui-gw serve -port 42322 -db /tmp/webui/gw.db -monitor-tick 0`，
+   设置 `DOOPS_GATEWAY_SECRET_KEY`；随后 `enroll create` 取注册令牌、`user create <name>` 建账号、
+   `grant -user <name> -admin` 授平台管理员。
+3. 起 Agent：`/tmp/webui-agent -gateway-url ws://127.0.0.1:42322 -cluster local -instance local-1 -enroll-token <token>`，
+   日志出现 reverse tunnel connected 即接通。
+4. 起控制台：`PORT=3014 env -u GOROOT pnpm dev`。
+
+两个必须知道的坑：
+
+- 原生 SQLite 库没有资产台账表，`target-manifest` 会先返回 `target_manifest_migration_required`。
+  按 `backend/docs/migrations/*.sql` 迁移时，`cluster_inventory.sql`、`business_inventory.sql`、
+  `machine_inventory.sql` 必须在其余 4 个文件之前执行；而 `runAgentResourceSync()` 在
+  `agentResourceSyncReady()` 为 false 时直接 return（`agent_resource_store.go`），
+  所以**先迁移，再重连 Agent**（同一注册令牌可复用）。
+- 用 `127.0.0.1:3014` 打开时 Next dev 会以跨源为由拒发 `/_next/webpack-hmr`，页面永久停在
+  「正在恢复登录会话...」而不 hydrate；必须用 `localhost:3014` 打开。
+
+目标清单卡的四态判据是 `components/target-manifest-card.tsx` 的 `manifestStatus()` 顺序：
+`!online` → Agent 离线、`!supported` → Agent 不支持同步、`applied_revision < manifest.revision`
+→ 等待同步，否则已同步。验收时对应地：杀 Agent 看离线态；用 `applied_revision=0` 构造等待同步
+（真实窗口从 5|4 到追平通常不到 12 秒，截图往往来不及）；用 `supported=0` 构造不支持同步。
