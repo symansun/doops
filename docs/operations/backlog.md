@@ -9,12 +9,16 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
+| INT-17 | MySQL 方言批次 3A：时间/授权函数（`julianday` 3 + `unixepoch` 4，含 `cluster_inventory.go:206` 的 token 过期授权） | integrator-gm | `backend/agent/internal/server/mysql_runtime_dialect.go`、`gateway_mysql_runtime_test.go`、承载 7 处站点的运行期 `.go`、`backend/docs/GATEWAY_MYSQL_MIGRATION_PLAN.md` | 09:08 | 在跑：接入方言层成对渲染，golden 3→0 与 4→0，真机 8.4 用固定时间戳双库同判，三组反向实验必须红；禁碰 `components/`、`lib/`、`package.json`、`pnpm-lock.yaml`、`CHANGELOG.md`、`skills_builtin/**`、`testdata/skills_builtin_verify/**` |
+| SF-11 | 真实 Gateway↔Agent 隧道端到端（SF-06 §5 红线5「未覆盖」）：本机进程自建链路，真 HTTP/WS 编解码 | dev-e2e-local | 只许新增 `backend/agent/internal/server/gateway_tunnel_e2e_test.go` | 09:08 | 在跑：先 30 分钟可行性判定，再实现「注册 target → 授权 → 下发巡检 → 执行 → 产物与指标回传 → `/v1/monitor/runs/<id>` 读回」；4 组反向实验（断隧道、未授权、产物目录删除、指标读回）必须红；发现生产缺陷只报不改；75 分钟上限 |
 
 ## 待办（排队/待决策）
 
 | 编号 | 任务 | 依赖 | 备注 |
 |---|---|---|---|
-| SF-11 | 真实 Gateway↔Agent 隧道端到端验收（SF-06 §5 红线5「未覆盖」） | 需要可用 target 与凭据 | 未派：需先确认有可连的 agent 与允许的 canary 凭据，不能编造证据 |
+| INT-18 | MySQL 方言批次 3D：引号/保留字与守卫（`reserved_use` 12 处等） | INT-17 | 按 INT-16 施工图；3A 关单后再派，避免两条同时改 `mysql_runtime_dialect.go` |
+| INT-19 | MySQL 方言批次 3C：参数重排（`numbered_parameter` 4 处必须单独真机行值断言，`?N`→`?` 会静默错位参数顺序） | INT-17、INT-18 | 不许并入 3D（错位不会报错，只会取错值） |
+| INT-20 | MySQL 方言批次 3B：JSON（`json_each` 5 + `json_group_array` 2，`JSON_ARRAYAGG` 无聚合内 ORDER BY，语义差最大） | INT-19 | 最后做；`materialized_cte` 单列不并批 |
 | INT-06 | Console 侧展示 agent_resource 同步状态 | INT-05 | **已阻塞（02:38）**：`target-manifest-card.tsx` 已具备四态同步状态 + 五态资源徽章 + 八类资源（`manifestStatus()`/`resourceStates`/`resourceKinds`），由 `console-shell.tsx:64/:936` 渲染；剩余「TS 校验 + 浏览器实测」需真实 target，与 SF-11/D8 同条件 |
 | — | `CHANGELOG.md` [Unreleased] 统一补写（SF-04/SF-05/SF-09/INT-05 的用户可见变化） | SF-05/SF-09 完成 | 该文件被前端会话占用，由我或前端会话统一写，避免共享索引互扫 |
 

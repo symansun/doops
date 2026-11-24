@@ -49,6 +49,27 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 | Gateway MySQL migration (offline schema, copier, runtime SQL audit) | `backend/docs/GATEWAY_MYSQL_MIGRATION_PLAN.md` |
 | Skill-First inspection & capability framework | `backend/docs/design/SKILL_FIRST_INSPECTION_SPEC.md` |
 | Release notes (console 更新内容) | `CHANGELOG.md` |
+| Task ledger, patrol log, open decisions | `docs/operations/backlog.md`, `docs/operations/pm-worklog.md`, `docs/operations/pending-decisions.md` |
+| Definition of done for a dispatched task | `docs/operations/closure-standard.md` |
+
+## Operations Ledgers
+
+Work is tracked in three files under `docs/operations/`, and they are the only record of it:
+
+- `backlog.md` — one table row per task with id, owner session, file ownership, dispatch time and
+  status. A task exists there **before** work starts; a dispatched task sits under 进行中, and a
+  finished one moves to 已完成 with its commit sha and the evidence that closed it. Never start
+  work that has no row, and never leave a finished task in 进行中.
+- `pm-worklog.md` — one dated entry per patrol round: what was verified, what was decided, what
+  failed. Do not pre-write future timestamps; record the sampled local time.
+- `pending-decisions.md` — open questions with the evidence behind them. The coordinator decides
+  what it can from this document and the code; a question reaches the user only when the answer
+  needs a product or release choice, credentials, or access that the repository cannot supply.
+  A decided question stays in place with the ruling and its rationale instead of being deleted.
+
+A dispatch names the owned files, the forbidden files, the acceptance commands and the close-out
+exit; the close-out contract is `docs/operations/closure-standard.md`. Commits for a single task use
+`git commit -o <owned paths>` so a shared index cannot sweep another session's staged work.
 
 ## Canonical Architecture
 
