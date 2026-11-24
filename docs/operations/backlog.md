@@ -9,8 +9,9 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
+| INT-19 | MySQL 方言批次 3C：参数与控制流（numbered_parameter 4、update_or_ignore 1、null_safe 1、aggregate_filter 1、materialized CTE 1） | integrator-gm | mysql_runtime_dialect.go、agent_asset_scope.go、agent_resource_store.go、asset_catalog.go、asset_monitor_store.go、asset_monitor_summary.go、audit_purge.go 及对应 _test.go | 10:26 | 进行中（70 分钟上限） |
 | INT-06 | Console 侧展示 agent_resource 同步状态（真实浏览器验收四态） | dev-viewer-01 | docs/reviews/2026-11-24-int06-console-sync-browser-check.md（不改 components/） | 10:16 | 进行中（60 分钟上限，25 分钟可行性） |
-| INT-18 | MySQL 方言批次 3D：标识符引号与存在性守卫（reserved_use 运行期 8 + sqlite_schema/PRAGMA 3） | integrator-gm | mysql_runtime_dialect.go、agent_resource_store.go、credential_materialization_store.go、credential_store_verifications.go、agent_resource_execution.go、asset_coverage_register.go 及对应 _test.go | 10:05 | 已完成 bc23b643（9 文件 +353/−31；reserved_use 12→4、sqlite_introspection 8→5，4 处 DDL 豁免 + 5 处 SQLite-only 探测豁免均写明理由并加位置钉；方言层新增 gatewayIdentifierFor/gatewayExistingTableCountSQL；真机 mysql:8.4.13 三语句 + 唯一键冲突 + 回读字段与内存 SQLite 相等，DROP 前后守卫 fail-closed；三组反向实验真红后复原；build/vet 绿，-run 'MySQL|Mysql|GatewayStore|Asset' ok 53.086s；已推送 5f2eff0b..bc23b643，0 0） |
+| INT-18 | MySQL 方言批次 3D：标识符引号与存在性守卫（reserved_use 运行期 8 + sqlite_schema/PRAGMA 3） | integrator-gm | mysql_runtime_dialect.go、agent_resource_store.go、credential_materialization_store.go、credential_store_verifications.go、agent_resource_execution.go、asset_coverage_register.go 及对应 _test.go | 10:05 | 已完成 bc23b643（9 文件 +353/−31；reserved_use 12→4、sqlite_introspection 8→5，4 处 DDL 豁免 + 5 处 SQLite-only 探测豁免均写明理由并加位置钉；方言层新增 gatewayIdentifierFor/gatewayExistingTableCountSQL；真机 mysql:8.4.13 三语句 + 唯一键冲突 + 回读字段与内存 SQLite 相等，DROP 前后守卫 fail-closed；三组反向实验真红后复原；build/vet 绿，-run 'MySQL|Mysql|GatewayStore|Asset' ok 53.086s；已推送 5f2eff0b..bc23b643，0 0） **Lead 独立复验（10:26）**：干净树 `bc23b643` build/vet rc=0；无库 `-run 'GatewayMySQL|MySQL'` ok 1.529s；真机 mysql:8.4.13（13322）`-run 'GatewayMySQL|MySQL|Mysql'` ok 10.031s，容器已清理；变异（`gatewayMySQLIdentifier` 去掉反引号包裹）→ `TestGatewayMySQLIdentifierRendering` 红（`gateway_mysql_identifier_test.go:20/23/26/40/43`），复原后绿。 |
 
 ## 待办（排队/待决策）
 

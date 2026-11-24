@@ -411,3 +411,11 @@
 - **INT-06 解除阻塞并派出**：它 02:38 被记成「缺真实 target」，但 SF-11（630c14bc）已证明隧道两端都是本仓库代码，可本机自建。派 dev-viewer-01（messageId 02bc4e0e-538a-4b0f-b02c-483b54216565）：25 分钟内用 `gateway serve` + `user create` + `enroll create` + `grant` + `backend/agent/cmd/agent` 拉起本机链路，构造「已同步」态，起 PORT=3014 控制台用 ego-browser 真点并截图；交付 `docs/reviews/2026-11-24-int06-console-sync-browser-check.md` 只提交该文件。边界：不碰 `internal/server/*.go`（INT-18 在改）、不碰 components/ 与 lib/demo.ts（外部前端会话 + 我的 demo 播种），发现问题只指名不建议直接改。
 - 队列状态：INT-18（方言 3D，integrator-gm）与 INT-06（控制台同步验收，dev-viewer-01）并行，文件不重叠；INT-19/INT-20 等 INT-18 关单后排。
 - 工作树唯一脏文件仍是外部 Devin 会话的 `backend/deploy/fleet-20261116/first-upgrade.py`。
+
+## 10:26 第 50 轮：INT-18 关单（方言 3D），我独立复验并抓到变异红点，派 INT-19（3C）
+
+- **INT-18**（integrator-gm，`bc23b643` 9 文件 +353/−31，另 `e79ab683` 台账、`1ad09e33` 文档计数修正）：reserved_use 运行期 8 处与 sqlite 探测 3 处改走方言层；保留 4 处 DDL 与 5 处 SQLite-only 探测并写明理由；审计总数 89→78。方言层新增 `gatewayMySQLIdentifier` 与 `gatewayExistingTableCountSQL`（MySQL 走 `information_schema.tables ... DATABASE()`，三个调用点保持 `count == n` 所以缺表 fail-closed）。它自报一处真实约束：upsert 的 insert 文本必须是字符串字面量（AST 守卫），所以列清单里直接写反引号 `use`，并在 `gatewayMySQLUpsertInsert` 加了幂等判断避免二次加引号。
+- **我的独立复验**：`git archive bc23b643` → /tmp/int18v，`env -u GOROOT go build ./...` 与 `go vet ./internal/server/` rc=0；无库 `-run 'GatewayMySQL|MySQL'` ok 1.529s；真机 mysql:8.4.13（13322，`MYSQL_ALLOW_EMPTY_PASSWORD=yes`）`-run 'GatewayMySQL|MySQL|Mysql'` ok 10.031s；容器已删。
+- **变异实验真红**：把 `gatewayMySQLIdentifier` 的反引号包裹去掉（`parts[index] = strings.ReplaceAll(...)`）→ `TestGatewayMySQLIdentifierRendering` FAIL，报 `gateway_mysql_identifier_test.go:20/23/26/40/43`（`MySQL identifier rendering = use, want \`use\``、`prior lookup MySQL rendering does not quote the use column`），该次全量 111.861s FAIL；复原后绿。
+- **INT-19 已派 integrator-gm**（7 个站点类型 + 1 个需先论证的物化 CTE）：numbered_parameter 4（`?N` 必须重排参数顺序，唯一会静默错行的类型）、update_or_ignore 1、null_safe_parameter 1（`IS ?`→`<=>`）、aggregate_filter 1（`FILTER`→`SUM(CASE ...)`）、`audit_purge.go:52` 的 `AS MATERIALIZED` + `json_extract`（MySQL 无 MATERIALIZED，merge 后两次求值会改变 DELETE 可见性，要求先论证再改；JSON 部分要么成对渲染要么整体豁免，不许半改）。验收要求每站点真机**行值断言**与四组反向实验。70 分钟上限。
+- 队列：INT-06 仍由 dev-viewer-01 在跑（控制台同步态本机链路 + 浏览器截图）；INT-20（3B JSON）等 INT-19。
