@@ -399,7 +399,7 @@ const INTERRUPTED_MUTATION = "mutation was interrupted before it finished"
 // describeShellFailure 把 Gateway/Agent 的错误翻译成运维能直接处理的说明，并给出展示样式。
 export function describeShellFailure(
   message: string,
-  opts: { stopRequested: boolean; target: { cluster: string; instance: string } },
+  opts: { stopRequested: boolean; cancelConfirmed?: boolean; target: { cluster: string; instance: string } },
 ): ShellFailure {
   const failure = classifyShellFailure(message, opts)
   const tone: ShellFailureTone = failure.kind === "interrupted" ? "warn"
@@ -409,15 +409,22 @@ export function describeShellFailure(
 
 function classifyShellFailure(
   message: string,
-  opts: { stopRequested: boolean; target: { cluster: string; instance: string } },
+  opts: { stopRequested: boolean; cancelConfirmed?: boolean; target: { cluster: string; instance: string } },
 ): Omit<ShellFailure, "tone"> {
   const raw = message.trim()
   const where = `${opts.target.cluster}/${opts.target.instance}`
+  // 用户点了停止、Gateway 报告命令在执行中被打断：这是用户自己的停止，但不能当作干净结束。
+  if (opts.stopRequested && raw.includes(INTERRUPTED_MUTATION)) {
+    return { kind: "interrupted", text: "已停止：命令在执行中被打断，可能已经执行了一部分。请先核对实际状态，再决定是否重新执行" }
+  }
+  // 用户停止且 Gateway 已确认取消（remote_canceled）：Gateway 对被打断的 shell 一律回
+  // execution_outcome_unknown（无法围栏 nohup/远端副作用，见 agent_relay.go 的
+  // uncertainIfInterrupted），随后只关流、不回最终结果；这不是失败，但也不能说成干净结束。
+  const outcomeUnknown = raw.includes("execution_outcome_unknown") || raw.includes("连接已结束，未收到工具执行结果")
+  if (opts.stopRequested && opts.cancelConfirmed && outcomeUnknown) {
+    return { kind: "interrupted", text: "已停止：Gateway 已确认取消，但没有回传最终输出；命令可能已经执行了一部分，请先核对实际状态" }
+  }
   if (classifyAgentAdmission(raw).kind === "unknown") {
-    // 用户点了停止、Gateway 报告命令在执行中被打断：这是用户自己的停止，但不能当作干净结束。
-    if (opts.stopRequested && raw.includes(INTERRUPTED_MUTATION)) {
-      return { kind: "interrupted", text: "已停止：命令在执行中被打断，可能已经执行了一部分。请先核对实际状态，再决定是否重新执行" }
-    }
     return { kind: "unknown", text: `远端终态未确认：请先核对实际状态，不要直接重放原命令（${raw}）` }
   }
   const blocked = /blocked_command\(([^)]+)\):\s*(.*)/.exec(raw)

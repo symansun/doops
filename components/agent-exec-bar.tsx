@@ -53,6 +53,9 @@ export function AgentExecBar({
   const [stopError, setStopError] = useState("")
   const cancelRef = useRef<ToolCancel | null>(null)
   const stopRequestedRef = useRef(false)
+  // Gateway 已确认取消（remote_canceled）：随后回来的 execution_outcome_unknown 是取消的
+  // 预期结果，不是执行失败，见 lib/shell-blocks.ts 的 describeShellFailure。
+  const cancelConfirmedRef = useRef(false)
   const running = runs.some((run) => run.status === "running")
   const where = `${target.cluster}/${target.instance}`
 
@@ -65,7 +68,11 @@ export function AgentExecBar({
   }
 
   function fail(index: number, message: string) {
-    const failure = describeShellFailure(message, { stopRequested: stopRequestedRef.current, target })
+    const failure = describeShellFailure(message, {
+      stopRequested: stopRequestedRef.current,
+      cancelConfirmed: cancelConfirmedRef.current,
+      target,
+    })
     update(index, (r) => ({ ...r, progress: "", status: "failed", failure }))
   }
 
@@ -84,6 +91,7 @@ export function AgentExecBar({
     }
     const index = runs.length
     stopRequestedRef.current = false
+    cancelConfirmedRef.current = false
     setRuns((prev) => [...prev, { command: args.command, output: "", progress: "", status: "running" }])
     // Only a short redacted summary is kept, so a reload can say a command was
     // cut off; it is cleared when the command ends.
@@ -103,7 +111,18 @@ export function AgentExecBar({
         },
         (ev) => {
           if (ev.type === "output") update(index, (r) => ({ ...r, ...appendShellOutput(r, ev.data) }))
-          else if (ev.type === "result") {
+          else if (ev.type === "cancel") {
+            // 和终端一样：停止的处理进度必须说出来；只有 Gateway 真的确认取消才算数。
+            if (ev.state === "remote_canceled") {
+              cancelConfirmedRef.current = true
+              setStopError("")
+              update(index, (r) => ({ ...r, progress: "— 远端已确认取消，等待终态 —" }))
+            } else if (ev.state === "rejected" || ev.state === "unavailable") {
+              stopRequestedRef.current = false
+              setStopPending(false)
+              setStopError("停止没有生效：" + (ev.error || "Gateway 未确认取消"))
+            }
+          } else if (ev.type === "result") {
             const outcome = shellResultOutcome(extractText(ev.result))
             if (outcome.ok) update(index, (r) => ({ ...r, output: r.output + outcome.text, progress: "", status: "ok" }))
             else fail(index, outcome.text)
@@ -118,6 +137,7 @@ export function AgentExecBar({
         : r)))
       commandJournal.end(session, journalId)
       setStopPending(false)
+      cancelConfirmedRef.current = false
       cancelRef.current = null
     }
   }

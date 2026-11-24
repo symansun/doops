@@ -55,6 +55,9 @@ export function TerminalPanel({
   const [progress, setProgress] = useState("")
   const [stopPending, setStopPending] = useState(false)
   const stopRequestedRef = useRef(false)
+  // Gateway 已回 remote_canceled：此时再收到 execution_outcome_unknown 是取消的预期结果，
+  // 不是执行失败（见 lib/shell-blocks.ts 的 describeShellFailure）。
+  const cancelConfirmedRef = useRef(false)
   const [history, setHistory] = useState<string[]>([])
   const [histIdx, setHistIdx] = useState(-1)
   const cancelRef = useRef<ToolCancel | null>(null)
@@ -117,7 +120,11 @@ export function TerminalPanel({
   }
 
   function fail(message: string) {
-    const failure = describeShellFailure(message, { stopRequested: stopRequestedRef.current, target })
+    const failure = describeShellFailure(message, {
+      stopRequested: stopRequestedRef.current,
+      cancelConfirmed: cancelConfirmedRef.current,
+      target,
+    })
     push({ kind: failure.tone === "info" ? "info" : failure.tone === "warn" ? "warn" : "err", text: failure.text })
   }
 
@@ -135,6 +142,7 @@ export function TerminalPanel({
     setProgress("")
     setStopPending(false)
     stopRequestedRef.current = false
+    cancelConfirmedRef.current = false
     cancelRef.current = null
     streamRef.current = { output: "", progress: "" }
     outputCharsRef.current = 0
@@ -160,6 +168,7 @@ export function TerminalPanel({
             // 停止请求的处理进度由服务端上报：requested / remote_canceled /
             // rejected / unavailable。停止没有生效必须说出来。
             if (ev.state === "remote_canceled") {
+              cancelConfirmedRef.current = true
               push({ kind: "info", text: "— 远端已确认取消，等待终态 —" })
             } else if (ev.state === "rejected" || ev.state === "unavailable") {
               stopRequestedRef.current = false
@@ -200,6 +209,7 @@ export function TerminalPanel({
       setProgress("")
       setStopPending(false)
       stopRequestedRef.current = false
+      cancelConfirmedRef.current = false
       cancelRef.current = null
     }
   }
