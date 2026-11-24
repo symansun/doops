@@ -369,3 +369,11 @@
 - **教训（写给自己）**：① 数量型 golden 必须配位置钉，否则「豁免一处」会变成「任意一处可豁免」；② 凡「与时区/环境无关」这类声明，如果默认环境恰好让错误实现也正确，就必须显式改到那个环境里断言，否则断言测的是默认环境而不是设计；③ 复验不只看绿，要看「把实现改坏之后还绿不绿」——这两条都是先绿后红才成立。
 - 已发消息给 integrator-gm（`fe43156b-62ff-435a-80b4-ad8ae8ea4569`）：先 fetch+rebase 再提交，不许硬覆盖这两个 sha，报告里要把它们算成 lead 的产出并引用 +08:00 腿这条证据。
 - 状态：origin/main = `6f978c5a`，ahead/behind 0；工作树只剩 `backend/deploy/fleet-20261116/first-upgrade.py`（外部 Devin 会话在改，不碰）。INT-17 仍等它的报告来关单。
+
+## 09:41 第 45 轮：CI 每次 push 排队的问题顺手修掉（三连提交曾同时排三个全量 run）
+
+- 触发：我这两轮的三个提交（`6f978c5a`、`f438b143`、`c465b1da`）各自触发一个全量 run，`gh run list` 显示同时 3 个 `in_progress` + 1 个 `queued`，最新树排在被淘汰的旧树后面。这个问题 03:15 就记成「待议」，理由是「改门禁语义只能靠观察验证」——那是把它当成了不可验证项，其实可验证：连续两次 push 后看前一次是否变 `cancelled`。
+- 改动（`c465b1da`，2 文件 +11）：`ci.yml` 顶层加 `concurrency`，分组 `ci-${{ github.event_name }}-${{ github.ref }}`，`cancel-in-progress` 只在 `push` 为真。三个前提都守住了：`workflow_call`（发布门禁）分组名不同、永不被取消，`pull_request` 同样不取消（评审可能在读），被取消的运行**不算通过**，最新树仍要自己跑绿。
+- 文档同步（闭环第 1、4 条）：`backend/docs/BUILD_DEPLOY_SOP.md` 第 2 条 CI 门禁段落补三行，写清分组键、谁会被取消、谁不会，以及「被取消≠通过」。
+- 契约测试：`python3 -m pytest backend/test/test_github_release_contract.py -q` → 12 passed（该文件锁 `release.yml` 的 `concurrency.cancel-in-progress is False` 与 `ci.yml` 的 `workflow_call` 输入，未受影响）。
+- 验证方式写明在提交正文里：本次 push 的运行会让 `c465b1da` 那次仍在跑的 push 运行变 `cancelled`，观察 `gh run list` 即可。这是「改 CI 只能靠观察」这条旧判断的反例——观察本身就是证据，只要你说清看什么。
