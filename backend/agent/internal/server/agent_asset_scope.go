@@ -14,13 +14,13 @@ const workspaceCatalog = `WITH catalog(kind,id,name,address) AS (
  SELECT 'cluster',asset_id,min(name),'' FROM cluster_inventory_sources GROUP BY asset_id UNION ALL
  SELECT 'system',asset_id,name,'' FROM inventory_business_systems
 ), native(kind,id) AS (
- SELECT 'machine',asset_id FROM inventory_machines WHERE cluster=?1 AND instance=?2 UNION
- SELECT 'cluster',asset_id FROM cluster_inventory_sources WHERE cluster=?1 AND instance=?2 UNION
- SELECT 'system',asset_id FROM inventory_business_deployments WHERE cluster=?1 AND instance=?2
+ SELECT 'machine',asset_id FROM inventory_machines WHERE cluster=? AND instance=? UNION
+ SELECT 'cluster',asset_id FROM cluster_inventory_sources WHERE cluster=? AND instance=? UNION
+ SELECT 'system',asset_id FROM inventory_business_deployments WHERE cluster=? AND instance=?
 ), assets AS (
  SELECT c.*, n.id IS NOT NULL AS linked, a.asset_id IS NOT NULL AS assigned FROM catalog c
  LEFT JOIN native n ON n.kind=c.kind AND n.id=c.id
- LEFT JOIN inventory_agent_assets a ON a.cluster=?1 AND a.instance=?2 AND a.kind=c.kind AND a.asset_id=c.id
+ LEFT JOIN inventory_agent_assets a ON a.cluster=? AND a.instance=? AND a.kind=c.kind AND a.asset_id=c.id
 ) `
 
 type workspaceAsset struct {
@@ -126,7 +126,10 @@ func (s *GatewayStore) readWorkspaceAssets(r *http.Request, auth TokenAuth) (any
 	if err = validateWorkspaceTarget(tx, t); err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(workspaceCatalog+`SELECT kind,id,name,address,linked,assigned FROM assets WHERE linked OR assigned OR ?3 ORDER BY kind,id`, t.Cluster, t.Instance, view == "manage")
+	// The catalog repeats the target pair once per placeholder, in text order;
+	// both dialects bind plain ? in that same order.
+	rows, err := tx.Query(workspaceCatalog+`SELECT kind,id,name,address,linked,assigned FROM assets WHERE linked OR assigned OR ? ORDER BY kind,id`,
+		t.Cluster, t.Instance, t.Cluster, t.Instance, t.Cluster, t.Instance, t.Cluster, t.Instance, view == "manage")
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +186,8 @@ func (s *GatewayStore) applyWorkspaceChange(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 	var exists bool
-	if err = tx.QueryRow(workspaceCatalog+`SELECT EXISTS(SELECT 1 FROM assets WHERE kind=?3 AND id=?4)`, req.Cluster, req.Instance, req.Kind, req.ID).Scan(&exists); err != nil {
+	if err = tx.QueryRow(workspaceCatalog+`SELECT EXISTS(SELECT 1 FROM assets WHERE kind=? AND id=?)`,
+		req.Cluster, req.Instance, req.Cluster, req.Instance, req.Cluster, req.Instance, req.Cluster, req.Instance, req.Kind, req.ID).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {

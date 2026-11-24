@@ -296,19 +296,34 @@ func (s *GatewayStore) saveAgentResourceApplied(ctx context.Context, agent *Gate
 	return nil
 }
 
-func declaredAgentResources(ctx context.Context, tx *sql.Tx, cluster, instance string) ([]declaredAgentResource, error) {
+// declaredAgentResourcesSQL returns the statement declaredAgentResources runs.
+// The seven unions repeat the target pair once per placeholder, in text order,
+// so MySQL binds the same values SQLite used to bind by index; the INT-19 test
+// executes this exact text against a real MySQL server.
+func declaredAgentResourcesSQL() string {
+	return declaredAgentResourcesSQLFor(gatewayDialectStore)
+}
+
+func declaredAgentResourcesSQLFor(dialect gatewaySQLDialect) string {
+	useColumn := gatewayIdentifierFor(dialect, "use")
+	keyColumn := gatewayIdentifierFor(dialect, "key")
 	// Project named columns only. Assignment alone does not identify the host or cluster observed by this Agent.
-	query := `SELECT kind,id,name,key,identity,credential_type,` + gatewayUseColumn + ` FROM (
-		 SELECT 'machine' AS kind, m.asset_id AS id, m.name AS name, 'host' AS key, COALESCE(b.host_sha256,'') AS identity, '' AS credential_type, '' AS ` + gatewayUseColumn + `
-		 FROM inventory_machines m JOIN inventory_agent_assets aa ON aa.asset_id=m.asset_id AND aa.kind='machine' AND aa.cluster=?1 AND aa.instance=?2
-		 LEFT JOIN machine_diagnostic_bindings b ON b.asset_id=m.asset_id AND b.cluster=?1 AND b.instance=?2
-		 UNION ALL SELECT 'cluster', c.asset_id, c.name, 'current', c.kube_system_uid, '', '' FROM cluster_inventory_sources c WHERE c.cluster=?1 AND c.instance=?2
-		 UNION ALL SELECT 'system', b.asset_id, b.name, b.asset_id, '', '', '' FROM inventory_business_systems b JOIN inventory_agent_assets aa ON aa.asset_id=b.asset_id AND aa.kind='system' AND aa.cluster=?1 AND aa.instance=?2
-		 UNION ALL SELECT 'namespace', n.name, n.name, n.name, n.uid, '', '' FROM cluster_inventory_namespaces n WHERE n.cluster=?1 AND n.instance=?2
-		 UNION ALL SELECT CASE c.kind WHEN 'website' THEN 'site' ELSE c.kind END, c.id, c.name, c.id, json_extract(c.details,'$.identity'), '', '' FROM inventory_resource_catalog c WHERE c.cluster=?1 AND c.instance=?2
-		 UNION ALL SELECT 'credential', c.id, c.name, c.id, '', c.type, json_extract(g.scope_json,'$.use') FROM credentials c JOIN credential_grants g ON g.credential_id=c.id WHERE c.state='active' AND g.state='active' AND json_extract(g.scope_json,'$.cluster')=?1 AND json_extract(g.scope_json,'$.instance')=?2
-	) ORDER BY 1,2`
-	rows, err := tx.QueryContext(ctx, query, cluster, instance)
+	return `SELECT kind,id,name,`+keyColumn+`,identity,credential_type,` + useColumn + ` FROM (
+		 SELECT 'machine' AS kind, m.asset_id AS id, m.name AS name, 'host' AS `+keyColumn+`, COALESCE(b.host_sha256,'') AS identity, '' AS credential_type, '' AS ` + useColumn + `
+		 FROM inventory_machines m JOIN inventory_agent_assets aa ON aa.asset_id=m.asset_id AND aa.kind='machine' AND aa.cluster=? AND aa.instance=?
+		 LEFT JOIN machine_diagnostic_bindings b ON b.asset_id=m.asset_id AND b.cluster=? AND b.instance=?
+		 UNION ALL SELECT 'cluster', c.asset_id, c.name, 'current', c.kube_system_uid, '', '' FROM cluster_inventory_sources c WHERE c.cluster=? AND c.instance=?
+		 UNION ALL SELECT 'system', b.asset_id, b.name, b.asset_id, '', '', '' FROM inventory_business_systems b JOIN inventory_agent_assets aa ON aa.asset_id=b.asset_id AND aa.kind='system' AND aa.cluster=? AND aa.instance=?
+		 UNION ALL SELECT 'namespace', n.name, n.name, n.name, n.uid, '', '' FROM cluster_inventory_namespaces n WHERE n.cluster=? AND n.instance=?
+		 UNION ALL SELECT CASE c.kind WHEN 'website' THEN 'site' ELSE c.kind END, c.id, c.name, c.id, json_extract(c.details,'$.identity'), '', '' FROM inventory_resource_catalog c WHERE c.cluster=? AND c.instance=?
+		 UNION ALL SELECT 'credential', c.id, c.name, c.id, '', c.type, json_extract(g.scope_json,'$.use') FROM credentials c JOIN credential_grants g ON g.credential_id=c.id WHERE c.state='active' AND g.state='active' AND json_extract(g.scope_json,'$.cluster')=? AND json_extract(g.scope_json,'$.instance')=?
+	) AS declared ORDER BY 1,2`
+}
+
+func declaredAgentResources(ctx context.Context, tx *sql.Tx, cluster, instance string) ([]declaredAgentResource, error) {
+	rows, err := tx.QueryContext(ctx, declaredAgentResourcesSQL(),
+		cluster, instance, cluster, instance, cluster, instance, cluster, instance,
+		cluster, instance, cluster, instance, cluster, instance)
 	if err != nil {
 		return nil, err
 	}

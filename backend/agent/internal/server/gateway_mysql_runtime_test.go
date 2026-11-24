@@ -62,23 +62,39 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 	// cannot reach zero without changing that statement. The rules stay in the
 	// table, so a raw literal reappearing anywhere fails here.
 	absent := map[gatewayMySQLRuntimeIssueCode]string{
-		gatewayMySQLIssueInsertOrIgnore: "the four sites render through gatewayUpsertSQL",
-		gatewayMySQLIssueSQLiteConcat:   "the three sites render through gatewayConcatSQL",
-		gatewayMySQLIssueUnixEpoch:      "the four sites render through gatewayEpochNowFor/gatewayEpochSecondsFor",
+		gatewayMySQLIssueInsertOrIgnore:    "the four sites render through gatewayUpsertSQL",
+		gatewayMySQLIssueSQLiteConcat:      "the three sites render through gatewayConcatSQL",
+		gatewayMySQLIssueUnixEpoch:         "the four sites render through gatewayEpochNowFor/gatewayEpochSecondsFor",
+		gatewayMySQLIssueNumberedParameter: "the four statements spell plain ? once per occurrence, with the argument repeated in text order, so both dialects bind the same values",
+		gatewayMySQLIssueUpdateOrIgnore:    "the one statement renders through gatewayUpdateIgnoreSQL: UPDATE IGNORE on MySQL skips the conflicting row and leaves RowsAffected 0",
+		gatewayMySQLIssueAggregateFilter:   "the two counts render through gatewayFilteredCountSQL: COALESCE(SUM(CASE WHEN c THEN 1 ELSE 0 END), 0)",
+		gatewayMySQLIssueNullSafeParameter: "the one comparison renders through gatewayNullSafeEqualsSQL: MySQL <=> keeps NULL matching NULL",
 	}
 	want := map[gatewayMySQLRuntimeIssueCode]int{
-		gatewayMySQLIssueNumberedParameter: 4,
-		gatewayMySQLIssueUpdateOrIgnore:    1,
-		gatewayMySQLIssueJSONEach:          5,
-		gatewayMySQLIssueJSONAggregate:     2,
-		gatewayMySQLIssueAggregateFilter:   1,
+		// INT-19 retired numbered_parameter, update_or_ignore,
+		// aggregate_filter and null_safe_parameter from the source. The four
+		// numbered statements now spell every placeholder as plain ? and
+		// pass the repeated argument once per occurrence in text order, so
+		// SQLite and MySQL bind identically and no reordering step exists
+		// that could silently shift values. UPDATE OR IGNORE renders through
+		// gatewayUpdateIgnoreSQL (UPDATE IGNORE on MySQL), FILTER through
+		// gatewayFilteredCountSQL (COALESCE(SUM(CASE ...), 0)) and IS ?
+		// through gatewayNullSafeEqualsSQL (<=>).
+		gatewayMySQLIssueJSONEach:      5,
+		gatewayMySQLIssueJSONAggregate: 2,
 		// The only remaining julianday is the one-shot audit_events
 		// backfill in gateway_store_schema.go; INT-17 excluded it, so the
 		// runtime sites are zero and the golden stays at one (see the
 		// absent-map comment above).
-		gatewayMySQLIssueJulianDay:         1,
-		gatewayMySQLIssueMaterializedCTE:   1,
-		gatewayMySQLIssueNullSafeParameter: 1,
+		gatewayMySQLIssueJulianDay: 1,
+		// INT-19 keeps exactly one materialized_cte site: audit_purge's
+		// deleteCompletedAuditSQL. It is SQLite-bound end to end (INDEXED BY
+		// hint pushed into the text by the caller, and a DELETE whose
+		// subquery selects from the table being deleted, which MySQL
+		// rejects with error 1093), so a syntax-only rendering would not
+		// make it runnable; the port is a two-step rewrite owned by a later
+		// batch. The location is pinned below.
+		gatewayMySQLIssueMaterializedCTE: 1,
 		// INT-18: 8 -> 5. The three runtime existence guards render through
 		// gatewayExistingTableCountSQL (information_schema.tables on MySQL,
 		// sqlite_schema on SQLite). The remaining five are exempt: the
@@ -126,6 +142,15 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 	// INT-17 leaves exactly one julianday site: the one-shot audit_events backfill in
 	// migrate(). Pin its location as well, otherwise swapping it for a julianday
 	// somewhere else would keep the count at one and stay green.
+	// INT-19 leaves exactly one materialized_cte site and pinpoints it: the
+	// purge statement is SQLite-bound (INDEXED BY is pushed into its text by
+	// the caller and its DELETE subquery reads the table being deleted, which
+	// MySQL rejects with error 1093), so a syntax-only rendering would not make
+	// it runnable. Any other file claiming that one site fails here.
+	if locs := locations[gatewayMySQLIssueMaterializedCTE]; len(locs) == 1 && !strings.Contains(locs[0], "audit_purge.go") {
+		t.Errorf("MySQL runtime audit attributes the remaining materialized_cte to %s, want the SQLite-only audit purge in audit_purge.go", locs[0])
+	}
+
 	if locs := locations[gatewayMySQLIssueJulianDay]; len(locs) == 1 && !strings.Contains(locs[0], "gateway_store_schema.go") {
 		t.Errorf("MySQL runtime audit attributes the remaining julianday to %s, want the audit_events backfill in gateway_store_schema.go", locs[0])
 	}

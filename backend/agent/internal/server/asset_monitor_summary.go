@@ -75,7 +75,7 @@ func (s *GatewayStore) readMonitorSummary(ctx context.Context, auth TokenAuth, q
 		return result, err
 	}
 	defer tx.Rollback()
-	err = tx.QueryRowContext(ctx, cte+`SELECT count(*) FILTER(WHERE state='open'),count(*) FILTER(WHERE state='missing'),(SELECT count(*) FROM sources),
+	err = tx.QueryRowContext(ctx, cte+"SELECT "+gatewayFilteredCountSQL(gatewayDialectStore, "state='open'")+","+gatewayFilteredCountSQL(gatewayDialectStore, "state='missing'")+`,(SELECT count(*) FROM sources),
  (SELECT count(*) FROM sources src WHERE NOT EXISTS(SELECT 1 FROM asset_monitor_series s WHERE s.cluster=src.cluster AND s.instance=src.instance)) FROM classified`, args...).Scan(&result.Open, &result.Missing, &result.Sources, &result.Unmonitored)
 	if err != nil || state == "" {
 		return result, err

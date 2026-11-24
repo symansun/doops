@@ -227,7 +227,7 @@ func (h *GatewayHub) HandleResourceCatalog(w http.ResponseWriter, r *http.Reques
 			if req.Op == "create" {
 				res, e = tx.Exec(gatewayUpsertSQL(gatewayUpsert{insert: "INSERT INTO inventory_resource_catalog(id,kind,cluster,instance,created_by,name,environment,details,identity_key,revision) VALUES(?,?,?,?,?,?,?,?,?,1)", doNothing: true}), req.ID, req.Kind, req.Cluster, req.Instance, a.UserID, req.Name, req.Environment, string(b), identity)
 			} else {
-				res, e = tx.Exec("UPDATE OR IGNORE inventory_resource_catalog SET cluster=?,instance=?,name=?,environment=?,details=?,identity_key=?,revision=revision+1 WHERE id=?", req.Cluster, req.Instance, req.Name, req.Environment, string(b), identity, req.ID)
+				res, e = tx.Exec(gatewayUpdateIgnoreSQL(gatewayDialectStore, "inventory_resource_catalog SET cluster=?,instance=?,name=?,environment=?,details=?,identity_key=?,revision=revision+1 WHERE id=?"), req.Cluster, req.Instance, req.Name, req.Environment, string(b), identity, req.ID)
 			}
 			if e != nil {
 				return e

@@ -26,7 +26,7 @@ func storeMonitorPoint(tx *sql.Tx, req monitorRequest, p monitorInput, origin st
 	}
 	if last.Valid && p.At <= last.Int64 {
 		var same bool
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM asset_monitor_samples WHERE series_id=? AND at_ms=? AND status=? AND value IS ?)`, id, p.At, p.Status, p.Value).Scan(&same); err != nil {
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM asset_monitor_samples WHERE series_id=? AND at_ms=? AND status=? AND `+gatewayNullSafeEqualsSQL(gatewayDialectStore, "value", "?")+`)`, id, p.At, p.Status, p.Value).Scan(&same); err != nil {
 			return err
 		}
 		if same {

@@ -313,6 +313,41 @@ func gatewayExistingTableCountSQL(dialect gatewaySQLDialect, tableCount int) str
 	return "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN (" + placeholders + ")"
 }
 
+// gatewayUpdateIgnoreSQL renders SQLite's UPDATE OR IGNORE. MySQL spells the
+// same statement UPDATE IGNORE: a row whose update violates a constraint is
+// skipped instead of failing the statement, and RowsAffected stays 0 for it, so
+// callers that turn "0 rows" into a conflict error keep their contract. MySQL
+// also downgrades some non-constraint errors to warnings, which SQLite does
+// not; the one caller only writes identity columns of a single row, so the
+// broader spirit does not change its outcome.
+func gatewayUpdateIgnoreSQL(dialect gatewaySQLDialect, tail string) string {
+	if dialect == gatewayDialectMySQL {
+		return "UPDATE IGNORE " + tail
+	}
+	return "UPDATE OR IGNORE " + tail
+}
+
+// gatewayNullSafeEqualsSQL renders SQLite's IS comparison, which treats NULL as
+// a value equal to itself. MySQL spells that <=>; plain = would make a NULL
+// input never match and silently turn a duplicate into a new row.
+func gatewayNullSafeEqualsSQL(dialect gatewaySQLDialect, left, right string) string {
+	if dialect == gatewayDialectMySQL {
+		return left + " <=> " + right
+	}
+	return left + " IS " + right
+}
+
+// gatewayFilteredCountSQL renders SQLite's count(*) FILTER (WHERE condition).
+// MySQL has no FILTER clause; SUM(CASE WHEN condition THEN 1 ELSE 0 END) counts
+// the same rows, and COALESCE keeps the empty-set answer 0 like count() (SUM
+// over no rows is NULL).
+func gatewayFilteredCountSQL(dialect gatewaySQLDialect, condition string) string {
+	if dialect == gatewayDialectMySQL {
+		return "COALESCE(SUM(CASE WHEN " + condition + " THEN 1 ELSE 0 END), 0)"
+	}
+	return "count(*) FILTER(WHERE " + condition + ")"
+}
+
 func (upsert gatewayUpsert) render(dialect gatewaySQLDialect) string {
 	if dialect == gatewayDialectMySQL {
 		return upsert.mysqlSQL()
