@@ -404,3 +404,10 @@
 - **INT-18 已派 integrator-gm**（messageId 9cdba277-fb1b-48ea-ae90-fb2a91c44555）：方言批次 3D，reserved_use 运行期 8 处（`use` 是 MySQL 保留字，需要方言层新增标识符引用能力）+ 存在性守卫 3 处（`sqlite_schema`/`PRAGMA` → `information_schema.tables`，必须保持缺表→false 的 fail-closed 语义）；DDL 4 处按 INT-16 结论豁免不改并写明理由。验收含真机 mysql:8.4 回读、缺表真机走一次、三组反向实验；边界禁碰前端/CHANGELOG/skills_builtin。
 - 状态：`origin/main = e48762f1`（SF-23 + INT-17 关单提交），ahead/behind 0；工作树只剩外部 Devin 会话的 `backend/deploy/fleet-20261116/first-upgrade.py`。
 - 队列：INT-18 在跑 → INT-19（3C 参数重排）→ INT-20（3B JSON）；INT-06 现在可以用 SF-11 的本机 target 思路做实测（已不依赖外部集群）。
+
+## 10:16 第 49 轮：HEAD 的 CI 全绿，INT-06 解除阻塞并派给 dev-viewer-01
+
+- **CI（19ec490f 的运行 45309418802）**：queued→in_progress→success，5 个 job 全绿——Contract tests、Web console checks、Go tests、Secret scan、Skill packages (real-run)。等待 12 分 26 秒。这条运行覆盖了被并发取消的 `91b0a776` 那次（SF-23 代码 + 新守卫），所以「文档提交取消代码验证」的担心不成立：最终树是超集，门禁看最后一条。
+- **INT-06 解除阻塞并派出**：它 02:38 被记成「缺真实 target」，但 SF-11（630c14bc）已证明隧道两端都是本仓库代码，可本机自建。派 dev-viewer-01（messageId 02bc4e0e-538a-4b0f-b02c-483b54216565）：25 分钟内用 `gateway serve` + `user create` + `enroll create` + `grant` + `backend/agent/cmd/agent` 拉起本机链路，构造「已同步」态，起 PORT=3014 控制台用 ego-browser 真点并截图；交付 `docs/reviews/2026-11-24-int06-console-sync-browser-check.md` 只提交该文件。边界：不碰 `internal/server/*.go`（INT-18 在改）、不碰 components/ 与 lib/demo.ts（外部前端会话 + 我的 demo 播种），发现问题只指名不建议直接改。
+- 队列状态：INT-18（方言 3D，integrator-gm）与 INT-06（控制台同步验收，dev-viewer-01）并行，文件不重叠；INT-19/INT-20 等 INT-18 关单后排。
+- 工作树唯一脏文件仍是外部 Devin 会话的 `backend/deploy/fleet-20261116/first-upgrade.py`。

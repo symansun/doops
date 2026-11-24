@@ -9,6 +9,7 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
+| INT-06 | Console 侧展示 agent_resource 同步状态（真实浏览器验收四态） | dev-viewer-01 | docs/reviews/2026-11-24-int06-console-sync-browser-check.md（不改 components/） | 10:16 | 进行中（60 分钟上限，25 分钟可行性） |
 | INT-18 | MySQL 方言批次 3D：标识符引号与存在性守卫（reserved_use 运行期 8 + sqlite_schema/PRAGMA 3） | integrator-gm | mysql_runtime_dialect.go、agent_resource_store.go、credential_materialization_store.go、credential_store_verifications.go、agent_resource_execution.go、asset_coverage_register.go 及对应 _test.go | 10:05 | 进行中（60 分钟上限） |
 
 ## 待办（排队/待决策）
@@ -17,7 +18,6 @@
 |---|---|---|---|
 | INT-19 | MySQL 方言批次 3C：参数重排（`numbered_parameter` 4 处必须单独真机行值断言，`?N`→`?` 会静默错位参数顺序） | INT-17、INT-18 | 不许并入 3D（错位不会报错，只会取错值） |
 | INT-20 | MySQL 方言批次 3B：JSON（`json_each` 5 + `json_group_array` 2，`JSON_ARRAYAGG` 无聚合内 ORDER BY，语义差最大） | INT-19 | 最后做；`materialized_cte` 单列不并批 |
-| INT-06 | Console 侧展示 agent_resource 同步状态 | INT-05 | **已阻塞（02:38）**：`target-manifest-card.tsx` 已具备四态同步状态 + 五态资源徽章 + 八类资源（`manifestStatus()`/`resourceStates`/`resourceKinds`），由 `console-shell.tsx:64/:936` 渲染；剩余「TS 校验 + 浏览器实测」需真实 target，与 SF-11/D8 同条件 |
 | — | `CHANGELOG.md` [Unreleased] 统一补写（SF-04/SF-05/SF-09/INT-05 的用户可见变化） | SF-05/SF-09 完成 | 该文件被前端会话占用，由我或前端会话统一写，避免共享索引互扫 |
 
 ## 已完成
