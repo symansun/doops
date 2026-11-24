@@ -107,6 +107,13 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 		}
 	}
 
+	// INT-17 leaves exactly one julianday site: the one-shot audit_events backfill in
+	// migrate(). Pin its location as well, otherwise swapping it for a julianday
+	// somewhere else would keep the count at one and stay green.
+	if locs := locations[gatewayMySQLIssueJulianDay]; len(locs) == 1 && !strings.Contains(locs[0], "gateway_store_schema.go") {
+		t.Errorf("MySQL runtime audit attributes the remaining julianday to %s, want the audit_events backfill in gateway_store_schema.go", locs[0])
+	}
+
 	for _, rule := range gatewayMySQLRuntimeIssueRules {
 		if strings.TrimSpace(rule.description) == "" || strings.TrimSpace(rule.replacement) == "" {
 			t.Errorf("MySQL runtime rule %q has no audit explanation", rule.code)
