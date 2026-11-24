@@ -395,3 +395,12 @@
 - **浏览器实测证据**：后台 `PORT=3013 pnpm dev`（Next.js 16.2.9 Turbopack）+ ego-browser 脚本（`/console?demo=1` → 跳过引导 → 智能巡检 → 查看产物 → 等 `[data-inspection-charts]` 可见）。实测 `innerText` 为「主机核心资源水位 | 单位 % | CPU | 23.7% | 内存 | 34.7% | 磁盘 (/) | 38.8%」，`svgCount` 3，截图 `/tmp/sf23-charts.png`，图中三条水位条与下方 metrics 表（`cpu_percent` 23.7 等）逐项一致。
 - 状态：`origin/main = 91b0a776` + 本次收尾提交；工作树只剩外部 Devin 会话的 `backend/deploy/fleet-20261116/first-upgrade.py`（不碰）。
 - 下一步：INT-18（方言 3D 引号/保留字）→ INT-19（3C 参数重排）→ INT-20（3B JSON）依次派；INT-06 可用 SF-11 的本机 target 思路做实测。
+
+## 10:05 第 48 轮：SF-11 由我做独立复验（4 PASS + 变异红），关单后派 INT-18（方言 3D）
+
+- **SF-11 独立复验**（它自己报的 630c14bc 已关单，但按闭环标准必须有 lead 侧干净树证据）：`git archive HEAD | tar -x -C /tmp/sf11v` → `env -u GOROOT go build ./...` rc=0；`go test ./internal/server/ -run TestGatewayTunnelE2E -v -count=1` → **4/4 PASS，3.434s**（`SkillRunRoundTrip` 0.72s、`OfflineTunnelFailsFast` 0.44s、`EnrollmentAndGrantRejection` 0.40s、`ArtifactMissingAfterDeletion` 0.70s）。实测数据与它报告一致：run status=critical、5 checks、9 metrics、offline 下发 67.6ms 返回 failed/target_offline。
+- **变异实验**：把 `gateway_tunnel_e2e_test.go` 里 run 级断言 `detail.ArtifactState != monitorArtifactStateMissing` 改成 `!= monitorArtifactStatePresent` → 测试红（0.64s），证明 missing 态断言真在守。
+- 环境提示：脚本用宿主机 `python3`（3.14.7）跑 `inspect-vm-host`，不需要 docker；日志里 `Failed to save Audit Log ... mkdir /root: read-only file system` 是测试环境噪音，不影响判定。
+- **INT-18 已派 integrator-gm**（messageId 9cdba277-fb1b-48ea-ae90-fb2a91c44555）：方言批次 3D，reserved_use 运行期 8 处（`use` 是 MySQL 保留字，需要方言层新增标识符引用能力）+ 存在性守卫 3 处（`sqlite_schema`/`PRAGMA` → `information_schema.tables`，必须保持缺表→false 的 fail-closed 语义）；DDL 4 处按 INT-16 结论豁免不改并写明理由。验收含真机 mysql:8.4 回读、缺表真机走一次、三组反向实验；边界禁碰前端/CHANGELOG/skills_builtin。
+- 状态：`origin/main = e48762f1`（SF-23 + INT-17 关单提交），ahead/behind 0；工作树只剩外部 Devin 会话的 `backend/deploy/fleet-20261116/first-upgrade.py`。
+- 队列：INT-18 在跑 → INT-19（3C 参数重排）→ INT-20（3B JSON）；INT-06 现在可以用 SF-11 的本机 target 思路做实测（已不依赖外部集群）。
