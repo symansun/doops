@@ -15,9 +15,7 @@
 
 | 编号 | 任务 | 依赖 | 备注 |
 |---|---|---|---|
-| INT-19 | MySQL 方言批次 3C：参数重排（`numbered_parameter` 4 处必须单独真机行值断言，`?N`→`?` 会静默错位参数顺序） | INT-17、INT-18 | 不许并入 3D（错位不会报错，只会取错值） |
-| INT-20 | MySQL 方言批次 3B：JSON（`json_each` 5 + `json_group_array` 2，`JSON_ARRAYAGG` 无聚合内 ORDER BY，语义差最大） | INT-19 | 最后做；`materialized_cte` 单列不并批 |
-| — | `CHANGELOG.md` [Unreleased] 统一补写（SF-04/SF-05/SF-09/INT-05 的用户可见变化） | SF-05/SF-09 完成 | 该文件被前端会话占用，由我或前端会话统一写，避免共享索引互扫 |
+| INT-20 | MySQL 方言批次 3B：JSON（`json_each` 5 + `json_group_array` 2，`JSON_ARRAYAGG` 无聚合内 ORDER BY，语义差最大） | INT-21 完成后随即开始 | 最后做；`materialized_cte` 单列不并批 |
 
 ## 已完成
 
