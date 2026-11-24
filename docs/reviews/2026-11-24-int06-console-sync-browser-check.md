@@ -135,7 +135,7 @@ kill 掉 agent 后 curl：`{"applied_revision":4,"online":false,"supported":true
 
 ## 偏差修复（SF-24，2026-11-24）
 
-上面「偏差」1–3 已在 commit `ac68f65b` 修掉，本节记录复验。
+上面「偏差」1–3 的代码改动是 commit `26a7f273`（已随 `8d08f1ca` 合入 main：三个文件与我的实现逐字节一致）；`package.json` 的 `test:console` 清单条目在 `ac68f65b` 补回（`8d08f1ca` 合并时该条目被丢弃）。本节记录复验。
 
 ### 改了什么
 
