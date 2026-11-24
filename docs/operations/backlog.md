@@ -10,7 +10,7 @@
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
 | SF-24 | 修正 Console 同步卡偏差：`resourceKinds` 缺 `container` 致回退英文、`最后同步时间` 实为 `last_observed_at`、unsupported 态仍显示「已应用版本」；纯逻辑抽到 `lib/target-manifest.ts` 并进 CI | dev-viewer-01 | components/target-manifest-card.tsx、lib/target-manifest.ts、lib/target-manifest.test.mjs、package.json（仅 test:console 一行）、docs/reviews/2026-11-24-int06-console-sync-browser-check.md | 10:39 | 进行中（40 分钟上限） |
-| INT-19 | MySQL 方言批次 3C：参数与控制流（numbered_parameter 4、update_or_ignore 1、null_safe 1、aggregate_filter 1、materialized CTE 1） | integrator-gm | mysql_runtime_dialect.go、agent_asset_scope.go、agent_resource_store.go、asset_catalog.go、asset_monitor_store.go、asset_monitor_summary.go、audit_purge.go 及对应 _test.go | 10:26 | 进行中（70 分钟上限） |
+| INT-19 | MySQL 方言批次 3C：参数与控制流（numbered_parameter 4、update_or_ignore 1、null_safe 1、aggregate_filter 1、materialized CTE 1） | integrator-gm | mysql_runtime_dialect.go、agent_asset_scope.go、agent_resource_store.go、asset_catalog.go、asset_monitor_store.go、asset_monitor_summary.go、audit_purge.go 及对应 _test.go | 10:26 | 已完成 3ac287b6（8 站点归零，golden 78→71；materialized_cte 豁免并加位置钉） |
 
 ## 待办（排队/待决策）
 
