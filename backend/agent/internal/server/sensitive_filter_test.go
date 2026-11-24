@@ -52,6 +52,15 @@ func TestSensitiveFilterRulesPersistAndMatch(t *testing.T) {
 	if len(view.Rules) != 2 {
 		t.Fatalf("listed %d rules, want 2", len(view.Rules))
 	}
+	if view.Enabled {
+		t.Fatal("filter must be disabled by default")
+	}
+	if _, blocked := store.MatchSensitiveText("usr_a", "dev", "node", "please Run   rm -rf /tmp/x", sensitiveScopeCommand); blocked {
+		t.Fatal("disabled filter must not match even when a rule exists")
+	}
+	if err := store.SetSensitiveFilterEnabled(true); err != nil {
+		t.Fatalf("enable filter: %v", err)
+	}
 
 	if rule, blocked := store.MatchSensitiveText("usr_a", "dev", "node", "please Run   rm -rf /tmp/x", sensitiveScopeCommand); !blocked {
 		t.Fatal("expected command rule to match case-insensitively with folded whitespace")
@@ -74,6 +83,9 @@ func TestSensitiveFilterRulesPersistAndMatch(t *testing.T) {
 	view, err = reopened.ListSensitiveFilter()
 	if err != nil || len(view.Rules) != 2 {
 		t.Fatalf("reopened view=%d err=%v", len(view.Rules), err)
+	}
+	if !view.Enabled {
+		t.Fatal("enabled switch must persist across reopen")
 	}
 }
 
@@ -110,6 +122,9 @@ func TestSensitiveFilterWhitelists(t *testing.T) {
 	store := openSensitiveStore(t)
 	if _, _, err := store.AddSensitiveRules([]SensitiveRuleInput{{Text: "drop database", Scope: "all"}}); err != nil {
 		t.Fatalf("add rule: %v", err)
+	}
+	if err := store.SetSensitiveFilterEnabled(true); err != nil {
+		t.Fatalf("enable filter: %v", err)
 	}
 
 	if _, blocked := store.MatchSensitiveText("usr_a", "dev", "node", "drop database prod", sensitiveScopeCommand); !blocked {
@@ -181,6 +196,9 @@ func TestSensitiveFilterCorruptFileFailsOpen(t *testing.T) {
 	if _, _, err := store.AddSensitiveRules([]SensitiveRuleInput{{Text: "secret", Scope: "all"}}); err != nil {
 		t.Fatalf("add rule: %v", err)
 	}
+	if err := store.SetSensitiveFilterEnabled(true); err != nil {
+		t.Fatalf("enable filter: %v", err)
+	}
 	if err := os.WriteFile(store.sensitiveFilterFilePath(), []byte("{broken"), 0600); err != nil {
 		t.Fatalf("corrupt filter file: %v", err)
 	}
@@ -190,6 +208,39 @@ func TestSensitiveFilterCorruptFileFailsOpen(t *testing.T) {
 	}
 	if _, err := store.ListSensitiveFilter(); err == nil {
 		t.Fatal("list must report the corrupt file")
+	}
+}
+
+func TestSensitiveFilterToggle(t *testing.T) {
+	store := openSensitiveStore(t)
+	if _, _, err := store.AddSensitiveRules([]SensitiveRuleInput{{Text: "drop table", Scope: "command"}}); err != nil {
+		t.Fatalf("add rule: %v", err)
+	}
+	if view, err := store.ListSensitiveFilter(); err != nil || view.Enabled {
+		t.Fatalf("default enabled=%v err=%v", view.Enabled, err)
+	}
+	if _, blocked := store.MatchSensitiveText("usr_a", "dev", "node", "drop table users", sensitiveScopeCommand); blocked {
+		t.Fatal("filter must stay open until enabled")
+	}
+	if err := store.SetSensitiveFilterEnabled(true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if _, blocked := store.MatchSensitiveText("usr_a", "dev", "node", "drop table users", sensitiveScopeCommand); !blocked {
+		t.Fatal("enabled filter must block")
+	}
+	if err := store.SetSensitiveFilterEnabled(false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, blocked := store.MatchSensitiveText("usr_a", "dev", "node", "drop table users", sensitiveScopeCommand); blocked {
+		t.Fatal("disabled filter must stop blocking")
+	}
+	reopened, err := OpenGatewayStore(filepath.Join(store.dbDir, "gateway.db"))
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	if view, err := reopened.ListSensitiveFilter(); err != nil || view.Enabled {
+		t.Fatalf("reopened enabled=%v err=%v", view.Enabled, err)
 	}
 }
 

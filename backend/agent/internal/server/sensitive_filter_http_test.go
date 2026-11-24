@@ -68,6 +68,24 @@ func TestSensitiveFilterAdminHTTP(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &view); err != nil || len(view.Rules) != 2 {
 		t.Fatalf("list body=%s err=%v", resp.Body.String(), err)
 	}
+	if view.Enabled {
+		t.Fatal("filter must default to disabled")
+	}
+
+	resp = sensitiveRequest(t, mux, token, http.MethodPatch, "/v1/admin/sensitive-filter", map[string]any{"enabled": true})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("enable status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var toggle struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &toggle); err != nil || !toggle.Enabled {
+		t.Fatalf("enable body=%s err=%v", resp.Body.String(), err)
+	}
+	resp = sensitiveRequest(t, mux, token, http.MethodGet, "/v1/admin/sensitive-filter", nil)
+	if err := json.Unmarshal(resp.Body.Bytes(), &view); err != nil || !view.Enabled {
+		t.Fatalf("enabled view body=%s err=%v", resp.Body.String(), err)
+	}
 
 	ruleID := added.Rules[0].ID
 	resp = sensitiveRequest(t, mux, token, http.MethodPatch, "/v1/admin/sensitive-filter/rules", map[string]any{"id": ruleID, "enabled": false})
@@ -111,6 +129,10 @@ func TestSensitiveFilterAdminHTTPRejectsInvalidAndNonAdmin(t *testing.T) {
 	resp := sensitiveRequest(t, mux, token, http.MethodPost, "/v1/admin/sensitive-filter/rules", map[string]any{"rules": []map[string]any{{"text": "", "scope": "all"}}})
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("empty rule status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	resp = sensitiveRequest(t, mux, token, http.MethodPatch, "/v1/admin/sensitive-filter", map[string]any{})
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("toggle without enabled status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	resp = sensitiveRequest(t, mux, token, http.MethodPatch, "/v1/admin/sensitive-filter/rules", map[string]any{"id": "sw_x"})
 	if resp.Code != http.StatusBadRequest {

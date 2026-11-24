@@ -234,7 +234,13 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   `sensitive_prompt_blocked` or `sensitive_command_blocked` and records a
   `blocked` audit entry without echoing the matched word to the terminal. A
   whitelist entry exempts one user or one Agent target (cluster plus optional
-  instance; an empty instance means the whole cluster). Rules and whitelist
+  instance; an empty instance means the whole cluster). A global switch controls
+  the whole filter and is **off by default**, including after an upgrade: rules
+  and whitelist entries persist and stay editable, but nothing is intercepted
+  until an administrator turns the switch on. The page shows the current state
+  and warns while it is off. Toggling it uses a PATCH request to
+  `/v1/admin/sensitive-filter` with an `enabled` boolean; the change applies to
+  new requests immediately. Rules and whitelist
   entries are stored in `<dbDir>/sensitive-filter.json` with an atomic 0600
   write; each rule is at most 128 characters and each list holds at most 500
   entries. The filter only sees text users submit directly. The Agent-side static

@@ -973,11 +973,18 @@ const demoSensitiveWhitelist: SensitiveWhitelistEntry[] = [
   { kind: "target", cluster: "staging", created_at: ago(24) },
 ]
 
+let demoSensitiveEnabled = false
+
 export function demoListSensitiveFilter(): SensitiveFilterView {
   return {
+    enabled: demoSensitiveEnabled,
     rules: demoSensitiveRules.map((rule) => ({ ...rule })),
     whitelist: demoSensitiveWhitelist.map((entry) => ({ ...entry })),
   }
+}
+export function demoSetSensitiveFilterEnabled(enabled: boolean): boolean {
+  demoSensitiveEnabled = enabled
+  return demoSensitiveEnabled
 }
 export function demoAddSensitiveRules(inputs: SensitiveRuleInput[]): { rules: SensitiveRule[]; skipped: string[] } {
   const skipped: string[] = []

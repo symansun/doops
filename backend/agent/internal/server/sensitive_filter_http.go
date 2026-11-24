@@ -28,6 +28,23 @@ func (h *GatewayHub) HandleAdminSensitiveFilter(w http.ResponseWriter, r *http.R
 			return
 		}
 		writeJSONHTTP(w, view)
+	case path == "/v1/admin/sensitive-filter" && r.Method == http.MethodPatch:
+		var body struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+			writeSensitiveFilterError(w, errSensitiveInvalid)
+			return
+		}
+		if body.Enabled == nil {
+			writeSensitiveFilterError(w, errSensitiveInvalid)
+			return
+		}
+		if err := h.store.SetSensitiveFilterEnabled(*body.Enabled); err != nil {
+			writeSensitiveFilterError(w, err)
+			return
+		}
+		writeJSONHTTP(w, map[string]interface{}{"enabled": *body.Enabled})
 	case path == "/v1/admin/sensitive-filter/rules":
 		h.handleAdminSensitiveRules(w, r)
 	case path == "/v1/admin/sensitive-filter/whitelist":

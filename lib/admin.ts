@@ -194,7 +194,17 @@ export async function deleteProxyRoute(s: Session, id: string): Promise<void> {
 export async function listSensitiveFilter(s: Session): Promise<SensitiveFilterView> {
   if (s.demo) return (await import("./demo")).demoListSensitiveFilter()
   const view = await req<SensitiveFilterView>(s, "sensitive-filter")
-  return { rules: view.rules || [], whitelist: view.whitelist || [] }
+  return { enabled: view.enabled === true, rules: view.rules || [], whitelist: view.whitelist || [] }
+}
+
+// 总开关默认关闭；只有管理员显式开启后，规则才会拦截新的请求。
+export async function setSensitiveFilterEnabled(s: Session, enabled: boolean): Promise<boolean> {
+  if (s.demo) return (await import("./demo")).demoSetSensitiveFilterEnabled(enabled)
+  const data = await req<{ enabled?: boolean }>(s, "sensitive-filter", {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  })
+  return data.enabled === true
 }
 
 export async function addSensitiveRules(

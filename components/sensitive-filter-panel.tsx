@@ -11,6 +11,7 @@ import {
   listInstances,
   listSensitiveFilter,
   listUsers,
+  setSensitiveFilterEnabled,
   setSensitiveRuleEnabled,
   type AdminInstance,
   type AdminUser,
@@ -43,7 +44,7 @@ function fmtTime(v?: string): string {
 // 敏感词与白名单：对应 Gateway /v1/admin/sensitive-filter，仅平台管理员可用。
 // 提示词和原始命令共用一个过滤器；白名单按用户或目标整体放行。
 export function SensitiveFilterPanel({ session }: { session: Session }) {
-  const [view, setView] = useState<SensitiveFilterView>({ rules: [], whitelist: [] })
+  const [view, setView] = useState<SensitiveFilterView>({ enabled: false, rules: [], whitelist: [] })
   const [users, setUsers] = useState<AdminUser[]>([])
   const [instances, setInstances] = useState<AdminInstance[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -123,6 +124,17 @@ export function SensitiveFilterPanel({ session }: { session: Session }) {
       busyRef.current = false
       setBusy(false)
     }
+  }
+
+  async function toggleFilter() {
+    const next = !view.enabled
+    await run("toggleFilter", async () => {
+      const enabled = await setSensitiveFilterEnabled(session, next)
+      setNotice(enabled
+        ? "敏感词过滤已启用，新的提示词和命令会立即被检查"
+        : "敏感词过滤已停用，规则将不再拦截任何请求")
+      await refresh()
+    })
   }
 
   async function addRules() {
@@ -219,13 +231,33 @@ export function SensitiveFilterPanel({ session }: { session: Session }) {
             Gateway 在鉴权后统一检查用户提交的提示词、终端和 Shell 原始命令；命中即拦截，且不会把命中词回显给用户
           </p>
         </div>
-        <Button onClick={() => load()} disabled={loading || busy} variant="default" size="sm">
-          <RefreshIcon className="size-4" />
-          刷新
-        </Button>
+        <div className="flex items-center gap-2">
+          <Badge variant={view.enabled ? "success" : "default"}>
+            {view.enabled ? "过滤已开启" : "过滤已关闭"}
+          </Badge>
+          <Button
+            onClick={() => toggleFilter()}
+            disabled={!loaded || loading || busy}
+            variant={view.enabled ? "default" : "primary"}
+            size="sm"
+          >
+            {view.enabled ? <BanIcon className="size-4" /> : <CheckIcon className="size-4" />}
+            {view.enabled ? "停用过滤" : "启用过滤"}
+          </Button>
+          <Button onClick={() => load()} disabled={loading || busy} variant="default" size="sm">
+            <RefreshIcon className="size-4" />
+            刷新
+          </Button>
+        </div>
       </div>
 
       <div className="space-y-4 p-4">
+        {loaded && !failed && !view.enabled && (
+          <StatusBanner tone="warning">
+            敏感词过滤当前已关闭（默认状态）。规则和白名单会保留，但不会拦截任何提示词或命令；启用后对新的请求立即生效。
+          </StatusBanner>
+        )}
+
         <StatusBanner tone="info" compact>
           白名单按用户或 Agent 目标整体放行本过滤器。Agent 自身的静态 commandDenyRules 继续负责 AI 自行发起的 Bash 与结构化 K8s 命令；
           Gateway 看不到 doagent 内部工具调用，两层规则互补而非替代。
@@ -241,7 +273,7 @@ export function SensitiveFilterPanel({ session }: { session: Session }) {
             <div>
               <h3 className="text-sm font-semibold">规则</h3>
               <p className="text-xs text-muted-foreground">
-                共 {view.rules.length} 条，启用 {enabledCount} 条；匹配忽略大小写并折叠连续空白
+                共 {view.rules.length} 条，启用 {enabledCount} 条；{view.enabled ? "总开关已开启" : "总开关已关闭，规则暂不生效"}；匹配忽略大小写并折叠连续空白
               </p>
             </div>
             <Input
@@ -443,7 +475,11 @@ export function SensitiveFilterPanel({ session }: { session: Session }) {
           </div>
         </section>
 
-        {empty && <p className="text-xs text-muted-foreground">尚未配置任何规则或白名单，Gateway 不会拦截提示词或命令。</p>}
+        {empty && (
+          <p className="text-xs text-muted-foreground">
+            尚未配置任何规则或白名单，{view.enabled ? "当前没有可拦截的内容。" : "且过滤总开关已关闭，Gateway 不会拦截提示词或命令。"}
+          </p>
+        )}
       </div>
     </div>
   )

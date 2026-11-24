@@ -19,6 +19,9 @@ func TestSensitiveFilterBlocksGatewayToolCalls(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("add rules: %v", err)
 	}
+	if err := fixture.store.SetSensitiveFilterEnabled(true); err != nil {
+		t.Fatalf("enable filter: %v", err)
+	}
 
 	lifecycleSend(t, client, 2, "doops_shell", "sensitive-session", map[string]any{"command": "echo rm -rf /"})
 	response := readK8SFunctionalResponse(t, client, 2)

@@ -24,6 +24,7 @@ export interface SensitiveWhitelistEntry {
 }
 
 export interface SensitiveFilterView {
+  enabled: boolean
   rules: SensitiveRule[]
   whitelist: SensitiveWhitelistEntry[]
 }
@@ -142,7 +143,7 @@ export function filterSensitiveWhitelist(entries: SensitiveWhitelistEntry[], que
   return entries.filter((entry) => normalizeSensitiveTerm(sensitiveWhitelistLabel(entry)).includes(q))
 }
 
-export type SensitiveFilterOp = "load" | "addRules" | "toggleRule" | "deleteRule" | "addWhitelist" | "deleteWhitelist"
+export type SensitiveFilterOp = "load" | "toggleFilter" | "addRules" | "toggleRule" | "deleteRule" | "addWhitelist" | "deleteWhitelist"
 
 export interface SensitiveFilterErrorView {
   kind: "auth" | "forbidden" | "error"
@@ -152,6 +153,7 @@ export interface SensitiveFilterErrorView {
 
 const OP_LABEL: Record<SensitiveFilterOp, string> = {
   load: "加载敏感词配置",
+  toggleFilter: "切换敏感词过滤总开关",
   addRules: "添加敏感词规则",
   toggleRule: "修改敏感词规则",
   deleteRule: "删除敏感词规则",

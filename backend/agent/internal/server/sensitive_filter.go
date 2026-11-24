@@ -63,6 +63,7 @@ type SensitiveWhitelistEntry struct {
 }
 
 type SensitiveFilterView struct {
+	Enabled   bool                      `json:"enabled"`
 	Rules     []SensitiveRule           `json:"rules"`
 	Whitelist []SensitiveWhitelistEntry `json:"whitelist"`
 }
@@ -81,6 +82,7 @@ type SensitiveWhitelistInput struct {
 
 type sensitiveFilterFile struct {
 	Version   int                       `json:"version"`
+	Enabled   bool                      `json:"enabled"`
 	Rules     []SensitiveRule           `json:"rules"`
 	Whitelist []SensitiveWhitelistEntry `json:"whitelist"`
 }
@@ -159,7 +161,25 @@ func (s *GatewayStore) ListSensitiveFilter() (SensitiveFilterView, error) {
 	if whitelist == nil {
 		whitelist = []SensitiveWhitelistEntry{}
 	}
-	return SensitiveFilterView{Rules: rules, Whitelist: whitelist}, nil
+	return SensitiveFilterView{Enabled: s.sensitiveFilter.file.Enabled, Rules: rules, Whitelist: whitelist}, nil
+}
+
+// SetSensitiveFilterEnabled is the global switch. New installations default to
+// off, so upgrading never starts blocking prompts or commands until an
+// administrator explicitly turns the filter on.
+func (s *GatewayStore) SetSensitiveFilterEnabled(enabled bool) error {
+	s.sensitiveMu.Lock()
+	defer s.sensitiveMu.Unlock()
+	if err := s.loadSensitiveFilterLocked(); err != nil {
+		return err
+	}
+	previous := s.sensitiveFilter.file.Enabled
+	s.sensitiveFilter.file.Enabled = enabled
+	if err := s.saveSensitiveFilterLocked(); err != nil {
+		s.sensitiveFilter.file.Enabled = previous
+		return err
+	}
+	return nil
 }
 
 // AddSensitiveRules validates the whole batch before changing anything. Exact
@@ -347,6 +367,9 @@ func (s *GatewayStore) MatchSensitiveText(userID, cluster, instance, text, scope
 	defer s.sensitiveMu.Unlock()
 	if err := s.loadSensitiveFilterLocked(); err != nil {
 		log.Printf("[gateway] sensitive_filter_load_failed: %v", err)
+		return "", false
+	}
+	if !s.sensitiveFilter.file.Enabled {
 		return "", false
 	}
 	for _, entry := range s.sensitiveFilter.file.Whitelist {
