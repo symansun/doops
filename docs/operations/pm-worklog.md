@@ -377,3 +377,10 @@
 - 文档同步（闭环第 1、4 条）：`backend/docs/BUILD_DEPLOY_SOP.md` 第 2 条 CI 门禁段落补三行，写清分组键、谁会被取消、谁不会，以及「被取消≠通过」。
 - 契约测试：`python3 -m pytest backend/test/test_github_release_contract.py -q` → 12 passed（该文件锁 `release.yml` 的 `concurrency.cancel-in-progress is False` 与 `ci.yml` 的 `workflow_call` 输入，未受影响）。
 - 验证方式写明在提交正文里：本次 push 的运行会让 `c465b1da` 那次仍在跑的 push 运行变 `cancelled`，观察 `gh run list` 即可。这是「改 CI 只能靠观察」这条旧判断的反例——观察本身就是证据，只要你说清看什么。
+
+## 09:47 第 46 轮：CI 取消已验证（观察即证据），并从 spec 差异里拣出 SF-23 派出
+
+- **CI concurrency 验证闭环**：push `8d63538f` 后 `gh run list` 显示 `c465b1da` 那次运行 `completed/cancelled`，新运行 `in_progress`；而改动之前创建的 `f438b143`/`6f978c5a`/`6a4cbd2e` 三次运行**没有被追溯取消**（它们创建时还没有 concurrency 组）。三条行为全部符合设计：新推取消旧推、发布门禁与 PR 不取消、旧运行不追溯。这条同时否掉了我 03:15 的旧判断「改 CI 只能靠观察、所以不可验证」——观察 `run list` 就是证据，前提是事先写清看什么。
+- **从 spec 与实现的实际差异里立项 SF-23**（已派 dev-viewer-01）：`SKILL_FIRST_INSPECTION_SPEC.md` §4.4 第 3 条要求按 `charts[]` 渲染 `bar`/`gauge`/`line`，而 `inspect-vm-host/scripts/inspect.sh:602` 真的在产物里发出了 `charts`（1 张 bar、三条 series、unit=%、max=100），前端 `grep -rn charts components/ lib/` 却零命中（只有 `lib/demo.ts:1298` 的无关字符串）。也就是说**Skill 声明的图从来没被渲染过**，属 spec 与实现不一致，不是新需求。此前 SF-06 复核把 §4.4 判为「基本闭环、仅剩 charts 原语抽象」，现在把它坐实成一个可验收的任务。
+- **派活要点**：纯函数放 `lib/inspection-charts.ts`（几何与归一化，不引 React）便于 node --test 覆盖；真实夹具必须来自 docker 实跑 `inspect.sh` 的产物且与同次 metrics 交叉校验（防伪造夹具）；三组反向实验（去 clamp、忽略 unit、忽略 status 颜色）；`package.json` 只允许把新测试插入 `test:console` 硬编码清单（否则守卫进不了 CI，SF-21 踩过同一个坑）；spec §4.4 第 3 条同批改清三种 type 的字段与降级；`CHANGELOG.md` 由我写，避免共享索引互扫。
+- 状态：origin/main = `8d63538f`，ahead/behind 0；工作树只剩外部 Devin 会话的 `backend/deploy/fleet-20261116/first-upgrade.py`。在跑：integrator-gm（INT-17，代码已进 main，报告未到）、dev-viewer-01（SF-23，刚开始）。

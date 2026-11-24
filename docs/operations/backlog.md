@@ -15,6 +15,7 @@
 
 | 编号 | 任务 | 依赖 | 备注 |
 |---|---|---|---|
+| SF-23 | 前端通用图表原语：按 `charts[]` 渲染 `bar`/`gauge`/`line`（spec §4.4 第 3 条） | 无 | 现状核实：`inspect-vm-host/scripts/inspect.sh:602` 真的输出 `charts[{title,type,unit,max,series[]}]`，而 `components/inspection-artifact-viewer.tsx` 与 `lib/` 里 `charts` 零命中 → 产物里声明的图从未渲染 |
 | INT-18 | MySQL 方言批次 3D：引号/保留字与守卫（`reserved_use` 12 处等） | INT-17 | 按 INT-16 施工图；3A 关单后再派，避免两条同时改 `mysql_runtime_dialect.go` |
 | INT-19 | MySQL 方言批次 3C：参数重排（`numbered_parameter` 4 处必须单独真机行值断言，`?N`→`?` 会静默错位参数顺序） | INT-17、INT-18 | 不许并入 3D（错位不会报错，只会取错值） |
 | INT-20 | MySQL 方言批次 3B：JSON（`json_each` 5 + `json_group_array` 2，`JSON_ARRAYAGG` 无聚合内 ORDER BY，语义差最大） | INT-19 | 最后做；`materialized_cte` 单列不并批 |
