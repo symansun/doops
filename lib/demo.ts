@@ -1687,11 +1687,44 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
     },
   ]
 
-  const buildStandardItems = (runId: string, baseMs: number, includeOffline = false, includeCriticalK8s = false): Array<Record<string, unknown>> => [
+  const buildStandardItems = (runId: string, baseMs: number, includeOffline = false, includeCriticalK8s = false): Array<Record<string, unknown>> => {
+    // 这一项演示 Skill 产物的完整形态：Markdown 摘要 + JSON（metrics[]、checks[]、charts[]）。
+    // 图表数值与同一份 metrics 取自同一次采样，避免演示数据自相矛盾。
+    const vmCpu = jitter(23.1, 3.2, 0.2)
+    const vmMem = jitter(33.8, 1.8, 0.5)
+    const vmDisk = 38.8
+    const vmArtifact = {
+      status: "pass",
+      summary: "机器水位与合规基线均正常，核心资源未见异常。",
+      target: "prod-cn/web-01",
+      collector: "skill:inspect-vm-host",
+      metrics: [
+        { key: "cpu_percent", label: "CPU 使用率", value: vmCpu, unit: "%", status: "pass" },
+        { key: "memory_percent", label: "内存使用率", value: vmMem, unit: "%", status: "pass" },
+        { key: "disk_percent", label: "磁盘最高占比", value: vmDisk, unit: "%", status: "pass" },
+      ],
+      charts: [
+        {
+          title: "主机核心资源水位",
+          type: "bar",
+          unit: "%",
+          max: 100,
+          series: [
+            { label: "CPU", value: vmCpu, status: "pass" },
+            { label: "内存", value: vmMem, status: "pass" },
+            { label: "磁盘 (/)", value: vmDisk, status: "pass" },
+          ],
+        },
+      ],
+    }
+    return [
     {
       id: 1, run_id: runId, cluster: "prod-cn", instance: "web-01", asset_id: "vm-web-01", asset_name: "教务门户节点 01（机器巡检）", asset_kind: "vm",
       strategy: "vm_host", collector_method: "agent_local", status: "pass", started_at_ms: baseMs, finished_at_ms: baseMs + 420, duration_ms: 420,
-      metrics: { cpu_percent: jitter(23.1, 3.2, 0.2), memory_percent: jitter(33.8, 1.8, 0.5), disk_percent: 38.8, memory_used_bytes: 5.4 * 1073741824, os_info: "Ubuntu 24.04 LTS" },
+      metrics: { cpu_percent: vmCpu, memory_percent: vmMem, disk_percent: vmDisk, memory_used_bytes: 5.4 * 1073741824, os_info: "Ubuntu 24.04 LTS" },
+      artifact_format: "markdown+json",
+      artifact_json: vmArtifact,
+      artifact_markdown: "### 机器巡检摘要\n\n- 目标：prod-cn/web-01\n- CPU / 内存 / 磁盘水位正常\n- 6 项检查全部通过\n",
       checks: [
         { id: "host.uptime", name: "机器正常运行检查 (M1)", category: "availability", status: "pass", value: "864000s", threshold: ">=300s", detail: "运行稳定，近 10 天无异常重启" },
         { id: "host.cpu_memory", name: "CPU 与内存水位检查 (M2)", category: "resource", status: "pass", value: `CPU ${jitter(23.1, 3.2, 0.2)}% / 内存 ${jitter(33.8, 1.8, 0.5)}%`, threshold: "<80%", detail: "系统级负载正常" },
@@ -1822,7 +1855,8 @@ export async function demoMonitorEngineRequest(path: string, body?: Record<strin
           evidence: { reason: "target_offline" },
         }]
       : []),
-  ]
+    ]
+  }
 
   if (demoMonitorSchedulesStore.length === 0) {
     demoMonitorSchedulesStore.push(...seedSchedules)

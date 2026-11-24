@@ -35,4 +35,4 @@
 - 事实（已核实）：`backend/agent/internal/server/gateway_store_mysql.go:18-19` 注释明写 `It does not select an alternate store for the running Gateway`；`openGatewayMySQL`（同文件 :75）除测试外无调用方；`OpenGatewayStore`（`backend/agent/internal/server/gateway_store.go:32`）只打开 SQLite。MySQL 目前只服务离线迁移工具。
 - 含义：INT-13/14/15 已改的 42 处、INT-16 分类出的剩余 95 处，今天没有一行在 MySQL 上跑。价值是「将来接线时不会出错」。
 - 裁决（09:07）：继续做，理由见上表。INT-16 给出的批次顺序与反向实验构想保留为施工图（`docs/reviews/2026-11-24-mysql-dialect-batch-plan.md`）。
-- 批次进度：3A 时间/授权（julianday 3 + unixepoch 4）已派 INT-17；3D 引号/守卫（reserved_use 12 等）→ 3C 参数重排（numbered_parameter 4 必须单独真机行值断言）→ 3B JSON（语义差最大）待 3A 关单后依次派。`materialized_cte` 单列，不并批。
+- 批次进度：3A 时间/授权（julianday 3 + unixepoch 4）**已关单**（INT-17，`2139e26c` + 我补的 `6a4cbd2e`/`6f978c5a`；真机 139 PASS/2 SKIP）；3D 引号/守卫（reserved_use 12 等）→ 3C 参数重排（numbered_parameter 4 必须单独真机行值断言）→ 3B JSON（语义差最大）待 3A 关单后依次派。`materialized_cte` 单列，不并批。
