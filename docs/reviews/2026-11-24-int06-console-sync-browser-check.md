@@ -203,4 +203,3 @@ expected: { label: 'Agent 离线', variant: 'warning' }
 
 - 不支持同步态仍显示「清单版本 / 最后观测时间」（lead 只要求隐藏「已应用版本」行）；若认为这仍矛盾，需再定文案或后端在该态不返回 revision。
 - `manifestStatus()` 目前仍接收整个 `TargetManifestResponse`，`lib/assets.ts` 的类型未动。
-
