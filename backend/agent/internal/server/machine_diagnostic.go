@@ -181,8 +181,25 @@ type diagnosticApplication struct {
 	Series    []diagnosticMetric `json:"series"`
 }
 
+// diagnosticVerifiedAtSQL renders "the deployment was verified no later than
+// the diagnostic sample" as an integer epoch second comparison: verified_at is
+// stored as RFC3339 text and the sample carries epoch milliseconds, so the
+// sample is bound in whole seconds. Truncating the millisecond part can only
+// include a deployment verified inside the sample's second, never exclude a
+// deployment the previous julianday comparison included.
+func diagnosticVerifiedAtSQL(dialect gatewaySQLDialect) string {
+	return gatewayEpochSecondsFor(dialect, "d.verified_at") + " <= ?"
+}
+
+// diagnosticVerifiedAtArg binds the sample instant in the same unit the SQL
+// renders (whole epoch seconds), so the unit lives with the statement and the
+// test can pin it.
+func diagnosticVerifiedAtArg(at int64) int64 {
+	return at / 1000
+}
+
 func diagnosticDeployments(tx *sql.Tx, v *diagnosticSample) (map[diagnosticApp]*diagnosticApplication, error) {
-	rows, err := tx.Query(`SELECT d.asset_id,s.name,d.namespace,d.application,d.database_name,d.verified_at FROM inventory_business_deployments d JOIN inventory_business_systems s USING(asset_id) WHERE cluster=? AND instance=? AND julianday(d.verified_at)<=julianday(?,'unixepoch') ORDER BY d.asset_id,d.namespace,d.application,d.database_name`, v.Cluster, v.Instance, float64(v.At)/1000)
+	rows, err := tx.Query(`SELECT d.asset_id,s.name,d.namespace,d.application,d.database_name,d.verified_at FROM inventory_business_deployments d JOIN inventory_business_systems s USING(asset_id) WHERE cluster=? AND instance=? AND `+diagnosticVerifiedAtSQL(gatewayDialectStore)+` ORDER BY d.asset_id,d.namespace,d.application,d.database_name`, v.Cluster, v.Instance, diagnosticVerifiedAtArg(v.At))
 	if err != nil {
 		return nil, err
 	}

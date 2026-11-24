@@ -44,9 +44,41 @@ func inspectionStateAt(clock string) string {
 	return `CASE WHEN s.status='pending' AND (s.deadline<=` + clock + ` OR ` + inspectBlock + `<>'') THEN 'missing' ELSE s.status END`
 }
 
-var inspectState = inspectionStateAt("unixepoch()")
+// inspectionReasonAt takes the database clock as a rendered expression so the
+// dialect layer owns how "now" is spelled.
+func inspectionReasonAt(clock string) string {
+	return `CASE WHEN s.status='pending' AND ` + inspectBlock + `<>'' THEN ` + inspectBlock + ` WHEN s.status='pending' AND s.deadline<=` + clock + ` THEN 'collection_deadline_elapsed' ELSE s.reason END`
+}
 
-const inspectReason = `CASE WHEN s.status='pending' AND ` + inspectBlock + `<>'' THEN ` + inspectBlock + ` WHEN s.status='pending' AND s.deadline<=unixepoch() THEN 'collection_deadline_elapsed' ELSE s.reason END`
+// inspectionWorkWindowSQL renders the "in flight right now" window of the work
+// view. opened and deadline are integer epoch seconds, so the window is an
+// integer comparison against the rendered database clock on both dialects.
+func inspectionWorkWindowSQL(dialect gatewaySQLDialect) string {
+	return inspectionWorkWindowAt(gatewayEpochNowFor(dialect))
+}
+
+// inspectionWorkWindowAt pins the clock so a test can prove the two dialect
+// renderings agree on the open/closed boundary instead of on wall-clock time.
+func inspectionWorkWindowAt(clock string) string {
+	return `s.opened<=` + clock + ` AND s.deadline>` + clock
+}
+
+// inspectionOverdueSQL renders the overview's overdue marker: a due plan is
+// overdue once a day has passed past its next_due epoch second.
+func inspectionOverdueSQL(dialect gatewaySQLDialect) string {
+	return inspectionOverdueAt(gatewayEpochNowFor(dialect))
+}
+
+// inspectionOverdueAt pins the clock for the same boundary proof as
+// inspectionWorkWindowAt.
+func inspectionOverdueAt(clock string) string {
+	return `p.next_due+86400<=` + clock
+}
+
+var (
+	inspectState  = inspectionStateAt(gatewayEpochNowSQL())
+	inspectReason = inspectionReasonAt(gatewayEpochNowSQL())
+)
 
 func (s *GatewayStore) inspectionRead(r *http.Request, a TokenAuth) (any, error) {
 	tx, err := s.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
@@ -74,7 +106,7 @@ func (s *GatewayStore) inspectionRead(r *http.Request, a TokenAuth) (any, error)
 	case "weekly":
 		return inspectionWeekly(tx, a, scope, time.Now().UTC())
 	case "work":
-		rows, err := inspectionRows(tx, inventoryGrants+`SELECT s.id AS item_id,s.run_id,s.asset_id,s.cluster,s.instance,s.check_id,s.generation,s.opened,s.deadline `+inspectionJoins+` WHERE `+filter+` AND p.executor=? AND s.status='pending' AND s.opened<=unixepoch() AND s.deadline>unixepoch() AND `+inspectBlock+`='' ORDER BY s.deadline,s.id LIMIT 256`, append(args, a.UserID)...)
+		rows, err := inspectionRows(tx, inventoryGrants+`SELECT s.id AS item_id,s.run_id,s.asset_id,s.cluster,s.instance,s.check_id,s.generation,s.opened,s.deadline `+inspectionJoins+` WHERE `+filter+` AND p.executor=? AND s.status='pending' AND `+inspectionWorkWindowSQL(gatewayDialectStore)+` AND `+inspectBlock+`='' ORDER BY s.deadline,s.id LIMIT 256`, append(args, a.UserID)...)
 		return map[string]any{"work": rows}, err
 	case "report", "download":
 		id, err := strconv.ParseInt(q.Get("run_id"), 10, 64)
@@ -118,7 +150,7 @@ func (s *GatewayStore) inspectionRead(r *http.Request, a TokenAuth) (any, error)
 		}
 		return map[string]any{"run": meta[0], "items": rows, "history": history, "checks": inspectionChecks, "generated_at": time.Now().UTC()}, nil
 	case "", "overview":
-		plans, err := inspectionRows(tx, inventoryGrants+`SELECT p.id AS plan_id,p.name,p.owner,p.executor,p.weekday,p.clock,p.timezone,p.next_due,p.active,(EXISTS(SELECT 1 FROM actor WHERE is_admin=1) AND p.active=1 AND p.next_due+86400<=unixepoch()) AS overdue,(SELECT disabled FROM users WHERE id=p.executor) AS executor_disabled,count(*) AS check_count FROM inspection_scope s JOIN inspection_plans p ON p.id=s.plan_id WHERE `+filter+` GROUP BY p.id ORDER BY p.id DESC`, args...)
+		plans, err := inspectionRows(tx, inventoryGrants+`SELECT p.id AS plan_id,p.name,p.owner,p.executor,p.weekday,p.clock,p.timezone,p.next_due,p.active,(EXISTS(SELECT 1 FROM actor WHERE is_admin=1) AND p.active=1 AND `+inspectionOverdueSQL(gatewayDialectStore)+`) AS overdue,(SELECT disabled FROM users WHERE id=p.executor) AS executor_disabled,count(*) AS check_count FROM inspection_scope s JOIN inspection_plans p ON p.id=s.plan_id WHERE `+filter+` GROUP BY p.id ORDER BY p.id DESC`, args...)
 		if err != nil {
 			return nil, err
 		}

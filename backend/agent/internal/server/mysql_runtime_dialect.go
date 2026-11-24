@@ -88,13 +88,13 @@ var gatewayMySQLRuntimeIssueRules = []gatewayMySQLRuntimeIssueRule{
 	{
 		code:        gatewayMySQLIssueJulianDay,
 		description: "SQLite julianday is not a MySQL function",
-		replacement: "Parse RFC3339 text with STR_TO_DATE, or use FROM_UNIXTIME for the unixepoch modifier",
+		replacement: "Convert stored RFC3339 text with gatewayEpochSecondsFor and compare integer epoch seconds on both dialects",
 		pattern:     regexp.MustCompile(`(?i)\bjulianday\s*\(`),
 	},
 	{
 		code:        gatewayMySQLIssueUnixEpoch,
 		description: "SQLite unixepoch is not a MySQL function",
-		replacement: "Use UNIX_TIMESTAMP for a typed timestamp or compare the stored epoch integer directly",
+		replacement: "Render the database clock with gatewayEpochNowSQL: unixepoch() on SQLite, UNIX_TIMESTAMP() on MySQL, both integer UTC epoch seconds",
 		pattern:     regexp.MustCompile(`(?i)\bunixepoch\s*\(`),
 	},
 	{
@@ -239,6 +239,48 @@ func gatewayConcatFor(dialect gatewaySQLDialect, operands ...string) string {
 		return "CONCAT(" + strings.Join(operands, ", ") + ")"
 	}
 	return strings.Join(operands, " || ")
+}
+
+// gatewayEpochNowSQL renders "the database server's current time" as integer
+// epoch seconds for the dialect the live store speaks.
+func gatewayEpochNowSQL() string { return gatewayEpochNowFor(gatewayDialectStore) }
+
+// gatewayEpochNowFor renders the same clock per dialect: SQLite unixepoch(),
+// MySQL UNIX_TIMESTAMP() with no argument. Both read the database clock rather
+// than the Go process clock, both return integer UTC epoch seconds, and both
+// are independent of the session time zone (NOW() and CURRENT_TIMESTAMP would
+// follow the session zone and silently shift a comparison by hours).
+func gatewayEpochNowFor(dialect gatewaySQLDialect) string {
+	if dialect == gatewayDialectMySQL {
+		return "UNIX_TIMESTAMP()"
+	}
+	return "unixepoch()"
+}
+
+// gatewayEpochSecondsFor renders the timestamp-to-epoch conversion per dialect.
+//
+// Precision: both spellings truncate to whole seconds. SQLite parses with
+// strftime('%s', ...) and MySQL reads the first 19 characters with
+// STR_TO_DATE(..., '%Y-%m-%dT%H:%i:%s'), so a fractional second is dropped by
+// both and the comparison stays an integer comparison. MySQL DATETIME can hold
+// microseconds but not the nanoseconds RFC3339Nano stores, so no rendering can
+// keep them; a second-granular comparison is what both sources actually need.
+//
+// Time zone: the accepted input is the UTC "Z" form every writer produces
+// through formatTime. TIMESTAMPDIFF over two naive DATETIME values is pure
+// arithmetic and never applies the session zone (UNIX_TIMESTAMP('...') would
+// reinterpret the value in the session zone). A value carrying a non-UTC offset
+// is read as if it were UTC; that is a documented limitation of the transition,
+// not a silently different comparison, because no writer emits an offset.
+//
+// NULL: an empty or unparsable value yields NULL in both dialects, so a
+// comparison against it is unknown and the row is filtered out, which is what
+// SQLite already does today.
+func gatewayEpochSecondsFor(dialect gatewaySQLDialect, expression string) string {
+	if dialect == gatewayDialectMySQL {
+		return "TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', STR_TO_DATE(SUBSTRING(" + expression + ", 1, 19), '%Y-%m-%dT%H:%i:%s'))"
+	}
+	return "CAST(strftime('%s', " + expression + ") AS INTEGER)"
 }
 
 func (upsert gatewayUpsert) render(dialect gatewaySQLDialect) string {

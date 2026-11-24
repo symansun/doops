@@ -53,18 +53,30 @@ func TestGatewayMySQLRuntimeSQLAudit(t *testing.T) {
 	// gatewayAuditAppendErrorSQL/gatewayConcatSQL. The rules themselves stay in
 	// the table, so a raw literal reappearing fails here instead of passing
 	// green; TestGatewayMySQLRuntimeDialectExamples keeps proving they fire.
+	// INT-17: unixepoch is absent on purpose. The four sites render their clock
+	// through gatewayEpochNowFor (UNIX_TIMESTAMP() on MySQL, unixepoch() on
+	// SQLite) and their timestamp parses through gatewayEpochSecondsFor.
+	// julianday keeps exactly one site on purpose: the audit_events millisecond
+	// backfill in migrate() (gateway_store_schema.go) is a one-shot SQLite data
+	// migration that INT-17 was explicitly forbidden to touch, so this audit
+	// cannot reach zero without changing that statement. The rules stay in the
+	// table, so a raw literal reappearing anywhere fails here.
 	absent := map[gatewayMySQLRuntimeIssueCode]string{
 		gatewayMySQLIssueInsertOrIgnore: "the four sites render through gatewayUpsertSQL",
 		gatewayMySQLIssueSQLiteConcat:   "the three sites render through gatewayConcatSQL",
+		gatewayMySQLIssueUnixEpoch:      "the four sites render through gatewayEpochNowFor/gatewayEpochSecondsFor",
 	}
 	want := map[gatewayMySQLRuntimeIssueCode]int{
-		gatewayMySQLIssueNumberedParameter:   4,
-		gatewayMySQLIssueUpdateOrIgnore:      1,
-		gatewayMySQLIssueJSONEach:            5,
-		gatewayMySQLIssueJSONAggregate:       2,
-		gatewayMySQLIssueAggregateFilter:     1,
-		gatewayMySQLIssueJulianDay:           3,
-		gatewayMySQLIssueUnixEpoch:           4,
+		gatewayMySQLIssueNumberedParameter: 4,
+		gatewayMySQLIssueUpdateOrIgnore:    1,
+		gatewayMySQLIssueJSONEach:          5,
+		gatewayMySQLIssueJSONAggregate:     2,
+		gatewayMySQLIssueAggregateFilter:   1,
+		// The only remaining julianday is the one-shot audit_events
+		// backfill in gateway_store_schema.go; INT-17 excluded it, so the
+		// runtime sites are zero and the golden stays at one (see the
+		// absent-map comment above).
+		gatewayMySQLIssueJulianDay:           1,
 		gatewayMySQLIssueMaterializedCTE:     1,
 		gatewayMySQLIssueNullSafeParameter:   1,
 		gatewayMySQLIssueSQLiteIntrospection: 8,
@@ -1833,4 +1845,251 @@ func gatewayMySQLTestIndexExists(t *testing.T, ctx context.Context, db *sql.DB, 
 		t.Fatalf("read information_schema for %s.%s: %v", table, index, err)
 	}
 	return count > 0
+}
+
+const int17PinnedClock = "1577836800" // 2020-01-01T00:00:00Z as integer epoch seconds
+
+// gatewayMySQLTestCollectIDs runs query and returns the ordered id column as a
+// comma-joined string so two dialect runs can be compared verbatim.
+func gatewayMySQLTestCollectIDs(t *testing.T, db *sql.DB, query string, args ...any) (string, error) {
+	t.Helper()
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		ids = append(ids, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(ids, ","), rows.Err()
+}
+
+func gatewayMySQLTestHasRuntimeIssue(query string, code gatewayMySQLRuntimeIssueCode) bool {
+	for _, issue := range gatewayMySQLRuntimeIssues(query) {
+		if issue.code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// TestGatewayMySQLTimeSQLRendersForBothDialects covers INT-17 offline: the two
+// time renderings are spelled exactly once, the MySQL spelling is clean for the
+// audit, the rules still fire on the SQLite spelling (so the audit was not
+// widened away), and the live package variables are wired to the dialect layer.
+func TestGatewayMySQLTimeSQLRendersForBothDialects(t *testing.T) {
+	if got, want := gatewayEpochNowFor(gatewayDialectSQLite), "unixepoch()"; got != want {
+		t.Errorf("SQLite database clock = %q, want %q", got, want)
+	}
+	if got, want := gatewayEpochNowFor(gatewayDialectMySQL), "UNIX_TIMESTAMP()"; got != want {
+		t.Errorf("MySQL database clock = %q, want %q (NOW() would follow the session time zone)", got, want)
+	}
+	if got, want := gatewayEpochSecondsFor(gatewayDialectSQLite, "t.expires_at"), "CAST(strftime('%s', t.expires_at) AS INTEGER)"; got != want {
+		t.Errorf("SQLite epoch seconds = %q, want %q", got, want)
+	}
+	parse := gatewayEpochSecondsFor(gatewayDialectMySQL, "t.expires_at")
+	for _, fragment := range []string{
+		"TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00'",
+		"STR_TO_DATE(SUBSTRING(t.expires_at, 1, 19), '%Y-%m-%dT%H:%i:%s')",
+	} {
+		if !strings.Contains(parse, fragment) {
+			t.Errorf("MySQL epoch seconds %q is missing %q", parse, fragment)
+		}
+	}
+	for _, expression := range []string{parse, gatewayEpochNowFor(gatewayDialectMySQL)} {
+		for _, issue := range gatewayMySQLRuntimeIssues(expression) {
+			t.Errorf("MySQL time rendering %q still trips the %s audit rule", expression, issue.code)
+		}
+	}
+	// The rules must keep firing on the SQLite spellings; INT-17 removed the
+	// literals, not the audit.
+	for _, sample := range []struct {
+		query string
+		code  gatewayMySQLRuntimeIssueCode
+	}{
+		{"SELECT julianday(t.expires_at) FROM t", gatewayMySQLIssueJulianDay},
+		{"SELECT unixepoch() AS now", gatewayMySQLIssueUnixEpoch},
+	} {
+		if !gatewayMySQLTestHasRuntimeIssue(sample.query, sample.code) {
+			t.Errorf("the %s rule no longer fires for %q", sample.code, sample.query)
+		}
+	}
+
+	type site struct {
+		name   string
+		sqlite string
+		mysql  string
+	}
+	sites := []site{
+		{"inventory grant freshness", inventoryGrantsSQL(gatewayDialectSQLite), inventoryGrantsSQL(gatewayDialectMySQL)},
+		{"inspection work window", inspectionWorkWindowSQL(gatewayDialectSQLite), inspectionWorkWindowSQL(gatewayDialectMySQL)},
+		{"inspection overdue", inspectionOverdueSQL(gatewayDialectSQLite), inspectionOverdueSQL(gatewayDialectMySQL)},
+		{"inspection state", inspectionStateAt(gatewayEpochNowFor(gatewayDialectSQLite)), inspectionStateAt(gatewayEpochNowFor(gatewayDialectMySQL))},
+		{"inspection reason", inspectionReasonAt(gatewayEpochNowFor(gatewayDialectSQLite)), inspectionReasonAt(gatewayEpochNowFor(gatewayDialectMySQL))},
+		{"diagnostic verified_at", diagnosticVerifiedAtSQL(gatewayDialectSQLite), diagnosticVerifiedAtSQL(gatewayDialectMySQL)},
+	}
+	for _, s := range sites {
+		if s.sqlite == s.mysql {
+			t.Errorf("%s renders the same SQL for both dialects: %q", s.name, s.sqlite)
+		}
+		for _, code := range []gatewayMySQLRuntimeIssueCode{gatewayMySQLIssueJulianDay, gatewayMySQLIssueUnixEpoch} {
+			if gatewayMySQLTestHasRuntimeIssue(s.mysql, code) {
+				t.Errorf("%s MySQL rendering still trips %s: %q", s.name, code, s.mysql)
+			}
+		}
+		for _, mysql := range []string{"TIMESTAMPDIFF", "STR_TO_DATE", "UNIX_TIMESTAMP"} {
+			if strings.Contains(s.sqlite, mysql) {
+				t.Errorf("%s SQLite rendering leaked the MySQL spelling %q: %q", s.name, mysql, s.sqlite)
+			}
+		}
+		t.Logf("%s: sqlite=%q mysql=%q", s.name, s.sqlite, s.mysql)
+	}
+
+	// The live statements (not just the helpers) must carry the SQLite clock,
+	// otherwise the wiring could silently keep a stale literal.
+	for name, query := range map[string]string{
+		"inventoryGrants": inventoryGrants,
+		"inspectState":    inspectState,
+		"inspectReason":   inspectReason,
+	} {
+		if !strings.Contains(query, "unixepoch()") {
+			t.Errorf("%s does not render the database clock through the dialect layer: %q", name, query)
+		}
+		// The SQLite rendering is expected to trip the julianday/unixepoch rules;
+		// that is the audit doing its job. What must hold here is that the live
+		// statement takes its clock from the dialect layer.
+	}
+}
+
+// TestGatewayMySQLTimeComparisonsExecuteOnMySQL proves on a real MySQL 8.4
+// server that every INT-17 predicate returns the same rows as SQLite for the
+// same fixture, including the strict ">" and "<=" boundaries. The clock is
+// pinned, so the boundary assertions do not wobble with wall-clock time.
+func TestGatewayMySQLTimeComparisonsExecuteOnMySQL(t *testing.T) {
+	mysqlDB := gatewayMySQLTestOpenEmpty(t)
+	sqliteDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open the SQLite reference database: %v", err)
+	}
+	sqliteDB.SetMaxOpenConns(1)
+	defer sqliteDB.Close()
+	ctx := context.Background()
+
+	schema := []string{
+		"CREATE TABLE int17_tokens (id BIGINT PRIMARY KEY, expires_at VARCHAR(64) NOT NULL)",
+		"CREATE TABLE int17_deployments (id BIGINT PRIMARY KEY, verified_at VARCHAR(64) NOT NULL)",
+		"CREATE TABLE int17_items (id BIGINT PRIMARY KEY, status VARCHAR(16) NOT NULL, opened BIGINT NOT NULL, deadline BIGINT NOT NULL)",
+		"CREATE TABLE int17_plans (id BIGINT PRIMARY KEY, next_due BIGINT NOT NULL)",
+	}
+	seed := []string{
+		// Empty expiry, exactly the pinned clock (strict > means expired), far
+		// future, one second after the clock, and a sub-second future value.
+		"INSERT INTO int17_tokens (id, expires_at) VALUES (1, ''), (2, '2020-01-01T00:00:00Z'), (3, '2999-01-01T00:00:00Z'), (4, '2020-01-01T00:00:01Z'), (5, '2999-01-01T00:00:00.999Z')",
+		"INSERT INTO int17_deployments (id, verified_at) VALUES (1, '2020-01-01T00:00:00Z'), (2, '2020-01-01T00:00:00Z'), (3, '2019-12-31T23:59:59Z'), (4, '2020-01-01T00:00:00.500Z')",
+		// deadline == clock must be closed, opened == clock must be open.
+		"INSERT INTO int17_items (id, status, opened, deadline) VALUES (1, 'pending', 0, 32503680000), (2, 'pending', 0, 1577836800), (3, 'pending', 0, 1500000000), (4, 'pending', 1577836800, 32503680000)",
+		// next_due + 86400 == clock is overdue (<=), one second later is not.
+		"INSERT INTO int17_plans (id, next_due) VALUES (1, 1577750400), (2, 1577750401), (3, 32503680000)",
+	}
+	dialects := map[string]*sql.DB{"mysql": mysqlDB, "sqlite": sqliteDB}
+	names := make([]string, 0, len(dialects))
+	for name := range dialects {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		db := dialects[name]
+		for _, statement := range schema {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("%s: %s: %v", name, statement, err)
+			}
+		}
+		for _, statement := range seed {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("%s: %s: %v", name, statement, err)
+			}
+		}
+	}
+
+	type probe struct {
+		name  string
+		want  string
+		build func(gatewaySQLDialect) (string, []any)
+	}
+	probes := []probe{
+		{
+			name: "token freshness at the pinned clock",
+			want: "1,3,4,5",
+			build: func(dialect gatewaySQLDialect) (string, []any) {
+				return "SELECT id FROM int17_tokens t WHERE " + inventoryTokenFreshAt(dialect, int17PinnedClock) + " ORDER BY id", nil
+			},
+		},
+		{
+			name: "diagnostic verified_at <= 2020-01-01T00:00:00Z",
+			want: "1,2,3,4",
+			build: func(dialect gatewaySQLDialect) (string, []any) {
+				return "SELECT id FROM int17_deployments d WHERE " + diagnosticVerifiedAtSQL(dialect) + " ORDER BY id", []any{diagnosticVerifiedAtArg(1577836800000)}
+			},
+		},
+		{
+			name: "diagnostic verified_at <= 2019-12-31T23:59:59Z",
+			want: "3",
+			build: func(dialect gatewaySQLDialect) (string, []any) {
+				return "SELECT id FROM int17_deployments d WHERE " + diagnosticVerifiedAtSQL(dialect) + " ORDER BY id", []any{diagnosticVerifiedAtArg(1577836799000)}
+			},
+		},
+		{
+			name: "inspection work window at the pinned clock",
+			want: "1,4",
+			build: func(dialect gatewaySQLDialect) (string, []any) {
+				return "SELECT id FROM int17_items s WHERE " + inspectionWorkWindowAt(int17PinnedClock) + " ORDER BY id", nil
+			},
+		},
+		{
+			name: "inspection overdue at the pinned clock",
+			want: "1",
+			build: func(dialect gatewaySQLDialect) (string, []any) {
+				return "SELECT id FROM int17_plans p WHERE " + inspectionOverdueAt(int17PinnedClock) + " ORDER BY id", nil
+			},
+		},
+	}
+	for _, p := range probes {
+		got := make(map[string]string, len(dialects))
+		for _, name := range names {
+			query, args := p.build(gatewaySQLDialect(name))
+			ids, err := gatewayMySQLTestCollectIDs(t, dialects[name], query, args...)
+			if err != nil {
+				t.Fatalf("%s/%s: %s: %v", p.name, name, query, err)
+			}
+			got[name] = ids
+			t.Logf("%s/%s -> %q (%s)", p.name, name, ids, query)
+		}
+		for _, name := range names {
+			if got[name] != p.want {
+				t.Errorf("%s/%s selected %q, want %q", p.name, name, got[name], p.want)
+			}
+			if got[name] != got["mysql"] {
+				t.Errorf("%s/%s selected %q but MySQL selected %q", p.name, name, got[name], got["mysql"])
+			}
+		}
+	}
+
+	// The wall-clock variant must also agree, so the pinned-clock proof is not
+	// the only evidence that the two clocks line up.
+	for _, name := range names {
+		query := "SELECT id FROM int17_tokens t WHERE " + inventoryTokenFreshSQL(gatewaySQLDialect(name)) + " ORDER BY id"
+		ids, err := gatewayMySQLTestCollectIDs(t, dialects[name], query)
+		if err != nil {
+			t.Fatalf("token freshness/%s: %s: %v", name, query, err)
+		}
+		if ids != "1,3,5" {
+			t.Errorf("token freshness/%s selected %q, want %q (only the 2999 expiries and the empty expiry are fresh)", name, ids, "1,3,5")
+		}
+		t.Logf("token freshness/%s -> %q (%s)", name, ids, query)
+	}
 }

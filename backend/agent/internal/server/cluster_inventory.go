@@ -201,16 +201,36 @@ func (h *GatewayHub) verifyInventoryObservation(ctx context.Context, auth TokenA
 	return tx.Commit()
 }
 
+// inventoryTokenFreshSQL renders the token-expiry guard of inventoryGrants for
+// the live store dialect: an empty expires_at never expires, otherwise the
+// stored RFC3339 text must be strictly newer than the database clock.
+func inventoryTokenFreshSQL(dialect gatewaySQLDialect) string {
+	return inventoryTokenFreshAt(dialect, gatewayEpochNowFor(dialect))
+}
+
+// inventoryTokenFreshAt takes the clock as an SQL expression so a test can pin
+// it to a fixed second. The comparison is a strict greater-than on integer
+// epoch seconds, so a token whose expires_at falls in the current second is
+// already expired: truncating a fractional second can only shorten a token's
+// life, never extend it, which keeps an authorization guard fail-closed.
+func inventoryTokenFreshAt(dialect gatewaySQLDialect, clock string) string {
+	return "(t.expires_at='' OR " + gatewayEpochSecondsFor(dialect, "t.expires_at") + " > " + clock + ")"
+}
+
 // Resolve the same target authority as UserCanUseTarget within the caller's
 // database snapshot. A platform admin resolves to the wildcard target grant.
-const inventoryGrants = `WITH actor AS (
+func inventoryGrantsSQL(dialect gatewaySQLDialect) string {
+	return `WITH actor AS (
  SELECT u.id, u.is_admin FROM users u JOIN tokens t ON t.user_id=u.id
  WHERE u.id=? AND t.id=? AND t.kind='user' AND u.disabled=0 AND t.revoked_at=''
- AND (t.expires_at='' OR julianday(t.expires_at)>julianday('now'))
+ AND ` + inventoryTokenFreshSQL(dialect) + `
 ), permitted AS (
  SELECT '*' AS cluster, '*' AS instance, is_admin FROM actor WHERE is_admin=1
  UNION ALL SELECT g.cluster, g.instance, a.is_admin FROM actor a JOIN grants g ON g.user_id=a.id WHERE a.is_admin=0
 ) `
+}
+
+var inventoryGrants = inventoryGrantsSQL(gatewayDialectStore)
 
 func authorizeInventory(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
