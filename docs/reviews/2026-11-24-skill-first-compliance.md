@@ -181,7 +181,97 @@ lib/demo.ts: 类型定义与 20+ 处 demo 数据/渲染
 | #4a proxy-evasion 端口超集（20171） | **已消除** | `skills_builtin/inspect-proxy-evasion/scripts/inspect.sh:109` 的 `PROXY_PORTS` = {1080,3128,7890,7891,8118,10808,20170}，与 spec 第 118 行七端口逐项一致 |
 | #4b ssh-host 未指名受管通道 | **已补齐** | `skills_builtin/inspect-ssh-host/SKILL.md` 指名 `doops_ssh`（clientCallable）为唯一受管通道、白名单当前仅 `mcp_doops_k8s_read`/`mcp_dosql_read`、退化分支写 `managed_ssh_channel=unavailable`；spec 第 132 行记该能力缺口并注明另立任务 |
 | #18 §4.4 可视化器 | **基本闭环** | SF-05 的「与上次对比」「历史趋势」与 SF-17 的 `artifact_state=missing` 已进 main；`components/inspection-artifact-viewer.tsx:546` 有内联 SVG 趋势线。仍缺「charts 原语抽象」这一层，如实保留为欠账，不与本轮混做 |
-| #19 §5 红线5 真实隧道 e2e | **仍未覆盖** | 需真实 target + canary 凭据（SF-11 / D8），本机无隧道 |
+| #19 §5 红线5 真实隧道 e2e | **本机真实隧道已覆盖**（真集群仍不覆盖） | SF-11 用本机进程把 Gateway store + 真 ws 端口 + 真 Agent 运行时接起来跑通一次 `inspect-vm-host` 巡检，四组反向实验与断言变异验证见 §8.5；需 kubeconfig/RBAC 的 `inspect-k8s-cluster`、受管 SSH/网站巡检与 Helm 凭据链路仍不在覆盖内（§8.2） |
 
 结论修正：原报 6 项「部分符合」中，**4 项（#2/#3/#4a/#4b）在当前 HEAD 已消除**，#1 收敛为单文件死代码并转 SF-21，#18 基本闭环仅剩 charts 抽象。真正未覆盖的只剩「真实 Gateway↔Agent 隧道端到端」一项，卡在凭据而非代码。
 
+---
+
+## 八、SF-11 本机真实隧道 E2E 可行性判定（2026-11-24）
+
+**结论：红线 5 可以只在本机闭合，不需要真实 target、canary 凭据或 Kubernetes 集群。** 缺的不是凭据，而是一段把「真 Gateway 服务端 + 真 Agent 隧道客户端」装到同一台机器上的测试装配；生产代码无需改动。
+
+### 8.1 逐段判定
+
+| 环节 | 生产实现 | 本机可跑 | 依据 |
+|---|---|---|---|
+| 目标定义 | 目标 = (cluster, instance)，只要求两者非空 | ✅ | `agent_registration.go:55-60`；不要求 kubeconfig、k8s 版本或云凭据 |
+| Agent 注册 | `/v1/agent/connect` 带 token 时强制 `VerifyAgentEnrollment(token, cluster, instance)` | ✅ | 同文件 `:73`，token 绑定精确目标；失败 401 `agent_enrollment_auth_failed`（`:157-165`） |
+| 用户授权 | `UserCanUseTarget` 在 POST /v1/monitor/runs 校验 | ✅ | `monitor_engine_http.go:452-455`，无权 → 403 `monitor_target_forbidden` |
+| 隧道（Gateway 侧） | `AgentRegistrationHandler.ServeHTTP` → `upgrader.Upgrade` → `AgentRegistry` | ✅ | `agent_registration.go:87`、`tunnel_hub.go:290`；真 websocket 升级 |
+| 隧道（Agent 侧） | `(*Gateway).ServeGatewayWebSocketConnWithReady` | ✅ | `handler_ws.go:20`；与 `cmd/agent` 的 `runReverseTunnel` 调用同一函数 |
+| 下发 | Skill 包经 `doops_skill_sync` 落到 `DOOPS_AGENT_SKILLS_ROOT`，再经 `doops_shell` 执行 | ✅ | `skills_agent.go:40`、`skills_registry.go:1013`；脚本模式不经过 AI |
+| 执行 | `inspect-vm-host/scripts/inspect.sh` 只需 `sh` + `python3` | ✅ | 对 `/proc` 缺失降级为 warning，不伪造 0；macOS 实测 exit=0 |
+| 回传/读回 | 结果落 SQLite，指标投影 `inspection_metric_points`，产物写 `<dbDir>/artifacts` | ✅ | GET run detail 重算 `artifact_state`（`monitor_engine_store.go:505`）；GET metrics 读投影表 |
+
+Gateway 入口 `backend/gateway/main.go` 只是 `gatewaycmd.Run` 的 11 行包装，没有 e2e 专属逻辑；本机用 `httptest.Server` 承载 hub 的完整路由表（真 TCP 端口、真 HTTP/WS 编解码），不需要另起监听端口。
+
+### 8.2 必须真集群/真外部资源、本测试不覆盖
+
+- `inspect-k8s-cluster`：`scripts/inspect.sh` 调 `kubectl`，需 kubeconfig + RBAC + 可达 apiserver。
+- 远程主机类（`doops_ssh` 受管通道 / ssh-host）与网站巡检：需真实网络、真实凭据。
+- Helm/exec 变更与 credential materialization：需已部署 target 与 canary 凭据（T2 范围）。
+- 容器模式（dispatcher docker）：本机 Docker 可用但测试不依赖；脚本模式不需要容器。
+
+### 8.3 最小可跑组合
+
+1. 临时 SQLite store + `GatewayHubOptions{RequireAgentEnrollment: true}` 的 GatewayHub + `httptest.Server`（真端口）。
+2. `CreateAgentEnrollment("dev","local")` 真 token；Agent 侧 `NewGateway()` + `ServeGatewayWebSocketConnWithReady` 带该 token 连 `ws://…/v1/agent/connect?cluster=dev&instance=local`。
+3. operator 用户 + `ScopeGrant{Cluster:"dev", Instance:"local"}`；POST `/v1/monitor/runs` `{"targets":[{"cluster":"dev","instance":"local"}],"skills":["inspect-vm-host"]}`。
+4. 断言：`collector_method=skill_script`、`evidence.synced=true`、checks/metrics 非空、产物文件与 sha256 匹配、GET detail `artifact_state=present`、GET `/v1/monitor/metrics` 能按 run_id 读回。
+
+依赖只有本机 `sh` 与 `python3`（GitHub `ubuntu-latest` 自带），无外部服务，可进现有 Go 测试范围。
+
+### 8.4 本机承载的边界（如实）
+
+- Gateway 与 Agent 在同一测试进程内，WS 仍是真 socket；跨机网络分区、Agent 重连退避（`cmd/agent` 的 `runReverseTunnel` 职责）不在覆盖范围。
+- 不断言宿主数值：`inspect-vm-host` 的 disk 检查可能本来就是 critical；断言只针对结构、状态机与证据链，不针对具体百分比。
+
+### 8.5 实测证据（2026-11-24，macOS 本机）
+
+测试文件：`backend/agent/internal/server/gateway_tunnel_e2e_test.go`（package `server`，与生产代码同包只共享内部测试助手，不绕过隧道）。
+
+命令与真实输出（`env -u GOROOT` 规避 shell 里指向旧 1.26.2 的 GOROOT）：
+
+```
+$ cd backend/agent && env -u GOROOT go test ./internal/server -run 'TestGatewayTunnelE2E' -v
+=== RUN   TestGatewayTunnelE2ESkillRunRoundTrip
+    gateway_tunnel_e2e_test.go:233: run=run_35bc002281c61824 status=critical item=critical checks=5 metrics=9
+--- PASS: TestGatewayTunnelE2ESkillRunRoundTrip (0.76s)
+=== RUN   TestGatewayTunnelE2EOfflineTunnelFailsFast
+    gateway_tunnel_e2e_test.go:275: offline dispatch returned in 65.497833ms with status=failed reason=target_offline
+--- PASS: TestGatewayTunnelE2EOfflineTunnelFailsFast (0.46s)
+=== RUN   TestGatewayTunnelE2EEnrollmentAndGrantRejection
+--- PASS: TestGatewayTunnelE2EEnrollmentAndGrantRejection (0.43s)
+=== RUN   TestGatewayTunnelE2EArtifactMissingAfterDeletion
+--- PASS: TestGatewayTunnelE2EArtifactMissingAfterDeletion (0.76s)
+ok  	github.com/user/doops/agent/internal/server	3.375s
+```
+
+正向链路（用例 1）断言的证据链：`run.offline_targets=0`、状态 ∈ {success,warning,critical}（本次 critical，因宿主磁盘 95%）、item 非 offline/error 且 `reason` 为空、asset/strategy 绑定、`collector_method=skill_script`、`evidence.synced=true`、entrypoint 非空、5 条 checks 状态合法、产物文件字节数与 `sha256` 与回传一致、`GET /v1/monitor/metrics` 按 `run_id` 读回 9 个键值、`GET /v1/monitor/runs/<id>` 的 run 与 item `artifact_state=present`、detail 里的产物 payload 指标与 POST 返回逐键相等。
+
+四组反向实验（都能失败，不是走过场）：
+
+| 实验 | 做法 | 期望与实测 |
+|---|---|---|
+| 隧道断开后下发 | 先注册成功，再 `stopAgent()` 关 WS 并等 hub 注销，然后 POST（客户端超时放宽到 15s 以暴露挂住） | 65.5ms 内返回 `status=failed`、`offline_targets=1`、item `offline`/`target_offline`、存在 `agent.online` critical 检查；断言耗时 < 10s，挂住即失败 |
+| 未授权 target | 只有 `dev/local` grant 的用户下发 `dev/other` | HTTP 403 且 body 含 `monitor_target_forbidden`；随后 `GET /v1/monitor/runs` 仍为 0 条（拒绝发生在建 run 之前） |
+| 未授权 target 注册 | 用 `dev/local` 的 enrollment token 拨 `dev/other` 的 `/v1/agent/connect` | 握手 HTTP 401、body 含 `agent_enrollment_auth_failed`，hub 中不存在 `dev/other` |
+| 产物被删 | 先校验产物落盘，再 `os.RemoveAll` 整个 `item_1` 目录 | detail 的 run 与 item `artifact_state` 均为 `missing`，checks 保留，`/v1/monitor/metrics` 仍能按 `run_id` 找到点（指标落库不被产物丢失抹掉） |
+
+断言可失败的直接证据（变异验证）：把用例 4 的两处 `monitorArtifactStateMissing` 改成 `monitorArtifactStatePresent` 后单跑该用例：
+
+```
+--- FAIL: TestGatewayTunnelE2EArtifactMissingAfterDeletion (0.70s)
+    gateway_tunnel_e2e_test.go:357: run artifact_state = "missing" after deleting
+      .../artifacts/2026-11-24/run_013ee9372f6dd84f/item_1, want "present"
+FAIL	github.com/user/doops/agent/internal/server	1.899s
+```
+
+改回后全绿，说明断言确实绑定 API 返回值而不是恒真。
+
+CI：`.github/workflows/ci.yml:40-42` 已在 `backend/agent` 跑 `go test -timeout 20m ./...`（ubuntu-latest + Go 1.25.14，`python3` 预装），本用例无外部依赖，自动纳入现有 Go 测试范围，**不新建 job、不改 ci.yml**。
+
+一处如实记录的契约细节（非阻塞、未改生产代码）：Skill 运行的 `monitor_run_items.metrics_json` 恒为空——全仓无代码给 `item.Metrics` 赋值（SF-09 已退役原生采集器，只剩 `monitor_engine_store.go:276`/`:557` 的读写列），前端也无人读该字段（`components/` 下无 `.metrics.` 访问）。Skill 指标的真实回读路径是产物 payload + `inspection_metric_points` + `GET /v1/monitor/metrics`，测试据此断言 detail 内产物 payload 与 POST 返回等价，而不是断言这个 vacuous 字段。
+
+未覆盖（明确保留）：`inspect-k8s-cluster` 的 kubectl/kubeconfig/RBAC、受管 SSH 与网站巡检的真实网络与凭据、Helm/exec 变更与 credential materialization（§8.2）。这些都需要真集群或真凭据，不是本机进程能替的。
