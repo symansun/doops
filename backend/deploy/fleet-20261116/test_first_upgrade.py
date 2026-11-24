@@ -360,10 +360,10 @@ def test_rollback_registry_identity_at_subprocess_boundary(transaction, monkeypa
         category = {"moved-tag": "old_runtime_manifest_mismatch", "missing-runtime": "old_runtime_descriptor_mismatch",
                     "wrong-child": "old_runtime_manifest_mismatch", "wrong-size": "old_runtime_descriptor_size_mismatch"}[issue]
         with pytest.raises(m.UpgradeError, match=category):
-            m.registry(a, reference, {"imagePullSecrets": [{"name": "registry-auth"}]}, OLD_DIGEST)
+            m.registry(a, reference, {"imagePullSecrets": [{"name": "registry-auth"}]}, OLD_DIGEST, {"spec": {}})
         assert "docker://" + NEW not in calls
     else:
-        m.registry(a, reference, {"imagePullSecrets": [{"name": "registry-auth"}]}, OLD_DIGEST)
+        m.registry(a, reference, {"imagePullSecrets": [{"name": "registry-auth"}]}, OLD_DIGEST, {"spec": {}})
         assert calls == ["docker://" + reference] + ([child_ref] if layout != "single" else []) + ["docker://" + NEW]
 
 

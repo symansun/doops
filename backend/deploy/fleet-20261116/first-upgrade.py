@@ -124,18 +124,33 @@ def render(a):
         for r in rs["metadata"]["ownerReferences"]), "bootstrap_workload_mismatch")
     source = pod["spec"]
     agent = next(c for c in source["containers"] if c["name"] == "doops-agent")
-    mounts = [m for m in agent.get("volumeMounts", []) if
-              m["mountPath"].rstrip("/") in ("/root/.kube", "/root/.kube/config")]
-    require(len(mounts) == 1 and source.get("nodeName"), "independent_kubeconfig_required")
-    volume = next(v for v in source["volumes"] if v["name"] == mounts[0]["name"])
-    require(any(key in volume for key in ("hostPath", "secret", "persistentVolumeClaim")) and
-            volume["name"] != "fleet-code", "independent_kubeconfig_required")
-    for key, kind, field in (("secret", "secret", "secretName"),
-                             ("persistentVolumeClaim", "persistentvolumeclaim", "claimName")):
-        if key in volume:
-            metadata = get(a, kind, volume[key][field])["metadata"]
-            require(not metadata.get("ownerReferences") and not metadata.get("annotations", {}).get(
-                "meta.helm.sh/release-name"), "kubeconfig_source_owned")
+    if getattr(a, "kubeconfig_secret", ""):
+        secret = get(a, "secret", a.kubeconfig_secret)
+        metadata = secret["metadata"]
+        require(not metadata.get("ownerReferences") and not metadata.get("annotations", {}).get(
+            "meta.helm.sh/release-name"), "kubeconfig_source_owned")
+        kubeconfig_text = base64.b64decode(secret.get("data", {}).get("config", "")).decode()
+        volume = {"name": "fleet-kubeconfig", "secret": {"secretName": a.kubeconfig_secret}}
+        mount = {"name": "fleet-kubeconfig", "mountPath": "/root/.kube", "readOnly": True}
+    else:
+        mounts = [m for m in agent.get("volumeMounts", []) if
+                  m["mountPath"].rstrip("/") in ("/root/.kube", "/root/.kube/config") or
+                  "/root/.kube/config".startswith(m["mountPath"].rstrip("/") + "/")]
+        require(len(mounts) == 1 and source.get("nodeName"), "independent_kubeconfig_required")
+        mount = mounts[0]
+        volume = next(v for v in source["volumes"] if v["name"] == mount["name"])
+        require(any(key in volume for key in ("hostPath", "secret", "persistentVolumeClaim")) and
+                volume["name"] != "fleet-code", "independent_kubeconfig_required")
+        for key, kind, field in (("secret", "secret", "secretName"),
+                                 ("persistentVolumeClaim", "persistentvolumeclaim", "claimName")):
+            if key in volume:
+                metadata = get(a, kind, volume[key][field])["metadata"]
+                require(not metadata.get("ownerReferences") and not metadata.get("annotations", {}).get(
+                    "meta.helm.sh/release-name"), "kubeconfig_source_owned")
+        kubeconfig_path = Path("/root/.kube/config")
+        kubeconfig_text = kubeconfig_path.read_text() if kubeconfig_path.exists() else ""
+    require("/var/run/secrets/kubernetes.io" not in kubeconfig_text and
+            "tokenFile" not in kubeconfig_text, "kubeconfig_source_owned")
     params = {key: value for key, value in vars(a).items() if key != "action"}
     command = ["run"]
     for key, value in params.items():
@@ -147,7 +162,7 @@ def render(a):
                 containers=[{"name": "controller", "image": a.image, "imagePullPolicy": "IfNotPresent",
                     "command": ["python3", "/release/first-upgrade.py"], "args": command,
                     "env": [{"name": "KUBECONFIG", "value": "/root/.kube/config"}],
-                    "volumeMounts": [dict(mounts[0], readOnly=True),
+                    "volumeMounts": [dict(mount, readOnly=True),
                                      {"name": "fleet-code", "mountPath": "/release", "readOnly": True}]}])
     docs = [{"apiVersion": "v1", "kind": "ConfigMap", "immutable": True,
              "metadata": {"name": a.job_name + "-code", "namespace": a.namespace},
@@ -158,6 +173,16 @@ def render(a):
              "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 3600,
                       "template": {"spec": spec}}}]
     print(json.dumps({"apiVersion": "v1", "kind": "List", "items": docs}))
+
+
+def without_restart(deployment):
+    meta = deployment["spec"].get("template", {}).get("metadata", {})
+    annotations = meta.get("annotations")
+    if annotations is not None:
+        annotations.pop("kubectl.kubernetes.io/restartedAt", None)
+        if not annotations:
+            meta.pop("annotations")
+    return deployment
 
 
 def normalized(a, live, document):
@@ -187,7 +212,7 @@ def authority(spec):
     return spec
 
 
-def registry(a, old_image, pod, old_digest):
+def registry(a, old_image, pod, old_digest, live_pod):
     auths = {}
     for ref in pod.get("imagePullSecrets", []):
         data = get(a, "secret", ref["name"])["data"]
@@ -196,7 +221,18 @@ def registry(a, old_image, pod, old_digest):
         json.dump({"auths": auths}, auth)
         auth.flush()
         command = ["skopeo", "inspect", "--raw", "--authfile", auth.name]
-        raw = run(command + ["docker://" + old_image], timeout=120, raw=True)
+        try:
+            raw = run(command + ["docker://" + old_image], timeout=120, raw=True)
+        except UpgradeError:
+            node = live_pod["spec"].get("nodeName", "")
+            pinned = pod.get("nodeName") == node or pod.get("nodeSelector", {}).get(
+                "kubernetes.io/hostname") == node
+            agent = container({"spec": {"template": {"spec": pod}}})
+            require(node and "@" in old_image and pinned and
+                    agent.get("imagePullPolicy", "IfNotPresent") != "Always",
+                    "old_registry_artifact_unavailable")
+            run(command + ["docker://" + a.image], timeout=120, raw=True)
+            return
         manifest = json.loads(raw)
         media_types = ("application/vnd.oci.image.manifest.v1+json",
                        "application/vnd.docker.distribution.manifest.v2+json")
@@ -275,7 +311,7 @@ def upgrade(a):
         digest = controller_digest(a)
         require(digest == a.image.split("@")[1], "platform_digest_required")
         rows = history(a, a.base_revision)
-        live = get(a, "deployment", a.workload)
+        live = without_restart(get(a, "deployment", a.workload))
         meta = live["metadata"]
         require(meta.get("annotations", {}).get("meta.helm.sh/release-name") == a.release and
                 meta["annotations"].get("meta.helm.sh/release-namespace") == a.namespace and
@@ -293,7 +329,7 @@ def upgrade(a):
         values = json.loads(values_raw)
         require((values["gateway"]["cluster"], values["gateway"]["instance"]) == (a.cluster, a.instance),
                 "helm_target_mismatch")
-        registry(a, old_image, live["spec"]["template"]["spec"], old_digest)
+        registry(a, old_image, live["spec"]["template"]["spec"], old_digest, pods[0])
         backup = {"history.json": json.dumps(rows), "values.json": values_raw, "manifest.yaml": manifest,
                   "all-values.json": helm(a, "get", "values", a.release, "--revision", str(a.base_revision), "--all", "-o", "json"),
                   "deployment.json": json.dumps(live), "baseline.json": json.dumps(baseline)}
@@ -330,7 +366,7 @@ def upgrade(a):
                        "--no-hooks", "--timeout", "180s", "--wait=false"]
             helm(a, *command, "--dry-run=server", timeout=210)
             history(a, a.base_revision)
-            now = get(a, "deployment", a.workload)
+            now = without_restart(get(a, "deployment", a.workload))
             require(now["metadata"]["uid"] == meta["uid"] and now["spec"] == live["spec"], "baseline_changed")
             receipt(a, phase="upgrading", backupSecret=a.job_name + "-backup", baselineRevision=a.base_revision)
             attempted = True
@@ -350,7 +386,7 @@ def upgrade(a):
         time.sleep(15)
         require(verify(a, a.image, a.source_commit, digest) == evidence, "candidate_changed")
         history(a, a.base_revision + 1)
-        require(get(a, "deployment", a.workload)["spec"] == new_spec, "candidate_spec_changed")
+        require(without_restart(get(a, "deployment", a.workload))["spec"] == new_spec, "candidate_spec_changed")
         receipt(a, phase="complete", releaseCommit=evidence["release_commit"], revision=a.base_revision + 1)
     except BaseException as error:
         diagnosis = failure(error)
@@ -362,7 +398,7 @@ def upgrade(a):
             try:
                 # A command error is an unknown result: inspect history before any recovery mutation.
                 latest = max(history(a), key=lambda r: int(r["revision"]))
-                now = get(a, "deployment", a.workload)
+                now = without_restart(get(a, "deployment", a.workload))
                 require(now["metadata"]["uid"] == meta["uid"], "rollback_uid_changed")
                 if int(latest["revision"]) == a.base_revision:
                     history(a, a.base_revision)
@@ -380,13 +416,13 @@ def upgrade(a):
                         pass  # Read the result below; never replay a rollback with an unknown outcome.
                     rolled = max(history(a, a.base_revision + 2), key=lambda r: int(r["revision"]))
                     require(rolled.get("description") == f"Rollback to {a.base_revision}", "rollback_unconfirmed")
-                    now = get(a, "deployment", a.workload)
+                    now = without_restart(get(a, "deployment", a.workload))
                     require(now["metadata"]["uid"] == meta["uid"] and now["spec"] == old_spec, "rollback_spec_changed")
                     k(a, "patch", "deployment", a.workload, "--type=json", "--patch-file=/dev/stdin", stdin=json.dumps([
                         {"op": "test", "path": "/metadata/uid", "value": meta["uid"]},
                         {"op": "test", "path": "/metadata/resourceVersion", "value": now["metadata"]["resourceVersion"]},
                         {"op": "replace", "path": "/spec", "value": live["spec"]}]))
-                    require(get(a, "deployment", a.workload)["spec"] == live["spec"], "restored_spec_changed")
+                    require(without_restart(get(a, "deployment", a.workload))["spec"] == live["spec"], "restored_spec_changed")
                     phase = "rolled-back"
                 restored = verify(a, old_image, a.old_commit, old_digest)
                 receipt(a, **diagnosis, phase=phase, image=old_image, sourceCommit=a.old_commit, releaseCommit=restored["release_commit"],
@@ -429,6 +465,7 @@ def main(argv=None):
     for name in ("namespace", "release", "workload", "cluster", "instance", "base-revision", "image",
                  "source-commit", "release-tag", "gateway-url", "job-name", "old-commit"):
         parser.add_argument("--" + name, required=True, type=int if name == "base-revision" else str)
+    parser.add_argument("--kubeconfig-secret", default="")
     a = parser.parse_args(argv)
     try:
         require(re.fullmatch(r"[a-z0-9.:/_-]+@sha256:[0-9a-f]{64}", a.image) and
@@ -437,7 +474,8 @@ def main(argv=None):
                 "invalid_parameters")
         require(all(re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", value) for value in
                     (a.namespace, a.release, a.workload, a.job_name)) and len(a.job_name) <= 55 and
-                all(re.fullmatch(r"[A-Za-z0-9_.-]+", value) for value in (a.cluster, a.instance, a.release_tag)),
+                all(re.fullmatch(r"[A-Za-z0-9_.-]+", value) for value in (a.cluster, a.instance, a.release_tag)) and
+                (not a.kubeconfig_secret or re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", a.kubeconfig_secret)),
                 "invalid_target_parameters")
         if a.action != "render":
             global A
