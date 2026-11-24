@@ -42,6 +42,7 @@ import {
   maintenanceOutput,
   type MaintenanceLog,
 } from "@/lib/files-maintenance"
+import { formatBytes, friendlyFileError } from "@/lib/files-errors"
 import {
   FileIcon,
   FolderIcon,
@@ -72,6 +73,13 @@ interface UploadProgress {
   detail: string
   failed: number
   active: boolean
+  stopping: boolean
+}
+
+interface UploadItem {
+  file: File
+  rel: string
+  path: string
 }
 
 function parentDir(dir: string) {
@@ -151,9 +159,11 @@ export function FilesPanel({
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
   const [preview, setPreview] = useState(false)
+  const [retryItems, setRetryItems] = useState<UploadItem[]>([])
+  const uploadAbort = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
-  const { prompt, dialog } = useAppDialog()
+  const { prompt, confirm, dialog } = useAppDialog()
 
   useEffect(() => {
     cache.cwd = cwd
@@ -163,8 +173,11 @@ export function FilesPanel({
   }, [cache, cwd, openPath, content, dirty])
 
   const activeOp = Boolean(busy || upload?.active || maint?.running)
-  // Uploads and file operations write the same tree; only one runs at a time.
-  const locked = busy || Boolean(upload?.active)
+  // Uploads, file operations and workspace cleanup write the same tree; only one runs at a time.
+  const locked = busy || Boolean(upload?.active) || Boolean(maint?.running)
+  // 草稿只存在内存里的 Map，改完要手动触发一次重渲染才能出现在列表里。
+  const [draftTick, setDraftTick] = useState(0)
+  const touchDrafts = useCallback(() => setDraftTick((tick) => tick + 1), [])
   // What the editor shows now, for a save that returns after more typing.
   const editor = useRef({ openPath, content })
   editor.current = { openPath, content }
@@ -211,7 +224,7 @@ export function FilesPanel({
         setEntries(parsed.entries)
         setCwd(remoteDir)
       } catch (err) {
-        if (!stale()) setListErr((err as Error).message)
+        if (!stale()) setListErr(friendlyFileError((err as Error).message))
       } finally {
         if (!stale()) setListBusy(false)
       }
@@ -237,6 +250,8 @@ export function FilesPanel({
     setBusy(true)
     setStatus(null)
     let buf = ""
+    // 读取失败时不能进入编辑态：否则会用空/半截内容覆盖远端原文件。
+    let readError = ""
     try {
       const relativePath = workspaceRelativePath(sessionId, path)
       if (relativePath === null || !relativePath) {
@@ -254,21 +269,31 @@ export function FilesPanel({
         (ev) => {
           if (ev.type === "output") buf += ev.data
           else if (ev.type === "result") buf += extractText(ev.result)
-          else if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
+          else if (ev.type === "error") readError = ev.error
         },
       )
+      if (readError) {
+        setStatus({ kind: "err", text: friendlyFileError(readError) })
+        return
+      }
+      const previous = editor.current
+      if (previous.openPath !== path && drafts.current.get(path) === undefined && dirty && previous.openPath) {
+        // 带未保存修改切换文件时，先把当前编辑内容存成草稿，避免静默丢失。
+        drafts.current.set(previous.openPath, previous.content)
+        touchDrafts()
+      }
       setOpenPath(path)
       setContent(buf)
       setDirty(false)
     } catch (err) {
-      setStatus({ kind: "err", text: (err as Error).message })
+      setStatus({ kind: "err", text: friendlyFileError((err as Error).message) })
     } finally {
       setBusy(false)
     }
   }
 
   async function save() {
-    if (!openPath || busy) return
+    if (!openPath || locked) return
     const savedPath = openPath
     const saved = content
     setBusy(true)
@@ -288,7 +313,7 @@ export function FilesPanel({
           arguments: { session_id: sessionId, path: relativePath, content },
         },
         (ev) => {
-          if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
+          if (ev.type === "error") setStatus({ kind: "err", text: friendlyFileError(ev.error) })
           else if (ev.type === "result") {
             // Text typed while the write was in flight stays an unsaved draft.
             const current = editor.current
@@ -300,13 +325,14 @@ export function FilesPanel({
         },
       )
     } catch (err) {
-      setStatus({ kind: "err", text: (err as Error).message })
+      setStatus({ kind: "err", text: friendlyFileError((err as Error).message) })
     } finally {
       setBusy(false)
     }
   }
 
   async function newFile() {
+    if (locked) return
     const name = await prompt({
       title: "新建文件",
       message: "文件名相对于当前目录，保存后才会真正创建。",
@@ -321,10 +347,11 @@ export function FilesPanel({
       return
     }
     drafts.current.set(path, "")
+    touchDrafts()
     setOpenPath(path)
     setContent("")
     setDirty(true)
-    setStatus({ kind: "ok", text: "输入内容后点击保存即可创建" })
+    setStatus({ kind: "ok", text: "草稿已创建，输入内容后点击保存才会写入远端" })
   }
 
   // 返回是否成功；callTool 的 error 事件和随后抛出的同一错误只记一次。
@@ -364,6 +391,14 @@ export function FilesPanel({
   }
 
   async function cleanWorkspace() {
+    if (locked) return
+    const confirmed = await confirm({
+      title: "清理整个工作区？",
+      message: `会永久删除 ${workspaceRoot || "当前工作区"} 下的全部文件、Git 裸仓库和未保存草稿，不能撤销。`,
+      confirmLabel: "清理工作区",
+      danger: true,
+    })
+    if (!confirmed) return
     let args: Record<string, string>
     try {
       args = cleanWorkspaceRequest(sessionId)
@@ -387,7 +422,7 @@ export function FilesPanel({
   }
 
   // 收集一次 doops_shell 调用的 stdout 与错误；result 里的启动失败也算失败。
-  async function runShell(command: string): Promise<{ output: string; error: string }> {
+  async function runShell(command: string, signal?: AbortSignal): Promise<{ output: string; error: string }> {
     const state = { output: "", progress: "" }
     let error = ""
     await callTool(
@@ -397,6 +432,7 @@ export function FilesPanel({
         instance: target.instance,
         tool: TOOLS.shell,
         arguments: { session_id: sessionId, command },
+        signal,
       },
       (ev) => {
         if (ev.type === "output") {
@@ -415,7 +451,7 @@ export function FilesPanel({
   }
 
   // 通过 doops_file_write 逐个写入文件，子目录先 mkdir -p
-  async function writeRemoteFile(path: string, text: string) {
+  async function writeRemoteFile(path: string, text: string, signal?: AbortSignal) {
     const relativePath = workspaceRelativePath(sessionId, path)
     if (relativePath === null || !relativePath) throw new Error("上传路径必须位于当前工作区内")
     let err: string | null = null
@@ -426,6 +462,7 @@ export function FilesPanel({
         instance: target.instance,
         tool: TOOLS.fileWrite,
         arguments: { session_id: sessionId, path: relativePath, content: text },
+        signal,
       },
       (ev) => {
         if (ev.type === "error") err = ev.error
@@ -434,11 +471,12 @@ export function FilesPanel({
     if (err) throw new Error(err)
   }
 
-  async function mkdirRemote(dir: string) {
+  async function mkdirRemote(dir: string, signal?: AbortSignal) {
     const safeDir = workspaceRelativePath(sessionId, dir)
     const safeRoot = workspaceRootPath(sessionId)
     if (safeDir === null || !safeRoot) throw new Error("上传目录必须位于当前工作区内")
     const remoteDir = safeDir ? `${safeRoot}/${safeDir}` : safeRoot
+    let err = ""
     await callTool(
       session,
       {
@@ -446,13 +484,17 @@ export function FilesPanel({
         instance: target.instance,
         tool: TOOLS.shell,
         arguments: { session_id: sessionId, command: `mkdir -p ${shq(remoteDir)}` },
+        signal,
       },
-      () => {},
+      (ev) => {
+        if (ev.type === "error") err = ev.error
+      },
     )
+    if (err) throw new Error(err)
   }
 
   // 大文件/二进制：base64 分片经 doops_file_write 暂存，再由 doops_shell 组装并校验 SHA-256
-  async function uploadChunked(file: File, dest: string) {
+  async function uploadChunked(file: File, dest: string, signal?: AbortSignal) {
     const safeRoot = workspaceRootPath(sessionId)
     if (!safeRoot) throw new Error("工作区路径无效")
     const buffer = await file.arrayBuffer()
@@ -462,106 +504,137 @@ export function FilesPanel({
     const partsDir = `${safeRoot}/${UPLOAD_PARTS_DIR}/${uploadId}`
     const total = planUploadParts(file.size)
     for (let i = 0; i < total; i++) {
+      if (signal?.aborted) throw new Error("已取消")
       setUpload((p) => (p ? { ...p, detail: `分片 ${i + 1}/${total}` } : p))
       const chunk = encodeBase64Chunk(bytes.subarray(i * TRANSFER_CHUNK_BYTES, Math.min((i + 1) * TRANSFER_CHUNK_BYTES, bytes.length)))
-      await writeRemoteFile(`${partsDir}/${partFileName(i)}`, chunk)
+      await writeRemoteFile(`${partsDir}/${partFileName(i)}`, chunk, signal)
     }
+    if (signal?.aborted) throw new Error("已取消")
     setUpload((p) => (p ? { ...p, detail: "校验中…" } : p))
-    const res = await runShell(assembleUploadCommand({ root: safeRoot, partsDir, target: dest, sha256 }))
+    const res = await runShell(assembleUploadCommand({ root: safeRoot, partsDir, target: dest, sha256 }), signal)
     if (res.error) throw new Error(res.error)
     const receipt = parseUploadReceipt(res.output, sha256)
     if (!receipt.ok) throw new Error(receipt.error)
   }
 
-  // 一键上传：小文本直接 file_write，其余文件（≤64 MiB）走 base64 分片
+  // 一键上传：小文本直接 file_write，其余文件（≤64 MiB）走 base64 分片；失败或中止的留在 pending 里可重试。
   async function handleUpload(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return
-    const files = Array.from(fileList)
     // The picker keeps its selection; reset it so the same files can be chosen again.
+    // Copy first: clearing input.value empties the live FileList in Chromium, so reading
+    // Array.from(fileList) afterwards would yield zero files.
+    const picked = Array.from(fileList)
     if (fileInputRef.current) fileInputRef.current.value = ""
     if (dirInputRef.current) dirInputRef.current.value = ""
     if (locked) return
-    const skipped: string[] = []
-    const reasons: string[] = []
-    const dirsToMake = new Set<string>()
-    const destinations = files.map((file) => {
+    const items: UploadItem[] = []
+    for (const file of picked) {
       const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
-      return { file, rel, path: joinWorkspacePath(sessionId, cwd, rel) }
-    })
-    if (destinations.some((item) => !item.path)) {
-      setStatus({ kind: "err", text: "上传路径必须位于当前工作区内" })
-      if (fileInputRef.current) fileInputRef.current.value = ""
-      if (dirInputRef.current) dirInputRef.current.value = ""
-      return
+      const path = joinWorkspacePath(sessionId, cwd, rel)
+      if (!path) {
+        setStatus({ kind: "err", text: "上传路径必须位于当前工作区内" })
+        return
+      }
+      items.push({ file, rel, path })
     }
-    const safeDestinations = destinations as Array<{ file: File; rel: string; path: string }>
+    setRetryItems([])
+    await uploadBatch(items)
+  }
 
-    // 预先计算需要创建的子目录（文件夹上传时 webkitRelativePath 带路径）
-    for (const { rel } of safeDestinations) {
-      const slash = rel.lastIndexOf("/")
+  function stopUpload() {
+    uploadAbort.current?.abort()
+    setUpload((p) => (p ? { ...p, stopping: true, detail: "正在停止…" } : p))
+  }
+
+  async function retryUpload() {
+    if (locked || retryItems.length === 0) return
+    const items = retryItems
+    setRetryItems([])
+    await uploadBatch(items)
+  }
+
+  // 逐批上传：目录先建，单个文件失败不影响其他文件，没完成的部分留给「继续上传」。
+  async function uploadBatch(items: UploadItem[]) {
+    const controller = new AbortController()
+    uploadAbort.current = controller
+    const signal = controller.signal
+    setStatus(null)
+    setUpload({ total: items.length, done: 0, current: "", detail: "", failed: 0, active: true, stopping: false })
+
+    const dirsToMake = new Set<string>()
+    for (const item of items) {
+      const slash = item.rel.lastIndexOf("/")
       if (slash > 0) {
-        const dir = joinWorkspacePath(sessionId, cwd, rel.slice(0, slash))
+        const dir = joinWorkspacePath(sessionId, cwd, item.rel.slice(0, slash))
         if (dir) dirsToMake.add(dir)
       }
     }
-
-    setStatus(null)
-    setUpload({ total: files.length, done: 0, current: "", detail: "", failed: 0, active: true })
-
-    // 先创建目录树（按路径深度排序，浅的先建）
-    for (const d of Array.from(dirsToMake).sort((a, b) => a.length - b.length)) {
+    // 浅的先建，深目录的父目录一定已经存在
+    for (const dir of Array.from(dirsToMake).sort((a, b) => a.length - b.length)) {
+      if (signal.aborted) break
       try {
-        await mkdirRemote(d)
+        await mkdirRemote(dir, signal)
       } catch {
-        /* 忽略，写文件时若失败再计入 */
+        /* 写文件时若目录仍然缺失会再报一次，并计入失败 */
       }
     }
 
     let done = 0
+    let ok = 0
     let failed = 0
-    for (const { file: f, rel, path: dest } of safeDestinations) {
-      setUpload((p) => (p ? { ...p, current: rel, detail: "" } : p))
-      if (!looksTextual(f) && f.size > MAX_TRANSFER_BYTES) {
-        skipped.push(rel)
+    const reasons: string[] = []
+    const pending: UploadItem[] = []
+    for (const item of items) {
+      if (signal.aborted) {
+        pending.push(item)
+        continue
+      }
+      setUpload((p) => (p ? { ...p, current: item.rel, detail: "" } : p))
+      if (!looksTextual(item.file) && item.file.size > MAX_TRANSFER_BYTES) {
+        pending.push(item)
         failed++
         done++
+        reasons.push(`${item.rel}：超过 ${formatBytes(MAX_TRANSFER_BYTES)}，请用「上传命令」走 doops push`)
         setUpload((p) => (p ? { ...p, done, failed } : p))
         continue
       }
       try {
-        if (looksTextual(f)) {
-          const text = await f.text()
-          await writeRemoteFile(dest, text)
+        if (looksTextual(item.file)) {
+          await writeRemoteFile(item.path, await item.file.text(), signal)
         } else {
-          await uploadChunked(f, dest)
+          await uploadChunked(item.file, item.path, signal)
         }
+        ok++
       } catch (err) {
-        failed++
-        reasons.push(`${rel}：${(err as Error).message}`)
+        pending.push(item)
+        // 用户主动停止不算失败，也不必再报一次错
+        if (!signal.aborted) {
+          failed++
+          reasons.push(`${item.rel}：${friendlyFileError((err as Error).message)}`)
+        }
       }
       done++
-      setUpload((p) => (p ? { ...p, done, failed, detail: "" } : p))
+      setUpload((p) => (p ? { ...p, done, failed } : p))
     }
 
-    setUpload((p) => (p ? { ...p, active: false, current: "", detail: "" } : p))
-    const ok = done - failed
-    if (skipped.length > 0) {
+    uploadAbort.current = null
+    setRetryItems(pending)
+    setUpload((p) => (p ? { ...p, active: false, stopping: false, current: "", detail: "" } : p))
+    const summary = reasons.slice(0, 3).join("；") + (reasons.length > 3 ? ` 等 ${reasons.length} 个` : "")
+    if (signal.aborted) {
+      setStatus({
+        kind: pending.length === 0 ? "ok" : "err",
+        text: `已停止上传：成功 ${ok}，未完成 ${pending.length}。${pending.length > 0 ? "可点「继续上传」重试。" : ""}`,
+      })
+    } else if (pending.length > 0) {
       setStatus({
         kind: ok > 0 ? "ok" : "err",
-        text: `已上传 ${ok}/${files.length} 个文件。${skipped.length} 个超过 64 MiB 被跳过，请用下方「复制上传命令」走 doops push。${reasons.slice(0, 3).join("；")}`,
+        text: `上传结束：成功 ${ok}，失败 ${failed}。${summary}`,
       })
     } else {
-      setStatus({
-        kind: failed === 0 ? "ok" : "err",
-        text: failed === 0
-          ? `上传完成：成功 ${ok}。`
-          : `上传完成：成功 ${ok}，失败 ${failed}。${reasons.slice(0, 3).join("；")}${reasons.length > 3 ? ` 等 ${reasons.length} 个` : ""}`,
-      })
+      setStatus({ kind: "ok", text: `上传完成：成功 ${ok}。` })
     }
     await list(cwd)
-    // 清空 input，便于重复选择同一文件
-    if (fileInputRef.current) fileInputRef.current.value = ""
-    if (dirInputRef.current) dirInputRef.current.value = ""
   }
 
   // 下载：先取大小和 SHA-256，再分块拉 base64，拼装校验一致才落盘。
@@ -599,7 +672,7 @@ export function FilesPanel({
       setTimeout(() => URL.revokeObjectURL(url), 1000)
       setStatus({ kind: "ok", text: `已下载 ${name}` })
     } catch (err) {
-      setStatus({ kind: "err", text: (err as Error).message })
+      setStatus({ kind: "err", text: friendlyFileError((err as Error).message) })
     } finally {
       setBusy(false)
     }
@@ -623,13 +696,23 @@ export function FilesPanel({
     }
   }
 
-  async function deleteEntry(path: string, name: string) {
+  async function deleteEntry(path: string, name: string, isDir: boolean) {
     if (locked) return
     const relative = workspaceRelativePath(sessionId, path)
     if (relative === null || !relative) {
       setStatus({ kind: "err", text: "只能删除当前工作区内的文件或目录" })
       return
     }
+    // rm -rf 不可恢复，删除前必须显式确认。
+    const confirmed = await confirm({
+      title: isDir ? `删除目录 ${name}？` : `删除文件 ${name}？`,
+      message: isDir
+        ? "目录及其全部内容会被永久删除，这个操作不能撤销。"
+        : "文件会被永久删除，这个操作不能撤销。",
+      confirmLabel: "删除",
+      danger: true,
+    })
+    if (!confirmed) return
     setBusy(true)
     setStatus(null)
     try {
@@ -638,14 +721,23 @@ export function FilesPanel({
       for (const key of Array.from(drafts.current.keys())) {
         if (key === path || key.startsWith(`${path}/`)) drafts.current.delete(key)
       }
+      touchDrafts()
       closeIfUnder(path)
       setStatus({ kind: "ok", text: `已删除 ${name}` })
       await list(cwd)
     } catch (err) {
-      setStatus({ kind: "err", text: (err as Error).message })
+      setStatus({ kind: "err", text: friendlyFileError((err as Error).message) })
     } finally {
       setBusy(false)
     }
+  }
+
+  // 丢弃本地草稿：只清内存里的内容，不碰远端文件。
+  function discardDraft(path: string, name: string) {
+    drafts.current.delete(path)
+    touchDrafts()
+    closeIfUnder(path)
+    setStatus({ kind: "ok", text: `已丢弃草稿 ${name}` })
   }
 
   async function renameEntry(path: string, name: string) {
@@ -671,21 +763,23 @@ export function FilesPanel({
         `if [ -e ${shq(newPath)} ]; then echo "rename failed: target exists"; exit 1; fi; mv -n -- ${shq(path)} ${shq(newPath)}`,
       )
       if (res.output.includes("rename failed: target exists")) throw new Error(`目标 ${newName} 已存在`)
-      if (res.error) throw new Error(res.error)
+      if (res.error) throw new Error(friendlyFileError(res.error))
       if (openPath === path || openPath?.startsWith(`${path}/`)) {
         setOpenPath(newPath + (openPath === path ? "" : openPath.slice(path.length)))
       }
       moveDraftKey(path, newPath)
+      touchDrafts()
       setStatus({ kind: "ok", text: `已重命名为 ${newName}` })
       await list(cwd)
     } catch (err) {
-      setStatus({ kind: "err", text: (err as Error).message })
+      setStatus({ kind: "err", text: friendlyFileError((err as Error).message) })
     } finally {
       setBusy(false)
     }
   }
 
   async function newFolder() {
+    if (locked) return
     const input = await prompt({
       title: "新建目录",
       message: "目录名相对于当前目录。",
@@ -704,11 +798,11 @@ export function FilesPanel({
     setStatus(null)
     try {
       const res = await runShell(`mkdir -p -- ${shq(path)}`)
-      if (res.error) throw new Error(res.error)
+      if (res.error) throw new Error(friendlyFileError(res.error))
       setStatus({ kind: "ok", text: `已创建目录 ${name}` })
       await list(cwd)
     } catch (err) {
-      setStatus({ kind: "err", text: (err as Error).message })
+      setStatus({ kind: "err", text: friendlyFileError((err as Error).message) })
     } finally {
       setBusy(false)
     }
@@ -768,6 +862,20 @@ export function FilesPanel({
   }
 
   const crumbs = (workspaceRelativePath(sessionId, cwd) || "").split("/").filter(Boolean)
+  // 只在本文件里新建、还没保存的草稿，远端目录里没有它，要单独列出来。
+  const normalizedCwd = cwd.replace(/\/+$/, "") || "/"
+  const listingNames = useMemo(() => new Set(entries.map((e) => e.name)), [entries])
+  const draftRows = useMemo(() => {
+    void draftTick
+    const rows: { name: string; path: string }[] = []
+    for (const path of drafts.current.keys()) {
+      if (parentDir(path) !== normalizedCwd) continue
+      const name = path.slice(path.lastIndexOf("/") + 1)
+      if (!name || listingNames.has(name)) continue
+      rows.push({ name, path })
+    }
+    return rows.sort((a, b) => a.name.localeCompare(b.name))
+  }, [draftTick, drafts, normalizedCwd, listingNames])
 
   return (
     <div
@@ -899,14 +1007,26 @@ export function FilesPanel({
       {/* 上传进度 */}
       {upload && (
         <div className="shrink-0 border-b bg-card px-3 py-2">
-          <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center justify-between gap-2 text-xs">
             <span className="text-foreground">
-              {upload.active ? "上传中…" : "上传结束"} {upload.done}/{upload.total}
+              {upload.active ? (upload.stopping ? "正在停止…" : "上传中…") : "上传结束"} {upload.done}/{upload.total}
               {upload.failed > 0 && <span className="ml-1 text-destructive">（{upload.failed} 失败/跳过）</span>}
             </span>
-            <span className="truncate pl-2 font-mono text-muted-foreground">
-              {upload.current}
-              {upload.detail && ` ${upload.detail}`}
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate font-mono text-muted-foreground">
+                {upload.current}
+                {upload.detail && ` ${upload.detail}`}
+              </span>
+              {upload.active && (
+                <Button onClick={stopUpload} disabled={upload.stopping} variant="ghost" size="sm">
+                  {upload.stopping ? "停止中…" : "停止"}
+                </Button>
+              )}
+              {!upload.active && retryItems.length > 0 && (
+                <Button onClick={() => void retryUpload()} disabled={locked} variant="ghost" size="sm">
+                  继续上传 {retryItems.length} 个
+                </Button>
+              )}
             </span>
           </div>
           <div className="progress-track mt-1.5 h-1.5">
@@ -988,6 +1108,31 @@ export function FilesPanel({
             {!listErr && entries.length === 0 && !listBusy && (
               <p className="px-2 py-2 text-xs text-muted-foreground">空目录</p>
             )}
+            {draftRows.map((d) => (
+              <div key={`draft:${d.path}`} className="group flex items-center">
+                <button
+                  onClick={() => void openFile(d.path)}
+                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                    openPath === d.path ? "bg-primary/15 text-foreground" : "text-foreground/90 hover:bg-muted"
+                  }`}
+                >
+                  <FileIcon width={15} height={15} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate">{d.name}</span>
+                  <span className="ml-auto shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-[10px] text-warning">未保存</span>
+                </button>
+                <span className="flex shrink-0 items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                  <button
+                    type="button"
+                    onClick={() => discardDraft(d.path, d.name)}
+                    className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                    title="丢弃草稿"
+                    aria-label={`丢弃草稿 ${d.name}`}
+                  >
+                    <TrashIcon width={13} height={13} />
+                  </button>
+                </span>
+              </div>
+            ))}
             {entries.map((e) => {
               const full = joinWorkspacePath(sessionId, cwd, e.name)
               if (!full) return null
@@ -1035,7 +1180,7 @@ export function FilesPanel({
                     </button>
                     <button
                       type="button"
-                      onClick={() => void deleteEntry(full, e.name)}
+                      onClick={() => void deleteEntry(full, e.name, e.isDir)}
                       disabled={locked}
                       className="rounded p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50"
                       title="删除"

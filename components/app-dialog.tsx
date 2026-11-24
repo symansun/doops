@@ -14,11 +14,33 @@ export type PromptOptions = {
   inputType?: "text" | "password"
 }
 
+export type ConfirmOptions = {
+  title: string
+  message?: string
+  confirmLabel?: string
+  cancelLabel?: string
+  /** 破坏性操作：确认按钮改用 danger 样式。 */
+  danger?: boolean
+}
+
 type PromptRequest = {
   id: number
   options: PromptOptions
   resolve: (value: string | null) => void
   settled: boolean
+}
+
+type ConfirmRequest = {
+  id: number
+  options: ConfirmOptions
+  resolve: (value: boolean) => void
+  settled: boolean
+}
+
+function settleConfirm(request: ConfirmRequest, value: boolean) {
+  if (request.settled) return
+  request.settled = true
+  request.resolve(value)
 }
 
 function settle(request: PromptRequest, value: string | null) {
@@ -64,8 +86,84 @@ export function useAppDialog() {
     }
   }, [])
 
-  const dialog = request ? <AppDialog key={request.id} request={request} onClose={close} /> : null
-  return { prompt, dialog }
+  const confirmRef = useRef<ConfirmRequest | null>(null)
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
+
+  const confirm = useCallback(
+    (options: ConfirmOptions) =>
+      new Promise<boolean>((resolve) => {
+        const previous = confirmRef.current
+        if (previous) settleConfirm(previous, false)
+        const next: ConfirmRequest = { id: ++seq.current, options, resolve, settled: false }
+        confirmRef.current = next
+        setConfirmRequest(next)
+      }),
+    [],
+  )
+
+  const closeConfirm = useCallback((value: boolean) => {
+    const current = confirmRef.current
+    if (!current) return
+    confirmRef.current = null
+    setConfirmRequest(null)
+    settleConfirm(current, value)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      const current = confirmRef.current
+      if (!current) return
+      confirmRef.current = null
+      settleConfirm(current, false)
+    }
+  }, [])
+
+  const dialog = (
+    <>
+      {request ? <AppDialog key={`prompt-${request.id}`} request={request} onClose={close} /> : null}
+      {confirmRequest ? (
+        <ConfirmDialog key={`confirm-${confirmRequest.id}`} request={confirmRequest} onClose={closeConfirm} />
+      ) : null}
+    </>
+  )
+  return { prompt, confirm, dialog }
+}
+
+function ConfirmDialog({
+  request,
+  onClose,
+}: {
+  request: ConfirmRequest
+  onClose: (value: boolean) => void
+}) {
+  return (
+    <Modal
+      title={request.options.title}
+      size="sm"
+      hideCloseButton
+      onClose={() => onClose(false)}
+    >
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onClose(true)
+        }}
+      >
+        {request.options.message ? (
+          <p className="text-sm leading-relaxed text-foreground">{request.options.message}</p>
+        ) : null}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button type="button" onClick={() => onClose(false)} size="sm">
+            {request.options.cancelLabel || "取消"}
+          </Button>
+          <Button type="submit" size="sm" variant={request.options.danger ? "danger" : "primary"}>
+            {request.options.confirmLabel || "确认"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  )
 }
 
 function AppDialog({

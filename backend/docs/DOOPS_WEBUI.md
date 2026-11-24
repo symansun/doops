@@ -243,15 +243,29 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   `.doops-upload/` and assembled by one `doops_shell` command that verifies the
   SHA-256, renames atomically and cleans staged parts. Single-file download reads
   size + SHA-256 first, then fetches 3 MiB base64 ranges via `doops_shell` and
-  verifies the assembled bytes before saving. Row delete, rename and new-folder
-  buttons submit directly without a confirmation dialog.
+  verifies the assembled bytes before saving. 新建目录 and 重命名 read the new name in
+  an input dialog; 删除 (file or directory) and 清理工作区 (wipe the whole workspace
+  and its bare repo) always ask for confirmation first and are rendered as
+  destructive. Editing is capped by the Agent's `doops read` limit (1 MiB by default),
+  so an oversized or binary file opens as a read error instead of an empty editor;
+  single-file upload is capped at 64 MiB and points at `doops push` beyond that.
 - The Files section is labeled 部署包 in the sidebar (the tab id stays `files`).
   Its 「上传文件」/「上传文件夹」 entries are native `label` + `<input type="file">`
   pairs, so the browser opens the chooser itself instead of a scripted
-  `input.click()` that mobile browsers and some WebViews ignore. While another
+  `input.click()` that mobile browsers and some WebViews ignore. The picker's
+  selection is copied to a plain array before the inputs are cleared, because
+  Chromium empties the live `FileList` as soon as `input.value` is reset — without
+  the copy a pick uploads as "0/0" with no error. While another
   operation runs the labels lose hover, the input is disabled, and a skipped drop
   says why. Files and folders can also be dropped anywhere on the panel and land
-  in the current directory with the same progress block.
+  in the current directory with the same progress block. 停止 aborts the in-flight
+  chunk through an AbortController, and every file that did not finish is offered
+  again as 继续上传 N 个, which retries only those. Failures are translated into
+  Chinese (size limit, binary file, missing path, permission, disk full, shell exit
+  code) instead of showing the raw Agent error.
+- New files and unsaved edits are kept in an in-memory draft map. A draft with no
+  remote counterpart shows as a 未保存 row above the listing, opens directly into
+  the editor, and can be discarded without touching the Agent.
 - Markdown files (`.md`, `.markdown`, `.mdx`) open with an 编辑/预览 switch; the
   preview renders through the shared Markdown component with images disabled, and
   the editor keeps the plain-text source for saving.
