@@ -322,8 +322,7 @@ func declaredAgentResourcesSQLFor(dialect gatewaySQLDialect) string {
 
 func declaredAgentResources(ctx context.Context, tx *sql.Tx, cluster, instance string) ([]declaredAgentResource, error) {
 	rows, err := tx.QueryContext(ctx, declaredAgentResourcesSQL(),
-		cluster, instance, cluster, instance, cluster, instance, cluster, instance,
-		cluster, instance, cluster, instance, cluster, instance)
+		targetPairArgs(cluster, instance, 7)...)
 	if err != nil {
 		return nil, err
 	}

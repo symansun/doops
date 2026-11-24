@@ -55,7 +55,7 @@ func TestGatewayMySQLNumberedParametersBindByTextOrder(t *testing.T) {
 	// The list statement: four repetitions of (cluster, instance) from the
 	// catalog, then the manage flag.
 	listQuery := workspaceCatalog + "SELECT kind,id,name,address,linked,assigned FROM assets WHERE linked OR assigned OR ? ORDER BY kind,id"
-	rows := target(listQuery, "alpha", "beta", "alpha", "beta", "alpha", "beta", "alpha", "beta", false)
+	rows := target(listQuery, targetPairArgs("alpha", "beta", 4, false)...)
 	var got []string
 	for rows.Next() {
 		var kind, id, name, address string
@@ -74,7 +74,7 @@ func TestGatewayMySQLNumberedParametersBindByTextOrder(t *testing.T) {
 	}
 	rows.Close()
 
-	rows = target(listQuery, "alpha", "beta", "alpha", "beta", "alpha", "beta", "alpha", "beta", true)
+	rows = target(listQuery, targetPairArgs("alpha", "beta", 4, true)...)
 	got = nil
 	for rows.Next() {
 		var kind, id, name, address string
@@ -106,7 +106,7 @@ func TestGatewayMySQLNumberedParametersBindByTextOrder(t *testing.T) {
 		{"machine", "s1", false},
 	} {
 		var exists bool
-		if err := db.QueryRowContext(ctx, existenceQuery, "alpha", "beta", "alpha", "beta", "alpha", "beta", "alpha", "beta", probe.kind, probe.id).Scan(&exists); err != nil {
+		if err := db.QueryRowContext(ctx, existenceQuery, targetPairArgs("alpha", "beta", 4, probe.kind, probe.id)...).Scan(&exists); err != nil {
 			t.Fatalf("existence %s/%s: %v", probe.kind, probe.id, err)
 		}
 		if exists != probe.want {
@@ -117,7 +117,7 @@ func TestGatewayMySQLNumberedParametersBindByTextOrder(t *testing.T) {
 	// declaredAgentResources: five unions plus the machine join and the
 	// diagnostic left join repeat the pair, then the credential JSON filters.
 	sourceQuery := declaredAgentResourcesSQLFor(gatewayDialectMySQL)
-	rows = target(sourceQuery, "alpha", "beta", "alpha", "beta", "alpha", "beta", "alpha", "beta", "alpha", "beta", "alpha", "beta", "alpha", "beta")
+	rows = target(sourceQuery, targetPairArgs("alpha", "beta", 7)...)
 	got = nil
 	for rows.Next() {
 		var kind, id, name, key, identity, credentialType, use string

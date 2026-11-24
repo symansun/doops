@@ -23,6 +23,21 @@ const workspaceCatalog = `WITH catalog(kind,id,name,address) AS (
  LEFT JOIN inventory_agent_assets a ON a.cluster=? AND a.instance=? AND a.kind=c.kind AND a.asset_id=c.id
 ) `
 
+// targetPairArgs builds the bind list for catalog statements that repeat the
+// workspace target once per placeholder. Both dialects bind plain ? in text
+// order, so the order produced here IS the binding: a call site that assembles
+// the pairs by hand can silently swap cluster and instance without any SQL
+// error, which is exactly the failure mode the ?N to ? rewrite introduced.
+// Every catalog statement therefore goes through this one constructor, and
+// gateway_mysql_binding_order_test.go pins both its order and its call sites.
+func targetPairArgs(cluster, instance string, pairs int, extra ...any) []any {
+	args := make([]any, 0, pairs*2+len(extra))
+	for i := 0; i < pairs; i++ {
+		args = append(args, cluster, instance)
+	}
+	return append(args, extra...)
+}
+
 type workspaceAsset struct {
 	Kind     string `json:"kind"`
 	ID       string `json:"asset_id"`
@@ -127,9 +142,10 @@ func (s *GatewayStore) readWorkspaceAssets(r *http.Request, auth TokenAuth) (any
 		return nil, err
 	}
 	// The catalog repeats the target pair once per placeholder, in text order;
-	// both dialects bind plain ? in that same order.
+	// both dialects bind plain ? in that same order. targetPairArgs owns that
+	// order so the call site cannot swap cluster and instance by accident.
 	rows, err := tx.Query(workspaceCatalog+`SELECT kind,id,name,address,linked,assigned FROM assets WHERE linked OR assigned OR ? ORDER BY kind,id`,
-		t.Cluster, t.Instance, t.Cluster, t.Instance, t.Cluster, t.Instance, t.Cluster, t.Instance, view == "manage")
+		targetPairArgs(t.Cluster, t.Instance, 4, view == "manage")...)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +203,7 @@ func (s *GatewayStore) applyWorkspaceChange(w http.ResponseWriter, r *http.Reque
 	}
 	var exists bool
 	if err = tx.QueryRow(workspaceCatalog+`SELECT EXISTS(SELECT 1 FROM assets WHERE kind=? AND id=?)`,
-		req.Cluster, req.Instance, req.Cluster, req.Instance, req.Cluster, req.Instance, req.Cluster, req.Instance, req.Kind, req.ID).Scan(&exists); err != nil {
+		targetPairArgs(req.Cluster, req.Instance, 4, req.Kind, req.ID)...).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
