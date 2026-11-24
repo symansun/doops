@@ -132,3 +132,75 @@ kill 掉 agent 后 curl：`{"applied_revision":4,"online":false,"supported":true
 ## 环境清理
 
 本轮三个后台进程（Gateway 42322、Agent 42323、`pnpm dev` 3014）与 `/tmp/int06-src` worktree 在报告提交后关闭；截图与二进制留在 /tmp，未入库。
+
+## 偏差修复（SF-24，2026-11-24）
+
+上面「偏差」1–3 已在 commit `ac68f65b` 修掉，本节记录复验。
+
+### 改了什么
+
+| 偏差 | 修复 | 位置 |
+|---|---|---|
+| 1. kind=container 显示英文 | 标签表补齐后端全部 kind（machine/cluster/namespace/container/site/database/system/credential/image），`container_engine` 保留兼容，未知 kind 原样返回不抛错 | 新 `lib/target-manifest.ts` 的 `resourceKindLabel()`；组件改为调用 |
+| 2. 「最后同步时间」名不副实 | 改名「最后观测时间」，取值仍是 `last_observed_at` | `components/target-manifest-card.tsx`（渲染行） |
+| 3. 不支持同步仍显示已应用版本 | 该行按 `showsAppliedRevision(data)` 隐藏，清单版本、最后观测时间、台账保留 | 同上 |
+
+kind 取值不是猜的，来源：`backend/agent/internal/server/agent_resource_types.go:107-114` 的 `validObservationKind()`（machine/cluster/namespace/container/site/database）、`backend/agent/internal/server/agent_resource_sync.go:261`（额外允许 system/credential/image）、`backend/agent/internal/server/agent_resource_store.go` 的 `declaredAgentResourcesSQL()`（台账 kind 原样透传，website 归一成 site）。
+
+纯逻辑抽到 `lib/target-manifest.ts`：`resourceKindLabel(kind)`、`manifestStatus(data)`（四态顺序不变）、`showsAppliedRevision(data)`；组件只做渲染。
+
+### 验收（命令原文）
+
+```
+$ env -u GOROOT pnpm run test:console
+ℹ tests 743
+ℹ pass 743
+ℹ fail 0
+
+$ env -u GOROOT pnpm exec tsc --noEmit
+TSC_EXIT:0
+
+$ pnpm build
+exit code: 0
+```
+
+- 743 = origin 基线全清单（含 PR #34 的 `lib/sensitive-filter.test.mjs` 8 条）的 738 条既有 + 我新增的 5 条。本机主工作树未 checkout PR #34 的新文件，同一清单只跑到 735（730 既有 + 5 新增），两组都全绿。
+- `lib/target-manifest.test.mjs` 已加入 `package.json` 的 `test:console` 清单（插在 `lib/unload-journal.test.mjs` 前），进 CI。
+
+### 反向实验（先红后恢复）
+
+A. 删掉 `container: "容器",` 映射：
+
+```
+✖ Given backend resource kinds, When labelled, Then every kind renders Chinese instead of the raw token
+AssertionError [ERR_ASSERTION]: container 必须有中文标签
+ℹ tests 5 / pass 4 / fail 1  (EXIT:1)
+```
+
+恢复后 5/5 绿。
+
+B. 交换 `manifestStatus` 里 `!online` 与 `!supported` 的判断顺序：
+
+```
+✖ Given manifest payloads, When resolved, Then the four states keep offline > unsupported > pending > synced order
+actual:   { label: 'Agent 不支持同步', variant: 'warning' }
+expected: { label: 'Agent 离线', variant: 'warning' }
+ℹ tests 5 / pass 4 / fail 1  (EXIT:1)
+```
+
+恢复后 5/5 绿。
+
+### 浏览器复验（同一本机 Gateway/Agent 链路，`/console?view=console` → Agent 概览）
+
+| 状态 | 截图 | sha256 | 页面文案 |
+|---|---|---|---|
+| 已同步 | `/tmp/sf24-synced.png` | `c7648e1b30016f187a2a64d0ef6f2c9bef95ead40d8b3abe35d6552cfb9c8bea` | `资源清单 [已同步] ｜ 清单版本 12 ｜ Agent 已应用版本 12 ｜ 最后观测时间 2026/11/24 10:41:34 ｜ docker / 容器 · Agent 观测 / [已发现未登记]` |
+| 不支持同步 | `/tmp/sf24-unsupported.png` | `1fdd0a27953891bba9b2df15ce1c1a879802d5341848717e9d2a47d1b40ca00f` | `资源清单 [Agent 不支持同步] ｜ 清单版本 13 ｜ 最后观测时间 2026/11/24 10:42:34`（**无「Agent 已应用版本」行**）｜ 黄条「升级 Agent 后可同步观测结果，现有台账登记仍可查看。」｜「此目标暂无资源记录。」 |
+
+两张都是真机截图：已同步态是真实数据；不支持同步态沿用 INT-06 的做法，把 `agent_resource_state.supported` 置 0 构造（Gateway 观测循环会把它刷回 1，所以是置 0 后立刻 reload 抓的帧），拍完已恢复 `supported=1`。
+
+### 残留（未做，超出本次范围）
+
+- 不支持同步态仍显示「清单版本 / 最后观测时间」（lead 只要求隐藏「已应用版本」行）；若认为这仍矛盾，需再定文案或后端在该态不返回 revision。
+- `manifestStatus()` 目前仍接收整个 `TargetManifestResponse`，`lib/assets.ts` 的类型未动。
+
