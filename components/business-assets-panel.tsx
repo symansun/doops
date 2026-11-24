@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { assetRequest } from "@/lib/assets"
+import { formatDateTime } from "@/lib/format"
 import { Button, Input, Select } from "./ui"
 
 type Deployment = { cluster: string; instance: string; namespace: string; application: string; database: string; verified_at: string }
@@ -59,7 +60,7 @@ function Ledger({ session, targets, onOpenSituation }: Props) {
         <summary className="cursor-pointer break-words text-sm"><strong>{s.name}</strong> <span className="break-all font-mono text-xs text-muted-foreground">{s.asset_id}</span> · {s.active ? "在役" : "退役"} · {s.owner}</summary>
         <div className="mt-3 space-y-2"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">部署与数据库依赖</h3>{admin && <Button size="sm" onClick={() => { setNotice(""); setEditor({ system: s }) }}>编辑系统</Button>}</div>
           {s.deployments.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-xs text-muted-foreground"><tr>{["目标 / 命名空间", "应用", "依赖数据库", "人工核验时间"].map(title => <th key={title} className="px-2 py-1" scope="col">{title}</th>)}</tr></thead>
-            <tbody className="divide-y">{s.deployments.map(d => <tr key={edgeKey(d)} className="break-all"><td className="p-2">{d.cluster}/{d.instance}<small className="block">{d.namespace}</small></td><td className="p-2">{d.application}</td><td className="p-2">{d.database || "未登记"}</td><td className="p-2"><time dateTime={d.verified_at}>{new Date(d.verified_at).toLocaleString()}</time></td></tr>)}</tbody></table></div> : <p className="text-sm text-muted-foreground">尚未登记部署关系。</p>}
+            <tbody className="divide-y">{s.deployments.map(d => <tr key={edgeKey(d)} className="break-all"><td className="p-2">{d.cluster}/{d.instance}<small className="block">{d.namespace}</small></td><td className="p-2">{d.application}</td><td className="p-2">{d.database || "未登记"}</td><td className="p-2"><time dateTime={d.verified_at}>{formatDateTime(d.verified_at)}</time></td></tr>)}</tbody></table></div> : <p className="text-sm text-muted-foreground">尚未登记部署关系。</p>}
         </div></details>)}</div> : <p role="status" className="py-6 text-center text-sm text-muted-foreground">{term ? "没有匹配的业务系统。" : admin ? "尚未登记业务系统。" : "当前账号没有可见的业务系统。"}</p>}</>}
   </section>
 }

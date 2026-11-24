@@ -1,8 +1,10 @@
 "use client"
 
 import { Boxes, RefreshCw } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { fetchK8sOverview, K8S_OVERVIEW_QUERIES, type K8sOverview, type K8sOverviewKey, type K8sResource } from "@/lib/k8s-overview"
+import { formatDateTime } from "@/lib/format"
+import { useLoader } from "@/lib/use-loader"
 import type { Session, Target } from "@/lib/client"
 import { Button, Input } from "./ui"
 
@@ -14,9 +16,7 @@ export function K8sResourceOverview({ session, target, sessionId, initialNamespa
   running: boolean
   onOpenDetails: (kind: K8sOverviewKey, resource: K8sResource) => void
 }) {
-  const [overview, setOverview] = useState<K8sOverview | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [loading, setLoading] = useState(true)
   const [kind, setKind] = useState<K8sOverviewKey>("pods")
   const [filter, setFilter] = useState("")
   const [namespace, setNamespace] = useState(initialNamespace)
@@ -25,23 +25,16 @@ export function K8sResourceOverview({ session, target, sessionId, initialNamespa
   function changeScope(value: string) {
     setNamespaceInput(value)
     if (value === namespace) return
-    setOverview(null)
-    setLoading(true)
+    setRefreshKey((n) => n + 1)
     setFilter("")
     setKind("pods")
     setNamespace(value)
   }
 
-  useEffect(() => {
-    const controller = new AbortController()
-    setLoading(true)
-    void fetchK8sOverview(session, { cluster, instance }, sessionId, controller.signal, namespace).then((result) => {
-      if (controller.signal.aborted) return
-      setOverview(result)
-      setLoading(false)
-    })
-    return () => controller.abort()
-  }, [session, cluster, instance, sessionId, refreshKey, namespace])
+  const { data: overview, loading, error: loadError } = useLoader(
+    (signal) => fetchK8sOverview(session, { cluster, instance }, sessionId, signal, namespace),
+    [session, cluster, instance, sessionId, refreshKey, namespace],
+  )
 
   const group = overview?.[kind]
   const namespaced = kind === "deployments" || kind === "pods"
@@ -59,12 +52,17 @@ export function K8sResourceOverview({ session, target, sessionId, initialNamespa
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span role="status" className="text-xs text-muted-foreground">{loading ? "读取中…" : overview && `${new Date(overview.fetchedAt).toLocaleTimeString()} 更新`}</span>
+          <span role="status" className="text-xs text-muted-foreground">{loading ? "读取中…" : loadError ? "读取失败" : overview && `${formatDateTime(overview.fetchedAt)} 更新`}</span>
           <Button size="sm" aria-label="刷新 Kubernetes 资源" onClick={() => setRefreshKey((value) => value + 1)} disabled={loading || running}>
             <RefreshCw aria-hidden="true" className={`size-3.5 ${loading ? "motion-safe:animate-spin" : ""}`} />刷新
           </Button>
         </div>
       </header>
+      {loadError && (
+        <p role="alert" className="mb-3 rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning [overflow-wrap:anywhere]">
+          读取 Kubernetes 资源失败 · {loadError}
+        </p>
+      )}
       <form className="mb-3 flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); changeScope(namespaceInput.trim()) }}>
         <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           查询命名空间

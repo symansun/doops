@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { assetRequest } from "@/lib/assets"
+import { formatDateTime, formatMiB } from "@/lib/format"
 import { Button, Input, Select } from "./ui"
 
 type App = { system_id: string; namespace: string; application: string }
@@ -11,8 +12,8 @@ type Sample = Reading & { source: string; os: string; version: string; kernel: s
 type Metric = { metric: string; device: string; at_ms: number; status: string; unit: string; value: number | null }
 type Report = { from_ms: number; to_ms: number; sample: Sample | null; evidence_mode: "tunnel" | "mount"; generation?: number; comparison?: { previous?: Reading; status: string; cpu_percent?: number }; gap?: string; application?: App & { system_name: string; verified_at: string; databases: string[]; series: Metric[] } }
 type Focus = { pid: number; start_ticks: number; at_ms: number }
-const stamp = (ms: number) => new Date(ms).toLocaleString("zh-CN", { hour12: false })
-const mib = (bytes: number) => (bytes / 1048576).toLocaleString("zh-CN", { maximumFractionDigits: 2 })
+const stamp = (ms: number) => formatDateTime(ms, { unit: "ms" })
+const mib = (bytes: number) => formatMiB(bytes)
 
 function ResourceComparison({ sample, comparison }: { sample: Sample; comparison: NonNullable<Report["comparison"]> }) {
   const description: Record<string, string> = {

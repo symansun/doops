@@ -1,6 +1,6 @@
 import { gatewayAuthCode } from "./gateway-auth.ts"
 import type { Target } from "./gateway"
-import { AGENT_MODEL_MISSING_HINT, classifyAgentAdmission } from "./agent-error.ts"
+import { AGENT_MODEL_MISSING_HINT, classifyAgentAdmission, stripConnectCode } from "./agent-error.ts"
 
 export interface DeploymentInput {
   release: string
@@ -137,8 +137,10 @@ export function singleFlight<A extends unknown[]>(run: (...args: A) => Promise<u
 }
 
 // Connect and the session protocol prefix messages with "[code] "; users read the message only.
+// 去掉 ConnectError 的 "[code] " 前缀。与 agent-error.ts 的 agentErrorMessage 共用同一规则，
+// 这里只做文本清洗（可能为空串），由调用方决定是否再映射成整句文案。
 export function agentErrorText(raw: string | null | undefined): string {
-  return (raw || "").replace(/^(?:\[[a-z_]+\]\s*)+/, "").trim()
+  return stripConnectCode(raw)
 }
 
 function errorCode(raw: string | null | undefined): string | undefined {

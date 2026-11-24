@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { fetchAudit, sessionIsAdmin, type AuditEvent, type Session, type Target } from "@/lib/client"
+import { formatDateTime } from "@/lib/format"
 import {
   AUDIT_ACTIONS,
   AUDIT_STATUSES,
@@ -16,7 +17,7 @@ const PAGE_SIZE = 50
 function fmtTime(s?: string) {
   if (!s) return "—"
   try {
-    return new Date(s).toLocaleString("zh-CN", { hour12: false })
+    return formatDateTime(s)
   } catch {
     return s
   }

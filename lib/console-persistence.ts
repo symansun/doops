@@ -1,5 +1,6 @@
 import type { Target } from "./gateway"
 import { containsCredentialMaterial } from "./deployment.ts"
+import { formatDateTime } from "./format.ts"
 
 // A page reload must not silently move the user to another target or session.
 // The selected target key and the current session id are kept per browser tab
@@ -181,8 +182,7 @@ export function commandSummary(raw: string): string {
 }
 
 function formatStartedAt(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false })
+  return formatDateTime(value)
 }
 
 export function interruptedCommandNotice(

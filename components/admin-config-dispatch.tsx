@@ -7,6 +7,7 @@ import type { Target } from "@/lib/gateway"
 import { randomSession } from "@/lib/gateway"
 import { listInstances, type AdminInstance } from "@/lib/admin"
 import { ACTIVE_INSTANCE_WINDOW_DAYS, instanceActivity } from "@/lib/admin-views"
+import { formatDateTime } from "@/lib/format"
 import {
   loadConfigs,
   upsertConfig,
@@ -283,7 +284,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
                             ? "bg-warning/15 text-warning"
                             : "bg-success/15 text-success"
                         }`}
-                        title={c.published_at ? `最近发布：${new Date(c.published_at).toLocaleString()}` : "尚未发布"}
+                        title={c.published_at ? `最近发布：${formatDateTime(c.published_at)}` : "尚未发布"}
                       >
                         {unpublished ? (c.published_at ? "有改动" : "未发布") : "已发布"}
                       </span>

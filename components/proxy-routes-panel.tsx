@@ -3,6 +3,7 @@
 import { Badge, Button, Checkbox, Input, Select, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
+import { formatDateTime } from "@/lib/format"
 import {
   listProxyRoutes,
   setProxyRoute,
@@ -27,12 +28,7 @@ import {
 } from "@/lib/proxy-routes"
 import { RefreshIcon, PlusIcon, TrashIcon, BanIcon, CheckIcon } from "./icons"
 
-function fmtTime(v?: string): string {
-  if (!v) return "—"
-  const d = new Date(v)
-  if (Number.isNaN(d.getTime())) return v
-  return d.toLocaleString()
-}
+const fmtTime = (v?: string) => formatDateTime(v)
 
 const TARGET_BADGE: Partial<Record<ProxyRouteTargetStatus, string>> = {
   offline: "离线",
