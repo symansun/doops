@@ -45,6 +45,9 @@ printf '%s' "$body" | curl --fail-with-body --silent --show-error --proto '=http
 
 已有监控库先完成上述设备维度升级（若尚未升级），再在专用连接上执行
 [磁盘 I/O 迁移](migrations/asset_monitor_disk_io.sql)。新建库仅需当前监控基础表。
+已按设备维度或磁盘 I/O 迁移升级过的存量库，需再执行
+[数据库指标迁移](migrations/asset_monitor_db_metrics.sql) 才能接收 `db_*` 与应用级指标
+（`response_time_ms` / `active_connections` / `error_rate`）序列。
 在已核验的 Linux 宿主采样任务中，按 `/proc/diskstats` 中的内核设备名配置 `--disk nvme0n1`；
 可重复选择设备，不传 `/dev/` 路径。受控中心的设备与指标白名单需为每个选定设备加入下表六项，
 并同步调整批次大小校验。磁盘 I/O 不使用挂载点标识，也不代表 K8s Pod 的 I/O。

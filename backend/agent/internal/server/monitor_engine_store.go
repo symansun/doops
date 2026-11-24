@@ -331,9 +331,22 @@ func (s *GatewayStore) PersistMonitorRunResults(
 	bridged := 0
 	var hasAssetMonitor bool
 	_ = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_monitor_series')`).Scan(&hasAssetMonitor)
-	if hasAssetMonitor && len(seriesPoints) > 0 {
+	// Items carry their own artifact JSON; merge any declared series_points
+	// into the caller-provided bridge list so every dispatch path (command,
+	// skill script, AI prompt) can feed asset_monitor_series uniformly.
+	merged := seriesPoints
+	for _, item := range items {
+		for _, pt := range extractArtifactSeriesPoints(item.ArtifactJSON) {
+			merged = append(merged, monitorSeriesBridgeEntry{
+				Cluster:  item.Cluster,
+				Instance: item.Instance,
+				Point:    pt,
+			})
+		}
+	}
+	if hasAssetMonitor && len(merged) > 0 {
 		now := time.Now()
-		for _, entry := range seriesPoints {
+		for _, entry := range merged {
 			pt := entry.Point
 			origin := pt.Origin
 			if !monitorOrigins[origin] {

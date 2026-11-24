@@ -199,6 +199,9 @@ func TestAssetMonitorScopeHistoryAndRecovery(t *testing.T) {
 			if strings.HasPrefix(metric, "disk_") || metric == "memory_limit" {
 				continue // Machine disk I/O and container memory_limit have dedicated HTTP coverage.
 			}
+			if strings.HasPrefix(metric, "db_") && kind != "database" {
+				continue // db_* metrics only exist on database assets.
+			}
 			p := monitorInput{monitorAsset: monitorAsset{Type: kind, AssetID: "asset-1"}, Metric: metric, Unit: unit, monitorPoint: monitorPoint{At: start, Status: "ok", Value: &value}}
 			if metric == "storage_total" || metric == "storage_available" {
 				p.DeviceID = "/"

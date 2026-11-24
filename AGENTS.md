@@ -99,8 +99,10 @@ exit; the close-out contract is `docs/operations/closure-standard.md`. Commits f
   is (user, cluster, instance) only, and a grant opens every operation on that target and its
   bound credentials. Openness is the default: do not add per-action or per-operation restrictions
   and do not narrow what a target grant covers. Platform admin is a user flag. Gateway has no
-  per-action grants, execution quotas, operation admin, unlock, audit-optimize, scheduler, or repo
-  registry; do not reintroduce them.
+  per-action grants, execution quotas, operation admin, unlock, audit-optimize, or repo registry;
+  do not reintroduce them. The monitor engine (`StartMonitorRunner`, `-monitor-tick`) is the sole
+  sanctioned scheduler: it exists solely to dispatch due `monitor_schedules` inspections through
+  the audited tunnel path; do not add other Gateway-side schedulers or periodic job loops.
 - `deploy/helm/<name>/` contains runtime assets only. It must not become an environment registry,
   credential store, target selector, or deployment authorization source.
 - Agent upgrade has one hard constraint: an Agent cannot replace its own workload from its own

@@ -18,3 +18,14 @@ required_mcp: dosql
 
 ## 输出格式要求
 输出简明 Markdown 总结，并附一个 JSON 代码块，包含 `status`（仅 `pass|warning|critical`）、`summary`、`metrics`（数组：`key/label/value/unit/status`）与 `checks`（数组：`id/name/category/status/value/detail`）。
+
+## 时序指标桥接（series_points）
+当本次巡检拿到了真实数值（活跃连接数、QPS/TPS、锁等待数、慢查询数）时，在同一 JSON 代码块顶层追加 `series_points` 数组，把数值接入控制台「数据库」时序曲线。每个元素：
+
+```json
+{"type":"database","asset_id":"<已绑定数据库名>","origin":"exporter","metric":"db_tps","unit":"tx/s","at_ms":<毫秒时间戳>,"status":"ok","value":12.3}
+```
+
+- 可用指标与固定单位：`db_tps`（`tx/s`）、`db_lock_waits`（`waits`）、`active_connections`（`connections`）、`requests`（`req/s`）、`response_time_ms`（`ms`）、`error_rate`（`%`）。
+- `origin` 固定 `exporter`；`asset_id` 必须是 dosql 已绑定且实际采集到数据的数据库名，**禁止为无数据的数据库编造点位**；`status` 仅 `ok|missing|not_applicable`，无数据时用 `missing`/`not_applicable` 且 `value` 置 `null`。
+- `unit` 必须与上表完全一致、`at_ms` 不得晚于当前时间，否则该点位会被网丢弃。

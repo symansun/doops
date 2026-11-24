@@ -240,6 +240,31 @@ func extractMonitorArtifactMetrics(raw json.RawMessage, fallbackStatus string) (
 	return points, 0
 }
 
+// maxArtifactSeriesPointsPerItem bounds how many bridged series points one
+// artifact can contribute, mirroring the metrics extraction cap.
+const maxArtifactSeriesPointsPerItem = 200
+
+// extractArtifactSeriesPoints reads the optional top-level "series_points"
+// array from an artifact JSON payload. Each entry follows the
+// api.MonitorInspectSeriesPoint contract; malformed entries are skipped so a
+// partial payload still contributes its valid points. The caller validates
+// each point again through monitorInput.valid before persisting.
+func extractArtifactSeriesPoints(raw json.RawMessage) []api.MonitorInspectSeriesPoint {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return nil
+	}
+	var top struct {
+		SeriesPoints []api.MonitorInspectSeriesPoint `json:"series_points"`
+	}
+	if err := json.Unmarshal(raw, &top); err != nil || len(top.SeriesPoints) == 0 {
+		return nil
+	}
+	if len(top.SeriesPoints) > maxArtifactSeriesPointsPerItem {
+		top.SeriesPoints = top.SeriesPoints[:maxArtifactSeriesPointsPerItem]
+	}
+	return top.SeriesPoints
+}
+
 func monitorNumericValue(v any) (float64, bool) {
 	var f float64
 	switch n := v.(type) {

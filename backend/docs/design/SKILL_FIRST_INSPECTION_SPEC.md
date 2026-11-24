@@ -223,9 +223,23 @@ required_mcp: doops
         { "label": "磁盘", "value": 2.4, "status": "pass" }
       ]
     }
+  ],
+  "series_points": [
+    {
+      "type": "database",
+      "asset_id": "prod-mysql",
+      "origin": "exporter",
+      "metric": "db_tps",
+      "unit": "tx/s",
+      "at_ms": 1732176000000,
+      "status": "ok",
+      "value": 128.5
+    }
   ]
 }
 ```
+
+- `series_points[]`（可选）：产物把本次采集到的资产指标点按 `MonitorInspectSeriesPoint` 契约声明，Gateway 持久化时逐条复用 `/v1/assets/monitor` ingest 的同一套校验（指标白名单 + 固定单位 + `device_id` 形态 + `at_ms` 不晚于当前）写入 `asset_monitor_series` / `asset_monitor_samples`，让巡检 Skill 与手工上报进入同一条曲线。`origin` 必须在 `monitorOrigins` 白名单内（巡检产物固定用 `exporter`），`metric` 形如 `db_*` 的指标仅允许 `type="database"`、`device_id=""`；不合法点位静默丢弃，不影响其余点位与巡检结果本身。单项产物最多取前 200 条。
 
 ### 4.2 通用异构指标时序表（`inspection_metric_points`）
 

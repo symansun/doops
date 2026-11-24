@@ -9,6 +9,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -244,6 +246,54 @@ func TestInspectionMetricBridgeSkipsExistingSnapshot(t *testing.T) {
 	if strings.Contains(details, "inspection_metrics") {
 		t.Fatalf("existing snapshot row was overwritten by the bridge: %q", details)
 	}
+}
+
+// The optional top-level "series_points" array in an artifact JSON bridges into
+// asset_monitor_series/asset_monitor_samples so skill inspections (e.g. the
+// dosql-backed database skill) feed the same metric timeline as collectors.
+func TestInspectionSeriesPointsBridgeToAssetMonitor(t *testing.T) {
+	store, _ := openMetricTestStore(t)
+	ddl, err := os.ReadFile("../../../docs/migrations/asset_monitor.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(string(ddl)); err != nil {
+		t.Fatalf("apply asset monitor migration: %v", err)
+	}
+	startedAtMs := time.Now().Add(-time.Hour).UnixMilli()
+	atMs := startedAtMs + 500
+	artifact := `{"status":"pass","series_points":[
+		{"type":"database","asset_id":"prod-mysql","origin":"exporter","metric":"db_tps","unit":"tx/s","at_ms":` + json.Number(fmt.Sprintf("%d", atMs)).String() + `,"status":"ok","value":128.5},
+		{"type":"database","asset_id":"prod-mysql","origin":"exporter","metric":"db_lock_waits","unit":"waits","at_ms":` + json.Number(fmt.Sprintf("%d", atMs)).String() + `,"status":"ok","value":2},
+		{"type":"machine","asset_id":"prod-mysql","origin":"exporter","metric":"db_tps","unit":"tx/s","at_ms":` + json.Number(fmt.Sprintf("%d", atMs)).String() + `,"status":"ok","value":9},
+		{"type":"database","asset_id":"prod-mysql","origin":"exporter","metric":"db_tps","unit":"wrong","at_ms":` + json.Number(fmt.Sprintf("%d", atMs)).String() + `,"status":"ok","value":9},
+		{"type":"database","asset_id":"prod-mysql","origin":"injected","metric":"db_tps","unit":"tx/s","at_ms":` + json.Number(fmt.Sprintf("%d", atMs)).String() + `,"status":"ok","value":9}
+	]}`
+	run := persistMetricTestRun(t, store, "run_series_bridge", startedAtMs, nil, artifact, nil)
+
+	var seriesCount, sampleCount int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM asset_monitor_series WHERE metric GLOB 'db_*'`).Scan(&seriesCount); err != nil {
+		t.Fatalf("count db series: %v", err)
+	}
+	if seriesCount != 2 {
+		t.Fatalf("want 2 bridged db series (tps + lock_waits), got %d", seriesCount)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM asset_monitor_samples s
+		JOIN asset_monitor_series r ON r.id=s.series_id
+		WHERE r.metric GLOB 'db_*' AND s.status='ok'`).Scan(&sampleCount); err != nil {
+		t.Fatalf("count db samples: %v", err)
+	}
+	if sampleCount != 2 {
+		t.Fatalf("want 2 db samples, got %d", sampleCount)
+	}
+	var totalSeries int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM asset_monitor_series`).Scan(&totalSeries); err != nil {
+		t.Fatalf("count all series: %v", err)
+	}
+	if totalSeries != 2 {
+		t.Fatalf("type-mismatched or invalid points must be dropped, got %d series", totalSeries)
+	}
+	_ = run
 }
 
 func TestMonitorMetricsHTTP(t *testing.T) {

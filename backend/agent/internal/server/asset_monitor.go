@@ -20,6 +20,7 @@ const monitorGap = 5 * time.Minute
 var monitorUnits = map[string]string{
 	"cpu": "cores", "memory": "bytes", "memory_limit": "bytes", "gpu": "%", "network": "bytes/s",
 	"requests": "req/s", "response_time_ms": "ms", "active_connections": "connections", "error_rate": "%",
+	"db_tps": "tx/s", "db_lock_waits": "waits",
 	"storage": "bytes", "storage_total": "bytes", "storage_available": "bytes",
 	"disk_read_iops": "ops/s", "disk_write_iops": "ops/s",
 	"disk_read_bytes_per_second": "bytes/s", "disk_write_bytes_per_second": "bytes/s",
@@ -105,6 +106,9 @@ func (p monitorInput) valid(now time.Time) bool {
 		return false
 	}
 	if p.Metric == "memory_limit" && p.Type != "container" {
+		return false
+	}
+	if strings.HasPrefix(p.Metric, "db_") && p.Type != "database" {
 		return false
 	}
 	switch p.Status {
