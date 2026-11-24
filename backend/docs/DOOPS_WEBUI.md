@@ -447,7 +447,7 @@ fraction.
 
 控制台里与隧道、目标清单、资源同步有关的行为，都可以用本仓库代码在本机拉起一条完整链路来验收，
 不需要真实集群、docker 或线上凭据。2026-11-24 的 Console 同步状态验收就是这样做的
-（`docs/reviews/2026-11-24-int06-console-sync-browser-check.md`），四态都取到了真实浏览器证据。
+（[验收记录](https://github.com/symansun/doops/blob/main/docs/reviews/2026-11-24-int06-console-sync-browser-check.md)），四态都取到了真实浏览器证据。
 
 步骤（模块根 `backend/agent`，Go 命令一律 `env -u GOROOT go ...`）：
 
