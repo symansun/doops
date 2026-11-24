@@ -19,6 +19,17 @@ import {
   type MonitorMetricSeriesResponse,
   type MonitorRunDiff,
 } from "@/lib/monitor-metrics"
+import {
+  formatChartValue,
+  gaugeArcPath,
+  mapChartPointsToViewBox,
+  normalizeInspectionCharts,
+  type InspectionBarChart,
+  type InspectionChart,
+  type InspectionChartTone,
+  type InspectionGaugeChart,
+  type InspectionLineChart,
+} from "@/lib/inspection-charts"
 import { Markdown } from "./markdown"
 import {
   Badge,
@@ -562,6 +573,169 @@ function TrendSection({
   )
 }
 
+const CHART_TONE_BAR: Record<InspectionChartTone, string> = {
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-destructive",
+  neutral: "bg-primary",
+}
+
+const CHART_TONE_STROKE: Record<InspectionChartTone, string> = {
+  success: "stroke-success",
+  warning: "stroke-warning",
+  danger: "stroke-destructive",
+  neutral: "stroke-primary",
+}
+
+const CHART_TONE_RANK: Record<InspectionChartTone, number> = { neutral: 0, success: 1, warning: 2, danger: 3 }
+
+function worstChartTone(points: { tone: InspectionChartTone }[]): InspectionChartTone {
+  return points.reduce<InspectionChartTone>(
+    (worst, point) => (CHART_TONE_RANK[point.tone] > CHART_TONE_RANK[worst] ? point.tone : worst),
+    "neutral",
+  )
+}
+
+function ChartOverMaxBadge({ overMax }: { overMax: boolean }) {
+  return overMax ? <span className="ml-1 text-destructive">超额</span> : null
+}
+
+function BarChartBody({ chart }: { chart: InspectionBarChart }) {
+  return (
+    <div className="space-y-1.5">
+      {chart.series.map((point, index) => (
+        <div
+          key={`${point.label}-${index}`}
+          className="flex items-center gap-2"
+          data-chart-label={point.label}
+          data-chart-tone={point.tone}
+        >
+          <span className="w-24 shrink-0 truncate text-2xs text-muted-foreground" title={point.label}>
+            {point.label || "—"}
+          </span>
+          <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+            <div
+              className={`h-full rounded-full ${CHART_TONE_BAR[point.tone]}`}
+              style={{ width: `${point.ratio * 100}%` }}
+              data-chart-ratio={point.ratio.toFixed(4)}
+            />
+          </div>
+          <span className="w-24 shrink-0 text-right text-2xs tabular-nums text-foreground">
+            {formatChartValue(point.value, chart.unit)}
+            <ChartOverMaxBadge overMax={point.overMax} />
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function GaugeChartBody({ chart }: { chart: InspectionGaugeChart }) {
+  return (
+    <div className="flex flex-wrap gap-4">
+      {chart.arcs.map((arc, index) => (
+        <div
+          key={`${arc.label}-${index}`}
+          className="text-center"
+          data-chart-label={arc.label}
+          data-chart-tone={arc.tone}
+        >
+          <svg
+            viewBox="0 0 100 56"
+            className="h-16 w-28"
+            role="img"
+            aria-label={`${arc.label || "仪表"} ${formatChartValue(arc.value, chart.unit)}`}
+          >
+            <path
+              d={gaugeArcPath(50, 50, 40, 180, 360)}
+              className="fill-none stroke-border"
+              strokeWidth={8}
+              strokeLinecap="round"
+            />
+            {arc.endAngle > arc.startAngle && (
+              <path
+                d={gaugeArcPath(50, 50, 40, arc.startAngle, arc.endAngle)}
+                className={`fill-none ${CHART_TONE_STROKE[arc.tone]}`}
+                strokeWidth={8}
+                strokeLinecap="round"
+                data-chart-ratio={arc.ratio.toFixed(4)}
+              />
+            )}
+          </svg>
+          <div className="truncate text-2xs text-muted-foreground">{arc.label || "—"}</div>
+          <div className="text-2xs font-medium tabular-nums text-foreground">
+            {formatChartValue(arc.value, chart.unit)}
+            <ChartOverMaxBadge overMax={arc.overMax} />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function LineChartBody({ chart }: { chart: InspectionLineChart }) {
+  return (
+    <div data-chart-points={chart.points.length}>
+      <svg
+        viewBox="0 0 100 40"
+        preserveAspectRatio="none"
+        className="h-16 w-full"
+        role="img"
+        aria-label={chart.title || "趋势折线"}
+      >
+        <polyline
+          points={mapChartPointsToViewBox(chart, 100, 40)}
+          className={`fill-none ${CHART_TONE_STROKE[worstChartTone(chart.points)]}`}
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <div className="mt-1 flex gap-1 text-2xs text-muted-foreground">
+        {chart.ticks.map((tick, index) => (
+          <span key={`${tick}-${index}`} className="min-w-0 flex-1 truncate text-center">
+            {tick}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function InspectionChartCard({ chart }: { chart: InspectionChart }) {
+  return (
+    <div
+      className="rounded-md border bg-background px-3.5 py-2.5"
+      data-chart-kind={chart.kind}
+      data-chart-title={chart.title}
+    >
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+        <span className="text-xs font-semibold text-foreground">{chart.title || "图表"}</span>
+        <span className="text-2xs text-muted-foreground">
+          {chart.unit ? `单位 ${chart.unit}` : "无量纲"}
+          {chart.maxSource === "series" ? ` · 上限按最大值 ${formatChartValue(chart.max, chart.unit)}` : ""}
+        </span>
+      </div>
+      {chart.kind === "bar" && <BarChartBody chart={chart} />}
+      {chart.kind === "gauge" && <GaugeChartBody chart={chart} />}
+      {chart.kind === "line" && <LineChartBody chart={chart} />}
+    </div>
+  )
+}
+
+/** SKILL_FIRST_INSPECTION_SPEC.md §4.4 第 3 条：charts[] 存在时按 type 选通用原语渲染。 */
+function InspectionChartsSection({ charts }: { charts: InspectionChart[] }) {
+  if (charts.length === 0) return null
+  return (
+    <div className="space-y-2" data-inspection-charts data-chart-count={charts.length}>
+      {charts.map((chart, index) => (
+        <InspectionChartCard key={`${chart.kind}-${chart.title}-${index}`} chart={chart} />
+      ))}
+    </div>
+  )
+}
+
 export function InspectionArtifactViewer({
   format,
   markdown,
@@ -605,6 +779,8 @@ export function InspectionArtifactViewer({
     () => (hasMarkdown && hasJson ? stripFencedJsonFromMarkdown(markdown || "") : markdown || ""),
     [hasMarkdown, hasJson, markdown],
   )
+  // charts[] 归一化是纯计算，跟着 jsonData 走；空结果不渲染区块。
+  const charts = useMemo(() => normalizeInspectionCharts(jsonData), [jsonData])
 
   if (!hasJson && !hasMarkdown && !rawOutput && diff === undefined && !showTrend && !artifactDisplay.missing) {
     return null
@@ -741,6 +917,7 @@ export function InspectionArtifactViewer({
             </>
           ) : (
             <>
+              <InspectionChartsSection charts={charts} />
               {visualProse && (
                 <div className="rounded-md border bg-background px-3.5 py-2.5 text-xs">
                   <Markdown content={visualProse} variant="compact" />

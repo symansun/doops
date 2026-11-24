@@ -252,7 +252,15 @@ required_mcp: doops
 按如下层次渲染，零业务硬编码：
 1. **跨次变化条（Diff）**：存在 `diff` 时，顶部紧凑展示状态变化、指标涨跌芯片与新增/恢复异常项。
 2. **历史趋势条（Trends）**：存在多点 `inspection_metric_points` 时，展示轻量 SVG 趋势折线小卡。
-3. **声明式通用图表（`charts[]`）**：若产物 JSON 含 `charts[]`，用内置通用 SVG/CSS 图表原语渲染 `bar` / `gauge` / `line`。
+3. **声明式通用图表（`charts[]`）**：若产物 JSON 含 `charts[]`，用内置通用 SVG/CSS 图表原语渲染 `bar` / `gauge` / `line`（归一化与几何计算在 `lib/inspection-charts.ts`，渲染在 `InspectionArtifactViewer`）。
+   - 统一字段：`{ title, type, unit?, max?, series: [{ label, value, status? }] }`。`title` 缺省显示「图表」，`unit` 缺省按无量纲显示；颜色只由 `series[].status` 决定（`pass`/`ok`/`healthy` → 绿，`warning` → 黄，`critical`/`fail`/`error` → 红，缺失或未知 → 中性），不看数值高低，避免「数值低就绿」的伪结论。
+   - `max` 降级：缺省、非数值或 `<= 0` 时按 series 最大值兜底（并在图例注明「上限按最大值」）；全部为 0 时取 1，避免除零。
+   - `bar`：每条 series 一根横向进度条，宽度 = `value / max`；`value > max` 时按满格 clamp 并标注「超额」，不把超额值画进下一格。
+   - `gauge`：每条 series 一段 180° 圆弧（左 → 顶 → 右），弧长 = `value / max`，超额同样 clamp 到满格并标注；每个 series 独立一只表，不叠画在同一轨道上。
+   - `line`：按 series 顺序等距排布折点，横向 0..100、纵向按 `value / max` 归一化（0 在底部）；横轴刻度取 `label`；单点时居中，不产生 `NaN`。
+   - 降级：`type` 不属于三者、`series` 缺失/为空、或 series 内 `value` 非数值（字符串、`null`、`NaN`/`Infinity`）时，跳过该项（非数值项单独跳过，绝不按 0 补画）；归一化后无任何可渲染图表时整个图表区不出现，不留空框。
+   - 与 `artifact_state` 的关系：`missing`（正文不可用）时不渲染图表区，只保留记录里的指标/检查项，避免用残缺存档画图。
+   - 现状：系统 Skill 目前只产出 `bar`（`inspect-vm-host` 的「主机核心资源水位」，三条 series = CPU/内存/磁盘水位）；`gauge` / `line` 由 `lib/testdata/inspection-charts-vm-host.json` 夹具与 `lib/inspection-charts.test.mjs` 覆盖，在真实产物出现前不宣称端到端已验证。
 4. **零硬编码动态结构渲染（`DynamicJsonNode`）**：Markdown 正文 + 结论横幅 + 标量 KPI / 进度条 + 对象数组动态表格 + 嵌套分组卡片。
 5. **三态切换与导出**：始终支持「可视化 / Markdown / JSON」切换、复制与 `.md`/`.json` 下载。
 
