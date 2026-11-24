@@ -9,18 +9,18 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
-| INT-21 | 守卫 numbered_parameter 生产调用点的绑定顺序（我变异证明现测试测不到） | integrator-gm | agent_asset_scope.go 及其 _test.go、GATEWAY_MYSQL_MIGRATION_PLAN.md 一句 | 10:52 | 进行中（30 分钟上限，随后自动接 INT-20） |
 
 ## 待办（排队/待决策）
 
 | 编号 | 任务 | 依赖 | 备注 |
 |---|---|---|---|
-| INT-20 | MySQL 方言批次 3B：JSON（`json_each` 5 + `json_group_array` 2，`JSON_ARRAYAGG` 无聚合内 ORDER BY，语义差最大） | INT-21 完成后随即开始 | 最后做；`materialized_cte` 单列不并批 |
 
 ## 已完成
 
 | 编号 | 任务 | 提交 | 结论摘要 |
 |---|---|---|---|
+| INT-20 | MySQL 方言批次 3B：JSON（`json_each` 5 + `json_group_array` 2） | e1362d76 | JSON_TABLE/JSON_KEYS/JSON_ARRAYAGG 成对渲染，读取端负责排序，审计 71→64 |
+| INT-21 | 守卫 numbered_parameter 生产调用点的绑定顺序 | c998a8a4 | targetPairArgs + AST 调用点守卫，三组变异先红后复原 |
 | SF-24 | 修正 Console 同步卡三处偏差并把逻辑抽成可测模块 | 26a7f273 | 4 文件：`components/target-manifest-card.tsx`、`lib/target-manifest.ts`、`lib/target-manifest.test.mjs`、`package.json`（仅 `test:console` 一行）。补齐后端全部 kind 的中文标签（`container_engine` 兼容、未知 kind 透传）；「最后同步时间」→「最后观测时间」；unsupported 态去掉「已应用版本」行。lead 复验：5/5、tsc rc=0、`test:console` 738/738、两张真实浏览器截图（已同步图显示「容器 · Agent 观测」，不支持同步图只剩清单版本与观测时间）。 |
 | INT-17 | MySQL 方言批次 3A：时间/授权函数走方言层成对渲染（`julianday` 3→1、`unixepoch` 4→0；剩下 1 处是明令不动的 audit_events 毫秒回填） | 2139e26c、6a4cbd2e、6f978c5a | 6 文件 +393/−18。方言层新增 `gatewayEpochNowFor`（SQLite `unixepoch()`；MySQL `UNIX_TIMESTAMP()` 无参读库内时钟，拒绝 `NOW()` 因为跟随会话时区）与 `gatewayEpochSecondsFor`（SQLite `CAST(strftime('%s',col) AS INTEGER)`；MySQL `TIMESTAMPDIFF(SECOND,'1970-01-01 00:00:00',STR_TO_DATE(SUBSTRING(col,1,19),'%Y-%m-%dT%H:%i:%s'))`，不用 `UNIX_TIMESTAMP(col)` 因为会按会话时区二次解释）。语义未动：token 过期仍严格 `>`（截断只缩短寿命，fail-closed）。golden `unixepoch` 4→0、`julianday` 3→1，唯一剩余站点 `gateway_store_schema.go:495` 的毫秒回填按派活边界保留并在 want 表写明。我独立复验（`git archive 2139e26c` → /tmp/int17v）：build/vet rc=0；真机 mysql:8.4（13321）`-run GatewayMySQL` 139 PASS / 2 SKIP（迁移专用表）。**我补的两条可证伪硬钉**：6a4cbd2e 把「仅剩一处 julianday」从数量钉改成位置钉（`len==1` 且必须 `strings.Contains(locs[0], gateway_store_schema.go)`，删回填+别处新增一处会红并点名 `cluster_inventory.go:177`）；6f978c5a 加 `SET time_zone='+08:00'` 腿（`SetMaxOpenConns(1)` 钉连接 + 先断言 `@@session.time_zone`），把「与连接时区无关」从头不可观测变成可证伪：退回 `UNIX_TIMESTAMP(expression)` 时只有 +08:00 腿红（token freshness 1,3,5 vs 1,3,4,5；diagnostic 1,2,3,4 vs 3）。迁移计划审计总数 95→89。 |
 | INT-18 | MySQL 方言批次 3D：标识符引号与存在性守卫（reserved_use 运行期 8 + sqlite_schema/PRAGMA 3） | integrator-gm | mysql_runtime_dialect.go、agent_resource_store.go、credential_materialization_store.go、credential_store_verifications.go、agent_resource_execution.go、asset_coverage_register.go 及对应 _test.go | 10:05 | 已完成 bc23b643（9 文件 +353/−31；reserved_use 12→4、sqlite_introspection 8→5，4 处 DDL 豁免 + 5 处 SQLite-only 探测豁免均写明理由并加位置钉；方言层新增 gatewayIdentifierFor/gatewayExistingTableCountSQL；真机 mysql:8.4.13 三语句 + 唯一键冲突 + 回读字段与内存 SQLite 相等，DROP 前后守卫 fail-closed；三组反向实验真红后复原；build/vet 绿，-run 'MySQL|Mysql|GatewayStore|Asset' ok 53.086s；已推送 5f2eff0b..bc23b643，0 0） **Lead 独立复验（10:26）**：干净树 `bc23b643` build/vet rc=0；无库 `-run 'GatewayMySQL|MySQL'` ok 1.529s；真机 mysql:8.4.13（13322）`-run 'GatewayMySQL|MySQL|Mysql'` ok 10.031s，容器已清理；变异（`gatewayMySQLIdentifier` 去掉反引号包裹）→ `TestGatewayMySQLIdentifierRendering` 红（`gateway_mysql_identifier_test.go:20/23/26/40/43`），复原后绿。 |
