@@ -9,7 +9,7 @@
 
 | 编号 | 任务 | 会话 | 文件占用 | 派出 | 状态 |
 |---|---|---|---|---|---|
-| INT-22 | MySQL 存储模式接线可行性判定与分步计划（含 materialized CTE 两步改写方案） | integrator-gm | docs/reviews/2026-11-24-mysql-wiring-plan.md、GATEWAY_MYSQL_MIGRATION_PLAN.md 一小节 | 11:16 | 进行中（只出判定与计划，禁止改运行代码；60 分钟） |
+| INT-23 | 两库同一张 `gateway_schema_migrations` 基线台账 + 三处 DDL 与守卫同步（D13 裁决的落地） | integrator-gm | gateway_store_schema.go、testdata/gateway-sqlite-schema.sql、gateway_mysql_schema.sql、相关 _test.go | 11:26 | 进行中 |
 
 ## 待办（排队/待决策）
 
@@ -20,6 +20,7 @@
 
 | 编号 | 任务 | 提交 | 结论摘要 |
 |---|---|---|---|
+| INT-22 | MySQL 存储接线可行性判定与最小切片（只出文档） | 44f786b6 | 2 文件 +139：`docs/reviews/2026-11-24-mysql-wiring-plan.md` A–F 六节 + 迁移计划 20 行小节。判定 5 阻塞（存储入口/方言包级 var/schema bootstrap 先跑 `PRAGMA journal_mode=WAL`/installer 只接受空 schema/事务语义单写者 vs REPEATABLE-READ 无死锁重试）3 非阻塞（无 SQL `RETURNING`、`WHERE 1` 仅一次性迁移、`julianday` 回填在 `migrate()` 内）。最小切片 ~170 行 5 文件。lead 用真机 mysql:8.4.13 逐条复现红：`PRAGMA`/`AUTOINCREMENT`/`INSERT OR IGNORE`/`BEGIN IMMEDIATE`/`STRICT`/`MATERIALIZED` 均 1064、`TEXT PRIMARY KEY` 1170、`julianday` 1305、`DELETE ... IN (SELECT 同表)` 1093，对照 `SELECT CAST(1 AS UNSIGNED)` = 1 证明探针有效。 |
 | INT-20 | MySQL 方言批次 3B：JSON（`json_each` 5 + `json_group_array` 2） | ef135e24 | JSON_TABLE/JSON_KEYS/JSON_ARRAYAGG 成对渲染，读取端负责排序，审计 71→64 |
 | INT-21 | 守卫 numbered_parameter 生产调用点的绑定顺序 | c998a8a4 | targetPairArgs + AST 调用点守卫，三组变异先红后复原 |
 | SF-24 | 修正 Console 同步卡三处偏差并把逻辑抽成可测模块 | 26a7f273 | 4 文件：`components/target-manifest-card.tsx`、`lib/target-manifest.ts`、`lib/target-manifest.test.mjs`、`package.json`（仅 `test:console` 一行）。补齐后端全部 kind 的中文标签（`container_engine` 兼容、未知 kind 透传）；「最后同步时间」→「最后观测时间」；unsupported 态去掉「已应用版本」行。lead 复验：5/5、tsc rc=0、`test:console` 738/738、两张真实浏览器截图（已同步图显示「容器 · Agent 观测」，不支持同步图只剩清单版本与观测时间）。 |

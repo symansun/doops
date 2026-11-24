@@ -37,3 +37,16 @@
 - 含义：INT-13/14/15 已改的 42 处、INT-16 分类出的剩余 95 处，今天没有一行在 MySQL 上跑。价值是「将来接线时不会出错」。
 - 裁决（09:07）：继续做，理由见上表。INT-16 给出的批次顺序与反向实验构想保留为施工图（`docs/reviews/2026-11-24-mysql-dialect-batch-plan.md`）。
 - 批次进度：3A 时间/授权（julianday 3 + unixepoch 4）**已关单**（INT-17，`2139e26c` + 我补的 `6a4cbd2e`/`6f978c5a`；真机 139 PASS/2 SKIP）；3D 引号/守卫（reserved_use 12 等）→ 3C 参数重排（numbered_parameter 4 必须单独真机行值断言）→ 3B JSON（语义差最大）待 3A 关单后依次派。`materialized_cte` 单列，不并批。
+
+## D13（已决，2026-11-24 11:26）MySQL 版本台账落点：两库同一张表，不用白名单，也不用 schema 注释
+
+**问题**：INT-22 指出接线前必须先有「schema 版本落点」，否则 MySQL 侧的增量 DDL 无处记录；并给了两个候选——(B) copier 白名单加一张 MySQL-only 表，或 (C) 用 information_schema 的表注释存版本。
+
+**裁决**：都不采用，改为 **(A) 两个方言各自建同一张 `gateway_schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`**，SQLite 在 `migrate()` 里写基线行，MySQL 在 bootstrap 里写同一行；冻结导出 `testdata/gateway-sqlite-schema.sql` 与 `gateway_mysql_schema.sql` 同步加上这张表，copier 照常搬运（两库表集合仍完全一致）。
+
+**理由**：
+- 否 (B)：copier 的「表集合必须与 SQLite 完全一致」是这套迁移唯一的强证据（`gateway_mysql_schema.go:184` 的注释与 `TestGatewayMySQLColumnsMatchExport`/`TestGatewayMySQLUniqueKeysMatchExport`/`TestGatewayMySQLSchemaCoversRuntimeDDL` 都在守它）。开一张白名单表，等于把「两库结构一致」降级成「除了台账都一致」——将来任何漂移都能躲进同一个盲点。
+- 否 (C)：注释不是行，查不到历史、无法被表集合守卫断言、也没法在升级时按版本推进；把版本写进注释等于把唯一的状态藏进不可测试的位置。
+- 选 (A)：两个方言得到同一份可查询的版本历史，守卫一条不用放宽，copier 与 parity 测试的语义不变；代价只是三处 DDL（运行期 `migrate()`、冻结导出、MySQL 权威 DDL）各加一张两列表。
+
+**落地语义（INT-23）**：基线版本号用 `0001_baseline` 字面量；已有库（表已存在、台账表为空）由 `migrate()` 补写该行；重复启动不得产生第二行；MySQL bootstrap 写台账行与建表在同一次操作里，失败即整体回退。这条台账今天只记「基线」，不假装有历史版本。
