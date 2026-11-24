@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { AssetRequestError, assetRequest, type ManifestResource, type TargetManifestResponse } from "@/lib/assets"
 import type { Target } from "@/lib/gateway"
+import { manifestStatus, resourceKindLabel, showsAppliedRevision } from "@/lib/target-manifest"
 import { Badge, Button, Card, CardContent, StatusBanner } from "./ui"
 
 const resourceStates = {
@@ -12,20 +13,6 @@ const resourceStates = {
   lost: { label: "失联", variant: "danger" },
   conflict: { label: "冲突", variant: "danger" },
 } as const
-
-const resourceKinds: Record<string, string> = {
-  machine: "机器", cluster: "集群", namespace: "命名空间", system: "业务系统",
-  database: "数据库", site: "网站", credential: "凭据", container_engine: "容器引擎",
-}
-
-function manifestStatus(data: TargetManifestResponse) {
-  if (!data.online) return { label: "Agent 离线", variant: "warning" } as const
-  if (!data.supported) return { label: "Agent 不支持同步", variant: "warning" } as const
-  if (!data.manifest || (data.applied_revision ?? 0) < data.manifest.revision) {
-    return { label: "等待同步", variant: "warning" } as const
-  }
-  return { label: "已同步", variant: "success" } as const
-}
 
 type Action = { action: "refresh" } | { action: "register"; ref: string }
 
@@ -112,9 +99,11 @@ export function TargetManifestCard({ target }: { target: Target }) {
           {data && <>
             <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
               <div><dt className="text-xs text-muted-foreground">清单版本</dt><dd>{manifest?.revision ?? "暂无"}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Agent 已应用版本</dt><dd>{data.applied_revision || "暂无"}</dd></div>
+              {showsAppliedRevision(data) && (
+                <div><dt className="text-xs text-muted-foreground">Agent 已应用版本</dt><dd>{data.applied_revision || "暂无"}</dd></div>
+              )}
               <div>
-                <dt className="text-xs text-muted-foreground">最后同步时间</dt>
+                <dt className="text-xs text-muted-foreground">最后观测时间</dt>
                 <dd>{data.last_observed_at ? <time dateTime={data.last_observed_at}>{new Date(data.last_observed_at).toLocaleString("zh-CN", { hour12: false })}</time> : "暂无"}</dd>
               </div>
             </dl>
@@ -145,7 +134,7 @@ function ManifestRow({ resource, disabled, registering, onRegister }: {
     <li className="flex flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2.5">
       <div className="min-w-0 flex-1 basis-40 space-y-1">
         <p className="break-all text-sm font-medium">{resource.name}</p>
-        <p className="break-words text-xs text-muted-foreground">{[resourceKinds[resource.kind] ?? resource.kind, ...sources].join(" · ")}</p>
+        <p className="break-words text-xs text-muted-foreground">{[resourceKindLabel(resource.kind), ...sources].join(" · ")}</p>
         {resource.reason && <p className={`break-words text-xs ${state.variant === "danger" ? "text-destructive" : "text-muted-foreground"}`}>{resource.reason}</p>}
       </div>
       <Badge variant={state.variant}>{state.label}</Badge>
