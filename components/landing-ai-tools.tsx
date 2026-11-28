@@ -17,6 +17,7 @@ import {
   Sparkles,
   Terminal,
 } from "lucide-react"
+import { PortalContainer } from "./ui"
 
 type TabId = "ide-skill" | "mcp-matrix" | "rpc-primitives"
 
@@ -147,7 +148,7 @@ export function LandingAiTools() {
 
   return (
     <section id="ai-tools" className="scroll-mt-20 py-20 sm:py-24">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6">
+      <PortalContainer>
         {/* Section Header */}
         <div className="mb-10 flex flex-col items-start justify-between gap-4 lg:flex-row lg:items-end">
           <div className="max-w-3xl">
@@ -187,7 +188,7 @@ export function LandingAiTools() {
                 onClick={() => setTab(item.id)}
                 className={`cursor-pointer rounded-xl border p-4 text-left transition-all ${
                   active
-                    ? "border-accent/65 bg-primary/12 shadow-[0_0_32px_-16px_color-mix(in_oklch,var(--accent)_70%,transparent)]"
+                    ? "border-accent/65 bg-primary/12 shadow-lg ring-1 ring-accent/35"
                     : "border-border/70 bg-card/50 hover:border-border hover:bg-card/85"
                 }`}
               >
@@ -247,7 +248,7 @@ export function LandingAiTools() {
                     <Bot className="size-4 text-accent" aria-hidden="true" />
                     AI 编码助手真实调用链路（Claude Code / Codex / Cursor）
                   </span>
-                  <span className="rounded bg-success/15 px-2 py-0.5 font-mono text-[10px] text-success">
+                  <span className="rounded bg-success/15 px-2 py-0.5 font-mono text-2xs text-success">
                     0 SSH Key · 0 Password
                   </span>
                 </div>
@@ -300,7 +301,7 @@ export function LandingAiTools() {
                       <Sparkles className="size-4 text-accent" aria-hidden="true" />
                       只读观察 MCP 白名单（ask 模式）
                     </span>
-                    <span className="rounded-full bg-accent/12 px-2.5 py-0.5 font-mono text-[10px] text-accent">
+                    <span className="rounded-full bg-accent/12 px-2.5 py-0.5 font-mono text-2xs text-accent">
                       READ-ONLY
                     </span>
                   </div>
@@ -311,7 +312,7 @@ export function LandingAiTools() {
                           <code className="font-mono text-xs font-semibold text-accent">{t.name}</code>
                           <span className="text-2xs text-muted-foreground">{t.scope}</span>
                         </div>
-                        <div className="mt-1 font-mono text-[11px] text-foreground/85">{t.ops}</div>
+                        <div className="mt-1 font-mono text-2xs text-foreground/85">{t.ops}</div>
                         <div className="mt-1.5 flex items-center gap-1.5 text-2xs text-muted-foreground">
                           <Check className="size-3 shrink-0 text-success" aria-hidden="true" />
                           <span>{t.guard}</span>
@@ -329,7 +330,7 @@ export function LandingAiTools() {
                         <ShieldCheck className="size-4 text-primary" aria-hidden="true" />
                         受控变更 MCP 白名单（显式 --apply）
                       </span>
-                      <span className="rounded-full bg-primary/15 px-2.5 py-0.5 font-mono text-[10px] text-primary">
+                      <span className="rounded-full bg-primary/15 px-2.5 py-0.5 font-mono text-2xs text-primary">
                         ATTESTED MUTATION
                       </span>
                     </div>
@@ -340,7 +341,7 @@ export function LandingAiTools() {
                             <code className="font-mono text-xs font-semibold text-primary">{t.name}</code>
                             <span className="text-2xs text-muted-foreground">{t.scope}</span>
                           </div>
-                          <div className="mt-1 font-mono text-[11px] text-foreground/85">{t.ops}</div>
+                          <div className="mt-1 font-mono text-2xs text-foreground/85">{t.ops}</div>
                           <div className="mt-1.5 flex items-center gap-1.5 text-2xs text-muted-foreground">
                             <Lock className="size-3 shrink-0 text-accent" aria-hidden="true" />
                             <span>{t.guard}</span>
@@ -369,7 +370,7 @@ export function LandingAiTools() {
                   <span className="text-sm font-semibold text-foreground">
                     公开客户端 / Agent 可调用原语（`/v1/rpc` · JSON-RPC over WS/HTTP）
                   </span>
-                  <span className="rounded bg-success/15 px-2 py-0.5 font-mono text-[10px] text-success">
+                  <span className="rounded bg-success/15 px-2 py-0.5 font-mono text-2xs text-success">
                     clientCallable
                   </span>
                 </div>
@@ -393,7 +394,7 @@ export function LandingAiTools() {
                       <ShieldAlert className="size-4 text-destructive" aria-hidden="true" />
                       控制面严格隔离工具
                     </span>
-                    <span className="rounded bg-destructive/15 px-2 py-0.5 font-mono text-[10px] text-destructive">
+                    <span className="rounded bg-destructive/15 px-2 py-0.5 font-mono text-2xs text-destructive">
                       gatewayInternal
                     </span>
                   </div>
@@ -439,7 +440,7 @@ export function LandingAiTools() {
             )
           })}
         </div>
-      </div>
+      </PortalContainer>
     </section>
   )
 }

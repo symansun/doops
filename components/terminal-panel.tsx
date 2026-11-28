@@ -16,7 +16,7 @@ import {
 import { commandJournal } from "@/lib/console-persistence"
 import type { TerminalAiActionMode, TerminalModeKind } from "@/lib/terminal-ai"
 import type { TerminalAiDispatchMode } from "@/lib/terminal-intent"
-import { Button, Textarea } from "./ui"
+import { Button, SegmentedControl, Textarea } from "./ui"
 import { TerminalIcon, SendIcon, SparkIcon, StopIcon } from "./icons"
 import { SessionInput } from "./session-input"
 import {
@@ -459,35 +459,27 @@ export function TerminalPanel({
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-card/80 px-3 py-1.5 text-xs">
-        {([
-          ["pty", "交互终端"],
-          ["command", "命令"],
-        ] as const).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={mode === value}
-            onClick={() => setMode(value)}
-            className={
-              "shrink-0 whitespace-nowrap rounded px-2 py-0.5 transition " +
-              (mode === value ? "bg-primary/15 text-primary font-medium" : "text-muted-foreground hover:bg-muted")
-            }
-          >
-            {label}
-          </button>
-        ))}
+        <SegmentedControl
+          value={mode}
+          onChange={setMode}
+          ariaLabel="终端模式"
+          options={[
+            { value: "pty", label: "交互终端" },
+            { value: "command", label: "命令" },
+          ]}
+        />
         {mode === "pty" && (
-          <div className="flex min-w-0 items-center gap-1.5 border-l border-border/70 pl-2 text-[11px] text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-1.5 border-l border-border/70 pl-2 text-2xs text-muted-foreground">
             <span
               className={
                 "inline-block h-2 w-2 shrink-0 rounded-full " +
                 (ptyChrome.status === "ready"
-                  ? "bg-emerald-400"
+                  ? "bg-success"
                   : ptyChrome.status === "connecting"
-                    ? "bg-amber-400"
+                    ? "bg-warning"
                     : ptyChrome.status === "reconnecting"
-                      ? "animate-pulse bg-amber-400"
-                      : "bg-rose-400")
+                      ? "animate-pulse bg-warning"
+                      : "bg-destructive")
               }
               title={ptyChrome.detail ? `${ptyStatusText} · ${ptyChrome.detail}` : ptyStatusText}
             />
@@ -504,7 +496,7 @@ export function TerminalPanel({
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {((mode === "command" && actionNotice) || (mode === "pty" && ptyChrome.actionNotice)) && (
-            <span role="status" className="max-w-[12rem] truncate text-[11px] text-primary">
+            <span role="status" className="max-w-48 truncate text-2xs text-primary">
               {mode === "command" ? actionNotice : ptyChrome.actionNotice}
             </span>
           )}
@@ -513,48 +505,54 @@ export function TerminalPanel({
               role="group"
               aria-label="终端 AI 联动模式"
               data-testid="terminal-ai-mode-switch"
-              className="inline-flex shrink-0 items-center rounded-md border border-border/80 bg-muted/40 p-0.5 text-[11px]"
+              className="inline-flex shrink-0 items-center rounded-md border border-border/80 bg-muted/40 p-0.5 text-2xs"
             >
-              <button
+              <Button
                 type="button"
+                size="sm"
+                variant="ghost"
                 aria-pressed={aiMode === "suggest"}
                 data-testid="terminal-ai-mode-suggest"
                 title="模式 1：输入自然语言 / # / ? 单次生成建议命令（不打开 AI 协同）"
                 onClick={() => selectAiMode("suggest")}
                 className={
-                  "whitespace-nowrap rounded px-2 py-0.5 transition " +
-                  (aiMode === "suggest" ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:text-foreground")
+                  "h-6 px-2 text-2xs " +
+                  (aiMode === "suggest" ? "bg-primary/20 font-medium text-primary hover:bg-primary/25 hover:text-primary" : "text-muted-foreground")
                 }
               >
                 提示命令
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                size="sm"
+                variant="ghost"
                 aria-pressed={aiMode === "assistant"}
                 data-testid="terminal-ai-mode-assistant"
                 disabled={!onAskAi || targetOffline}
                 title="模式 2：输入自然语言或 @ai / ## 直接拍给右侧 AI 助手自主执行"
                 onClick={() => selectAiMode("assistant")}
                 className={
-                  "whitespace-nowrap rounded px-2 py-0.5 transition disabled:opacity-40 " +
-                  (aiMode === "assistant" ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:text-foreground")
+                  "h-6 px-2 text-2xs " +
+                  (aiMode === "assistant" ? "bg-primary/20 font-medium text-primary hover:bg-primary/25 hover:text-primary" : "text-muted-foreground")
                 }
               >
                 派给 AI
-              </button>
+              </Button>
             </div>
           )}
           {mode === "pty" && (
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="ghost"
               disabled={targetOffline}
               data-testid="terminal-inline-ai-trigger"
               title="终端 AI 提问（⌘I / Ctrl+Shift+I；# 提示命令 · @ai 派给 AI）"
               onClick={() => ptyActionsRef.current?.openInlineAi()}
-              className="shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[11px] text-primary hover:bg-primary/10 disabled:opacity-40"
+              className="h-7 shrink-0 px-2 text-2xs text-primary hover:bg-primary/10 hover:text-primary"
             >
               AI 提问
-            </button>
+            </Button>
           )}
           {mode === "pty" && (aiOpen || aiExecutionEntries.length > 0) && (
             <button
@@ -568,7 +566,7 @@ export function TerminalPanel({
               }
               onClick={() => ptyActionsRef.current?.toggleAiMirror()}
               className={
-                "shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[11px] transition " +
+                "shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-2xs transition " +
                 (ptyChrome.aiMirrorEnabled !== false
                   ? "bg-primary/15 text-primary font-medium hover:bg-primary/20"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground")
@@ -595,32 +593,36 @@ export function TerminalPanel({
             </Button>
           )}
           {mode === "pty" && (ptyChrome.status === "error" || ptyChrome.status === "closed" || ptyChrome.status === "reconnecting") && (
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="ghost"
               data-testid="terminal-reconnect-btn"
               onClick={() => ptyActionsRef.current?.reconnect()}
-              className="shrink-0 whitespace-nowrap rounded bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-400 hover:bg-emerald-500/25"
+              className="h-7 shrink-0 bg-success/15 px-2 text-2xs text-success hover:bg-success/25 hover:text-success"
             >
               {ptyChrome.status === "reconnecting" ? "立即重连" : "重连"}
-            </button>
+            </Button>
           )}
           {mode === "pty" && (ptyChrome.status === "ready" || ptyChrome.status === "connecting" || ptyChrome.status === "reconnecting") && (
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="ghost"
               data-testid="terminal-disconnect-btn"
               onClick={() => ptyActionsRef.current?.disconnect()}
-              className="shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="h-7 shrink-0 px-2 text-2xs text-muted-foreground"
               title="断开当前 PTY 会话"
             >
               断开
-            </button>
+            </Button>
           )}
           {onSessionChange && (
             <SessionInput
               value={sessionId}
               disabled={sessionDisabled || running}
               onCommit={onSessionChange}
-              className="hidden w-32 font-mono text-[11px] 2xl:inline-flex"
+              className="hidden w-32 font-mono text-2xs 2xl:inline-flex"
             />
           )}
         </div>

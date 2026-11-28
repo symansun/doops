@@ -36,12 +36,18 @@ import {
   Button,
   Card,
   CardContent,
+  DataTable,
+  DataTableColumnHeader,
+  EmptyState,
+  FilterBar,
   Grid,
   Inline,
   Input,
+  PageHeader,
   PageTabs,
   SegmentedControl,
   Select,
+  Skeleton,
   Stack,
   StatusBanner,
   Table,
@@ -50,6 +56,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  type ColumnDef,
 } from "./ui"
 
 type MonitorTab = "overview" | "agents" | "usage" | "operations"
@@ -530,18 +537,183 @@ export function AssetPlatformPanel({
     return base
   }, [isAdmin, activeAgentCount, data])
 
-  function jumpToTarget(clusterName: string, instanceName: string, targetTab: TargetTab, operationId?: string) {
+  const jumpToTarget = useCallback((clusterName: string, instanceName: string, targetTab: TargetTab, operationId?: string) => {
     if (!onOpenTarget || !clusterName || !instanceName) return
     const fallback = data?.agents.find((a) => a.cluster === clusterName && a.instance === instanceName)
     onOpenTarget(toTargetModel(clusterName, instanceName, targets, fallback), targetTab, operationId)
-  }
+  }, [data, onOpenTarget, targets])
+
+  const connectionEventColumns = useMemo<ColumnDef<PlatformMonitorData["connection_events"][number], unknown>[]>(
+    () => [
+      {
+        accessorKey: "event",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="事件" />,
+        cell: ({ row }) => (
+          <Badge variant={row.original.event === "online" ? "success" : "warning"}>
+            {row.original.event === "online" ? "上线连接" : "断开离线"}
+          </Badge>
+        ),
+      },
+      {
+        accessorKey: "key",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="目标 Agent" />,
+        cell: ({ row }) => <span className="font-mono text-xs font-medium text-foreground">{row.original.key}</span>,
+      },
+      {
+        accessorKey: "generation",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="连接代次" />,
+        cell: ({ row }) => <span className="font-mono text-xs text-muted-foreground">#{row.original.generation}</span>,
+      },
+      {
+        accessorKey: "release_commit",
+        header: "版本提交",
+        cell: ({ row }) => (
+          <span className="font-mono text-xs text-muted-foreground" title={row.original.release_commit}>
+            {row.original.release_commit ? row.original.release_commit.slice(0, 8) : "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "remote",
+        header: "远端地址",
+        cell: ({ row }) => <span className="font-mono text-xs text-muted-foreground">{row.original.remote || "—"}</span>,
+      },
+      {
+        accessorKey: "occurred_at",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="发生时间" />,
+        cell: ({ row }) => <span className="text-xs text-muted-foreground">{fmtStamp(row.original.occurred_at)}</span>,
+      },
+    ],
+    [],
+  )
+
+  const targetUsageColumns = useMemo<ColumnDef<PlatformMonitorData["by_target"][number], unknown>[]>(
+    () => [
+      {
+        accessorKey: "key",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="目标 Agent" />,
+        cell: ({ row }) => (
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={`inline-block h-2 w-2 rounded-full ${row.original.online ? "bg-success" : "bg-muted-foreground/40"}`} aria-hidden="true" />
+              <span className="font-mono font-medium text-foreground">{row.original.key}</span>
+            </div>
+            <div className="text-2xs text-muted-foreground">最近调用 {fmtStamp(row.original.last_used_at)}</div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "total",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="调用 / 成功率" />,
+        cell: ({ row }) => (
+          <div className="font-mono text-xs">
+            <div>{row.original.total} 次</div>
+            <div className="text-2xs text-muted-foreground">{formatSuccessRate(row.original)} · {formatDurationMs(row.original.avg_duration_ms)}</div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "failed",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="异常 / 未知" />,
+        cell: ({ row }) => (
+          <div className="font-mono text-xs">
+            <span className={row.original.failed > 0 ? "text-destructive" : "text-muted-foreground"}>
+              {row.original.failed}
+            </span>
+            {row.original.outcome_unknown > 0 && (
+              <Badge variant="warning" className="ml-1.5">未知 {row.original.outcome_unknown}</Badge>
+            )}
+          </div>
+        ),
+      },
+      {
+        accessorKey: "total_tokens",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Token / 流量" />,
+        cell: ({ row }) => (
+          <div className="font-mono text-xs">
+            <div>{row.original.total_tokens > 0 ? `${formatTokens(row.original.total_tokens)} tok` : "—"}</div>
+            <div className="text-2xs text-muted-foreground">{formatBytes(row.original.bytes_in + row.original.bytes_out)}</div>
+          </div>
+        ),
+      },
+      {
+        id: "actions",
+        header: () => <span className="block text-right">追溯</span>,
+        enableSorting: false,
+        cell: ({ row }) =>
+          onOpenTarget ? (
+            <div className="flex justify-end gap-1.5">
+              <Button size="sm" onClick={() => jumpToTarget(row.original.cluster, row.original.instance, "audit")}>
+                审计
+              </Button>
+              {row.original.online && (
+                <Button size="sm" onClick={() => jumpToTarget(row.original.cluster, row.original.instance, "overview")}>
+                  进入
+                </Button>
+              )}
+            </div>
+          ) : null,
+      },
+    ],
+    [jumpToTarget, onOpenTarget],
+  )
+
+  const userUsageColumns = useMemo<ColumnDef<PlatformMonitorData["by_user"][number], unknown>[]>(
+    () => [
+      {
+        accessorKey: "user_name",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="账号" />,
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-foreground">{row.original.user_name}</span>
+            {row.original.is_admin && <Badge variant="primary">admin</Badge>}
+          </div>
+        ),
+      },
+      {
+        accessorKey: "total",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="调用 / 异常" />,
+        cell: ({ row }) => (
+          <span className="font-mono text-xs">
+            {row.original.total} 次
+            {row.original.failed > 0 && <span className="ml-1.5 text-destructive">异常 {row.original.failed}</span>}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "active_targets",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="目标 / 令牌" />,
+        cell: ({ row }) => (
+          <span className="font-mono text-xs text-muted-foreground">
+            {row.original.active_targets} 目标 · {row.original.token_count} 令牌
+          </span>
+        ),
+      },
+      {
+        accessorKey: "total_tokens",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Token / 流量" />,
+        cell: ({ row }) => (
+          <div className="font-mono text-xs">
+            <div>{row.original.total_tokens > 0 ? `${formatTokens(row.original.total_tokens)} tok` : "—"}</div>
+            <div className="text-2xs text-muted-foreground">{formatBytes(row.original.bytes_in + row.original.bytes_out)}</div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "last_active_at",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="最近活跃" />,
+        cell: ({ row }) => <span className="text-xs text-muted-foreground">{fmtStamp(row.original.last_active_at)}</span>,
+      },
+    ],
+    [],
+  )
 
   return (
     <section aria-label="Agent 运行监控" className="space-y-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-foreground">Agent 运行监控</h1>
+      <PageHeader
+        title="Agent 运行监控"
+        badge={
+          <>
             <Badge variant="outline">隧道与控制面</Badge>
             <Badge variant={isAdmin ? "primary" : "outline"}>
               {isAdmin ? "全局视角" : "本人授权范围"}
@@ -555,72 +727,80 @@ export function AssetPlatformPanel({
             {data && data.agent_summary.flapping_agents > 0 && (
               <Badge variant="warning">时窗重连波动 {data.agent_summary.flapping_agents} 台</Badge>
             )}
-          </div>
-          <p className="text-sm text-muted-foreground">
-            集中监控 Agent 隧道在线与版本一致性、并发与排队水位、调用量、大模型 Token 消耗及运行异常；主机、集群与应用资源指标请前往「资源监控」。
-          </p>
-        </div>
-
-        <Inline gap={2} className="flex-wrap">
-          {onOpenSituation && (
-            <Button size="sm" variant="ghost" onClick={onOpenSituation}>
-              态势感知
-            </Button>
-          )}
-          {onOpenResourceMonitor && (
-            <Button size="sm" variant="ghost" onClick={() => onOpenResourceMonitor()}>
-              资源监控
-            </Button>
-          )}
-          {onOpenInspection && (
-            <Button size="sm" variant="ghost" onClick={onOpenInspection}>
-              智能巡检
-            </Button>
-          )}
-          <Select
-            aria-label="按集群筛选"
-            scale="sm"
-            className="w-48"
-            value={cluster}
-            disabled={!data && loading}
-            onChange={(e) => selectCluster(e.target.value)}
-          >
-            <option value="">全部集群{data ? ` (${data.clusters.length})` : ""}</option>
-            {cluster && data && !data.clusters.some((c) => c.name === cluster) && (
-              <option value={cluster}>{cluster}</option>
+          </>
+        }
+        description="集中监控 Agent 隧道在线与版本一致性、并发与排队水位、调用量、大模型 Token 消耗及运行异常；主机、集群与应用资源指标请前往「资源监控」。"
+        actions={
+          <>
+            {onOpenSituation && (
+              <Button size="sm" variant="ghost" onClick={onOpenSituation}>
+                态势感知
+              </Button>
             )}
-            {data?.clusters.map((item) => (
-              <option key={item.name} value={item.name}>
-                {item.name}（在线 {item.online}/{item.total}）
-              </option>
-            ))}
-          </Select>
+            {onOpenResourceMonitor && (
+              <Button size="sm" variant="ghost" onClick={() => onOpenResourceMonitor()}>
+                资源监控
+              </Button>
+            )}
+            {onOpenInspection && (
+              <Button size="sm" variant="ghost" onClick={onOpenInspection}>
+                智能巡检
+              </Button>
+            )}
+            <Select
+              aria-label="按集群筛选"
+              scale="sm"
+              className="w-48"
+              value={cluster}
+              disabled={!data && loading}
+              onChange={(e) => selectCluster(e.target.value)}
+            >
+              <option value="">全部集群{data ? ` (${data.clusters.length})` : ""}</option>
+              {cluster && data && !data.clusters.some((c) => c.name === cluster) && (
+                <option value={cluster}>{cluster}</option>
+              )}
+              {data?.clusters.map((item) => (
+                <option key={item.name} value={item.name}>
+                  {item.name}（在线 {item.online}/{item.total}）
+                </option>
+              ))}
+            </Select>
 
-          <SegmentedControl
-            ariaLabel="统计时间范围"
-            value={range}
-            options={PLATFORM_MONITOR_RANGES}
-            onChange={setRange}
-          />
+            <SegmentedControl
+              ariaLabel="统计时间范围"
+              value={range}
+              options={PLATFORM_MONITOR_RANGES}
+              onChange={setRange}
+            />
 
-          <Button size="sm" disabled={loading} onClick={() => setRevision((v) => v + 1)}>
-            <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} />
-            刷新
-          </Button>
-          {isAdmin && onDeployAgent && (
-            <Button size="sm" variant="primary" onClick={onDeployAgent}>
-              接入 Agent
+            <Button size="sm" disabled={loading} onClick={() => setRevision((v) => v + 1)}>
+              <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} />
+              刷新
             </Button>
-          )}
-        </Inline>
-      </header>
+            {isAdmin && onDeployAgent && (
+              <Button size="sm" variant="primary" onClick={onDeployAgent}>
+                接入 Agent
+              </Button>
+            )}
+          </>
+        }
+      />
 
       {error && <StatusBanner tone="error">{error}</StatusBanner>}
 
       {!data && loading ? (
-        <p role="status" className="py-8 text-sm text-muted-foreground">
-          正在读取平台监控数据…
-        </p>
+        <div role="status" className="space-y-4">
+          <span className="sr-only">正在读取平台监控数据…</span>
+          <Grid cols={2} smCols={3} lgCols={3} gap={3}>
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </Grid>
+          <Skeleton className="h-52 w-full" />
+        </div>
       ) : data ? (
         <>
           <Grid cols={2} smCols={3} lgCols={3} gap={3}>
@@ -980,7 +1160,7 @@ export function AssetPlatformPanel({
             <Stack gap={4}>
               <Card>
                 <CardContent className="space-y-3 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
+                  <FilterBar className="justify-between">
                     <Inline gap={2} className="flex-wrap">
                       <SegmentedControl
                         ariaLabel="实例显示范围"
@@ -1008,7 +1188,7 @@ export function AssetPlatformPanel({
                         placeholder="搜索 cluster/instance、地址、会话或 commit"
                         value={agentQuery}
                         onChange={(e) => setAgentQuery(e.target.value)}
-                        className="w-72"
+                        className="w-full sm:w-72"
                       />
                     </Inline>
                     <Inline gap={2} className="flex-wrap text-xs text-muted-foreground">
@@ -1023,10 +1203,10 @@ export function AssetPlatformPanel({
                         </a>
                       )}
                     </Inline>
-                  </div>
+                  </FilterBar>
 
                   <div className="overflow-x-auto">
-                    <Table className="min-w-[960px]">
+                    <Table className="min-w-full">
                       <TableHeader>
                         <TableRow>
                           <TableHead>状态与注册</TableHead>
@@ -1233,40 +1413,15 @@ export function AssetPlatformPanel({
                     <p className="text-xs text-muted-foreground">所选时间窗口内持久化的隧道连接与断开记录，用于排查频繁重连或版本切换</p>
                   </div>
                   {!data.connection_events.length ? (
-                    <p className="py-6 text-center text-sm text-muted-foreground">所选时间范围内无上下线状态变化记录</p>
+                    <EmptyState title="所选时间范围内无上下线状态变化记录" />
                   ) : (
-                    <div className="overflow-x-auto">
-                      <Table className="min-w-[680px]">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>事件</TableHead>
-                            <TableHead>目标 Agent</TableHead>
-                            <TableHead>连接代次</TableHead>
-                            <TableHead>版本提交</TableHead>
-                            <TableHead>远端地址</TableHead>
-                            <TableHead>发生时间</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {data.connection_events.map((ev) => (
-                            <TableRow key={ev.id}>
-                              <TableCell>
-                                <Badge variant={ev.event === "online" ? "success" : "warning"}>
-                                  {ev.event === "online" ? "上线连接" : "断开离线"}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="font-mono text-xs font-medium text-foreground">{ev.key}</TableCell>
-                              <TableCell className="font-mono text-xs text-muted-foreground">#{ev.generation}</TableCell>
-                              <TableCell className="font-mono text-xs text-muted-foreground" title={ev.release_commit}>
-                                {ev.release_commit ? ev.release_commit.slice(0, 8) : "—"}
-                              </TableCell>
-                              <TableCell className="font-mono text-xs text-muted-foreground">{ev.remote || "—"}</TableCell>
-                              <TableCell className="text-xs text-muted-foreground">{fmtStamp(ev.occurred_at)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
+                    <DataTable
+                      columns={connectionEventColumns}
+                      data={data.connection_events}
+                      getRowId={(ev) => String(ev.id)}
+                      paginate={data.connection_events.length > 20}
+                      initialPageSize={20}
+                    />
                   )}
                 </CardContent>
               </Card>
@@ -1282,69 +1437,12 @@ export function AssetPlatformPanel({
                       <h2 className="text-base font-semibold text-foreground">目标 Agent 使用与异常排行</h2>
                       <p className="text-xs text-muted-foreground">按所选时间窗内调用次数与异常数排序（前 20）</p>
                     </div>
-                    <div className="overflow-x-auto">
-                      <Table className="min-w-[600px]">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>目标 Agent</TableHead>
-                            <TableHead>调用 / 成功率</TableHead>
-                            <TableHead>异常 / 未知</TableHead>
-                            <TableHead>Token / 流量</TableHead>
-                            <TableHead className="text-right">追溯</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {data.by_target.map((row) => (
-                            <TableRow key={row.key}>
-                              <TableCell>
-                                <div className="flex items-center gap-2">
-                                  <span className={`inline-block h-2 w-2 rounded-full ${row.online ? "bg-success" : "bg-muted-foreground/40"}`} aria-hidden="true" />
-                                  <span className="font-mono font-medium text-foreground">{row.key}</span>
-                                </div>
-                                <div className="text-2xs text-muted-foreground">最近调用 {fmtStamp(row.last_used_at)}</div>
-                              </TableCell>
-                              <TableCell className="font-mono text-xs">
-                                <div>{row.total} 次</div>
-                                <div className="text-2xs text-muted-foreground">{formatSuccessRate(row)} · {formatDurationMs(row.avg_duration_ms)}</div>
-                              </TableCell>
-                              <TableCell className="font-mono text-xs">
-                                <span className={row.failed > 0 ? "text-destructive" : "text-muted-foreground"}>
-                                  {row.failed}
-                                </span>
-                                {row.outcome_unknown > 0 && (
-                                  <Badge variant="warning" className="ml-1.5">未知 {row.outcome_unknown}</Badge>
-                                )}
-                              </TableCell>
-                              <TableCell className="font-mono text-xs">
-                                <div>{row.total_tokens > 0 ? `${formatTokens(row.total_tokens)} tok` : "—"}</div>
-                                <div className="text-2xs text-muted-foreground">{formatBytes(row.bytes_in + row.bytes_out)}</div>
-                              </TableCell>
-                              <TableCell className="text-right">
-                                {onOpenTarget && (
-                                  <div className="inline-flex gap-1.5">
-                                    <Button size="sm" onClick={() => jumpToTarget(row.cluster, row.instance, "audit")}>
-                                      审计
-                                    </Button>
-                                    {row.online && (
-                                      <Button size="sm" onClick={() => jumpToTarget(row.cluster, row.instance, "overview")}>
-                                        进入
-                                      </Button>
-                                    )}
-                                  </div>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                          {!data.by_target.length && (
-                            <TableRow>
-                              <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
-                                所选范围内暂无目标调用记录
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
+                    <DataTable
+                      columns={targetUsageColumns}
+                      data={data.by_target}
+                      getRowId={(row) => row.key}
+                      empty="所选范围内暂无目标调用记录"
+                    />
                   </CardContent>
                 </Card>
 
@@ -1356,52 +1454,12 @@ export function AssetPlatformPanel({
                         {isAdmin ? "统计各账号调用次数、覆盖目标数、令牌数与大模型 Token" : "普通账号仅展示本人及自有凭据范围内的调用统计"}
                       </p>
                     </div>
-                    <div className="overflow-x-auto">
-                      <Table className="min-w-[560px]">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>账号</TableHead>
-                            <TableHead>调用 / 异常</TableHead>
-                            <TableHead>目标 / 令牌</TableHead>
-                            <TableHead>Token / 流量</TableHead>
-                            <TableHead>最近活跃</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {data.by_user.map((user) => (
-                            <TableRow key={user.user_id}>
-                              <TableCell>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-medium text-foreground">{user.user_name}</span>
-                                  {user.is_admin && <Badge variant="primary">admin</Badge>}
-                                </div>
-                              </TableCell>
-                              <TableCell className="font-mono text-xs">
-                                {user.total} 次
-                                {user.failed > 0 && <span className="ml-1.5 text-destructive">异常 {user.failed}</span>}
-                              </TableCell>
-                              <TableCell className="font-mono text-xs text-muted-foreground">
-                                {user.active_targets} 目标 · {user.token_count} 令牌
-                              </TableCell>
-                              <TableCell className="font-mono text-xs">
-                                <div>{user.total_tokens > 0 ? `${formatTokens(user.total_tokens)} tok` : "—"}</div>
-                                <div className="text-2xs text-muted-foreground">{formatBytes(user.bytes_in + user.bytes_out)}</div>
-                              </TableCell>
-                              <TableCell className="text-xs text-muted-foreground">
-                                {fmtStamp(user.last_active_at)}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                          {!data.by_user.length && (
-                            <TableRow>
-                              <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
-                                所选范围内暂无账号活动记录
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
+                    <DataTable
+                      columns={userUsageColumns}
+                      data={data.by_user}
+                      getRowId={(user) => String(user.user_id)}
+                      empty="所选范围内暂无账号活动记录"
+                    />
                   </CardContent>
                 </Card>
               </div>
@@ -1411,7 +1469,7 @@ export function AssetPlatformPanel({
                   <CardContent className="space-y-3 p-4">
                     <h2 className="text-base font-semibold text-foreground">大模型 Token 消耗明细</h2>
                     <div className="overflow-x-auto">
-                      <Table className="min-w-[480px]">
+                      <Table className="min-w-full">
                         <TableHeader>
                           <TableRow>
                             <TableHead>模型标识</TableHead>
@@ -1448,7 +1506,7 @@ export function AssetPlatformPanel({
                   <CardContent className="space-y-3 p-4">
                     <h2 className="text-base font-semibold text-foreground">动作调用明细</h2>
                     <div className="overflow-x-auto">
-                      <Table className="min-w-[540px]">
+                      <Table className="min-w-full">
                         <TableHeader>
                           <TableRow>
                             <TableHead>动作名称</TableHead>
@@ -1565,7 +1623,7 @@ function AuditItemsTable({
   }
   return (
     <div className="overflow-x-auto">
-      <Table className="min-w-[780px]">
+      <Table className="min-w-full">
         <TableHeader>
           <TableRow>
             <TableHead>状态 / 动作</TableHead>
@@ -1650,7 +1708,7 @@ function DetachedTasksTable({
   }
   return (
     <div className="overflow-x-auto">
-      <Table className="min-w-[760px]">
+      <Table className="min-w-full">
         <TableHeader>
           <TableRow>
             <TableHead>状态</TableHead>

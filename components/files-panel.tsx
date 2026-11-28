@@ -1,6 +1,6 @@
 "use client"
 
-import { Button, SegmentedControl, StatusBanner, Textarea } from "./ui"
+import { Button, buttonVariants, SegmentedControl, StatusBanner, Textarea } from "./ui"
 import { Markdown } from "./markdown"
 import { cn } from "@/lib/cn"
 import { SessionInput } from "./session-input"
@@ -901,7 +901,7 @@ export function FilesPanel({
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {/* label + 原生 file input：点击区域由浏览器自己激活，不依赖脚本调用 input.click() */}
           <label
-            className={cn("btn btn-sm btn-file", locked && "pointer-events-none opacity-50")}
+            className={cn(buttonVariants({ size: "sm" }), "relative focus-within:ring-2 focus-within:ring-ring", locked && "pointer-events-none opacity-50")}
             aria-disabled={locked ? "true" : undefined}
             title="选择文件上传，也可以把文件直接拖进本页"
           >
@@ -917,7 +917,7 @@ export function FilesPanel({
             />
           </label>
           <label
-            className={cn("btn btn-sm btn-file", locked && "pointer-events-none opacity-50")}
+            className={cn(buttonVariants({ size: "sm" }), "relative focus-within:ring-2 focus-within:ring-ring", locked && "pointer-events-none opacity-50")}
             aria-disabled={locked ? "true" : undefined}
             title="选择一个文件夹，按原有目录结构上传"
           >
@@ -1118,18 +1118,20 @@ export function FilesPanel({
                 >
                   <FileIcon width={15} height={15} className="shrink-0 text-muted-foreground" />
                   <span className="truncate">{d.name}</span>
-                  <span className="ml-auto shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-[10px] text-warning">未保存</span>
+                  <span className="ml-auto shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-2xs text-warning">未保存</span>
                 </button>
                 <span className="flex shrink-0 items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-                  <button
+                  <Button
                     type="button"
+                    size="icon-xs"
+                    variant="ghost"
                     onClick={() => discardDraft(d.path, d.name)}
-                    className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                    className="text-muted-foreground hover:text-destructive"
                     title="丢弃草稿"
                     aria-label={`丢弃草稿 ${d.name}`}
                   >
                     <TrashIcon width={13} height={13} />
-                  </button>
+                  </Button>
                 </span>
               </div>
             ))}
@@ -1157,37 +1159,43 @@ export function FilesPanel({
                   </button>
                   <span className="flex shrink-0 items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
                     {!e.isDir && (
-                      <button
+                      <Button
                         type="button"
+                        size="icon-xs"
+                        variant="ghost"
                         onClick={() => void downloadFile(full, e.name)}
                         disabled={locked}
-                        className="rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                        className="text-muted-foreground"
                         title="下载"
                         aria-label={`下载 ${e.name}`}
                       >
                         <DownloadIcon width={13} height={13} />
-                      </button>
+                      </Button>
                     )}
-                    <button
+                    <Button
                       type="button"
+                      size="icon-xs"
+                      variant="ghost"
                       onClick={() => void renameEntry(full, e.name)}
                       disabled={locked}
-                      className="rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      className="text-muted-foreground"
                       title="重命名"
                       aria-label={`重命名 ${e.name}`}
                     >
                       <PencilIcon width={13} height={13} />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
+                      size="icon-xs"
+                      variant="ghost"
                       onClick={() => void deleteEntry(full, e.name, e.isDir)}
                       disabled={locked}
-                      className="rounded p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50"
+                      className="text-muted-foreground hover:text-destructive"
                       title="删除"
                       aria-label={`删除 ${e.name}`}
                     >
                       <TrashIcon width={13} height={13} />
-                    </button>
+                    </Button>
                   </span>
                 </div>
               )

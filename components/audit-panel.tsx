@@ -12,7 +12,7 @@ import {
   type AuditScope,
 } from "@/lib/gateway"
 import { HistoryIcon, RefreshIcon } from "./icons"
-import { Badge, Button, Card, Checkbox, Input, Select, StatusBanner } from "./ui"
+import { Badge, Button, Card, Checkbox, EmptyState, FilterBar, Input, Select, Skeleton, StatusBanner } from "./ui"
 
 const PAGE_SIZE = 50
 
@@ -120,7 +120,7 @@ export function AuditPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-4 py-3">
+      <FilterBar className="justify-between gap-3 rounded-none border-x-0 border-t-0 bg-card px-4 py-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Select
             value={scope}
@@ -216,7 +216,7 @@ export function AuditPanel({
           <label className="flex min-w-0 flex-wrap items-center gap-2">结束时间<Input type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
           <label className="flex items-center gap-2"><Checkbox checked={!hideObserve} onChange={(e) => setHideObserve(!e.target.checked)} />显示升级进行中的轮询</label>
         </div>
-      </div>
+      </FilterBar>
 
       <div className="flex-1 overflow-y-auto p-4">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -239,12 +239,20 @@ export function AuditPanel({
             {error}
           </StatusBanner>
         )}
-        {loading && !loadingMore && <p role="status" className="mb-3 text-sm text-muted-foreground">正在查询审计记录…</p>}
-        {!error && !hint && events.length === 0 && !loading && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-            <HistoryIcon width={28} height={28} />
-            <p className="text-sm">暂无审计记录</p>
+        {loading && !loadingMore && (
+          <div role="status" className="mb-3 space-y-2">
+            <span className="sr-only">正在查询审计记录…</span>
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
           </div>
+        )}
+        {!error && !hint && events.length === 0 && !loading && (
+          <EmptyState
+            icon={<HistoryIcon width={28} height={28} />}
+            title="暂无审计记录"
+            description="可切换审计范围或调整动作、状态与时间筛选条件。"
+          />
         )}
         <ul className="flex flex-col gap-2">
           {events.map((e) => (

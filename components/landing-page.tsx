@@ -30,6 +30,7 @@ import { SiteFooter, SiteHeader } from "./site-chrome"
 import { LandingWorkbench } from "./landing-workbench"
 import { LandingAiTools } from "./landing-ai-tools"
 import { LandingTopology } from "./landing-topology"
+import { Button, PortalContainer } from "./ui"
 
 const DEMO_ENABLED = isDemoAllowed()
 
@@ -253,11 +254,11 @@ export function LandingPage() {
         <div aria-hidden="true" className="portal-grid-bg pointer-events-none absolute inset-0 opacity-75" />
         <div aria-hidden="true" className="hero-ambient pointer-events-none absolute inset-0" />
 
-        <div className="relative mx-auto max-w-7xl px-4 text-center sm:px-6">
+        <PortalContainer className="relative text-center">
           {/* Announcement / Positioning Pill */}
           <Link
             href="/docs"
-            className="brand-gradient group mx-auto mb-5 inline-flex max-w-full rounded-full p-px shadow-[0_0_48px_-14px_color-mix(in_oklch,var(--primary)_65%,transparent)] transition-transform hover:-translate-y-0.5"
+            className="brand-gradient group mx-auto mb-5 inline-flex max-w-full rounded-full p-px shadow-lg ring-1 ring-primary/35 transition-transform hover:-translate-y-0.5"
           >
             <span className="inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 rounded-full bg-background/95 px-3.5 py-1 text-xs text-muted-foreground backdrop-blur sm:px-4">
               <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
@@ -273,7 +274,7 @@ export function LandingPage() {
             </span>
           </Link>
 
-          <h1 className="mx-auto max-w-4xl text-balance text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
+          <h1 className="mx-auto max-w-4xl text-balance text-4xl font-semibold leading-tight tracking-tight sm:text-5xl lg:text-6xl">
             面向开发者的
             <span className="text-gradient">智能运维中心</span>
           </h1>
@@ -285,25 +286,31 @@ export function LandingPage() {
 
           {/* Balanced Primary CTAs */}
           <div className="mt-6 flex flex-col items-center justify-center gap-2.5 sm:flex-row">
-            <Link href="/console" className="btn btn-primary btn-md w-full px-6 sm:w-auto">
-              <Rocket className="size-4" aria-hidden="true" />
-              进入控制台
-            </Link>
-            {DEMO_ENABLED && (
-              <Link href="/console?demo=1" className="btn btn-md w-full bg-card/85 px-5 sm:w-auto">
-                <Sparkles className="size-4 text-accent" aria-hidden="true" />
-                在线交互演示
+            <Button asChild variant="primary" size="md" className="w-full sm:w-auto">
+              <Link href="/console">
+                <Rocket className="size-4" aria-hidden="true" />
+                进入控制台
               </Link>
+            </Button>
+            {DEMO_ENABLED && (
+              <Button asChild size="md" className="w-full bg-card/85 sm:w-auto">
+                <Link href="/console?demo=1">
+                  <Sparkles className="size-4 text-accent" aria-hidden="true" />
+                  在线交互演示
+                </Link>
+              </Button>
             )}
-            <Link href="/docs" className="btn btn-md w-full border-border/75 bg-background/70 px-5 sm:w-auto">
-              <BookOpen className="size-4 text-muted-foreground" aria-hidden="true" />
-              浏览文档中心
-            </Link>
+            <Button asChild size="md" className="w-full border-border/75 bg-background/70 sm:w-auto">
+              <Link href="/docs">
+                <BookOpen className="size-4 text-muted-foreground" aria-hidden="true" />
+                浏览文档中心
+              </Link>
+            </Button>
           </div>
 
-          {/* Sleek Single-Line Quick-Copy Command Pill (zero clipping, zero ugly scrollbar) */}
-          <div className="mx-auto mt-5 flex max-w-full justify-center">
-            <div className="inline-flex max-w-full flex-wrap items-center justify-center gap-2 rounded-xl border border-border/75 bg-card/70 px-2.5 py-1.5 shadow-[0_12px_32px_-20px_rgb(0_0_0_/_0.9)] backdrop-blur sm:flex-nowrap">
+          {/* Sleek Single-Line Quick-Copy Command Pill (steady width across tab switches) */}
+          <div className="mx-auto mt-5 flex w-full max-w-4xl justify-center">
+            <div className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-border/75 bg-card/70 px-2.5 py-1.5 shadow-lg backdrop-blur sm:flex-nowrap">
               <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-background/80 p-0.5">
                 {HERO_SNIPPETS.map((s) => (
                   <button
@@ -315,15 +322,15 @@ export function LandingPage() {
                     }}
                     className={
                       heroTab === s.id
-                        ? "cursor-pointer rounded-md bg-primary/18 px-2 py-1 text-2xs font-medium text-foreground ring-1 ring-inset ring-primary/30"
-                        : "cursor-pointer rounded-md px-2 py-1 text-2xs text-muted-foreground transition-colors hover:text-foreground"
+                        ? "cursor-pointer whitespace-nowrap rounded-md bg-primary/18 px-2 py-1 text-2xs font-medium text-foreground ring-1 ring-inset ring-primary/30"
+                        : "cursor-pointer whitespace-nowrap rounded-md px-2 py-1 text-2xs text-muted-foreground transition-colors hover:text-foreground"
                     }
                   >
                     {s.label}
                   </button>
                 ))}
               </div>
-              <div className="docs-scroll flex min-w-0 items-center gap-2 overflow-x-auto px-1.5 font-mono text-2xs text-foreground">
+              <div className="docs-scroll flex min-w-0 flex-1 items-center gap-2 overflow-x-auto px-1.5 text-left font-mono text-2xs text-foreground">
                 <span className="shrink-0 select-none text-accent">$</span>
                 <code className="whitespace-nowrap">{activeSnippet.cmd}</code>
               </div>
@@ -350,12 +357,12 @@ export function LandingPage() {
 
           {/* Interactive Workbench Centerpiece */}
           <LandingWorkbench />
-        </div>
+        </PortalContainer>
       </section>
 
       {/* 2. ENGINEERING CAPABILITY STRIP */}
       <section className="border-y border-border/50 bg-card/25">
-        <div className="mx-auto grid max-w-7xl grid-cols-2 gap-6 px-4 py-9 sm:px-6 lg:grid-cols-4 lg:gap-0 lg:divide-x lg:divide-border/45">
+        <PortalContainer className="grid grid-cols-2 gap-6 py-9 lg:grid-cols-4 lg:gap-0 lg:divide-x lg:divide-border/45">
           {ENGINEERING_STATS.map((item) => (
             <div key={item.unit} className="space-y-1.5 lg:px-6 first:lg:pl-0 last:lg:pr-0">
               <div className="flex items-baseline gap-1.5">
@@ -367,7 +374,7 @@ export function LandingPage() {
               <p className="text-xs leading-relaxed text-muted-foreground">{item.desc}</p>
             </div>
           ))}
-        </div>
+        </PortalContainer>
       </section>
 
       {/* 2.5 AI AGENT TOOLBELT SPOTLIGHT */}
@@ -375,7 +382,7 @@ export function LandingPage() {
 
       {/* 3. ARCHITECTURE & REVERSE TUNNEL */}
       <section id="architecture" className="scroll-mt-20 border-t border-border/45 py-20 sm:py-24">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <PortalContainer>
           <div className="mb-10 max-w-3xl">
             <span className="eyebrow">
               <span className="h-px w-6 bg-primary" />
@@ -390,12 +397,12 @@ export function LandingPage() {
           </div>
 
           <LandingTopology />
-        </div>
+        </PortalContainer>
       </section>
 
       {/* 4. ASYMMETRIC BENTO CAPABILITIES MATRIX */}
       <section id="capabilities" className="scroll-mt-20 border-t border-border/45 py-20 sm:py-24">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <PortalContainer>
           <div className="mb-12 flex flex-col items-start justify-between gap-4 md:flex-row md:items-end">
             <div>
               <span className="eyebrow">
@@ -501,7 +508,7 @@ export function LandingPage() {
                 </p>
               </div>
               <div className="mt-5 space-y-3">
-                <div className="space-y-2 rounded-lg border border-border/65 bg-background/80 p-3 font-mono text-[11px]">
+                <div className="space-y-2 rounded-lg border border-border/65 bg-background/80 p-3 font-mono text-2xs">
                   {[
                     { k: "k8s-cluster", val: "12/12", pct: 92, cls: "text-success" },
                     { k: "vm-disk-io", val: "79%", pct: 79, cls: "text-warning" },
@@ -518,7 +525,7 @@ export function LandingPage() {
                     </div>
                   ))}
                 </div>
-                <div className="flex flex-wrap gap-1.5 font-mono text-[11px] text-muted-foreground">
+                <div className="flex flex-wrap gap-1.5 font-mono text-2xs text-muted-foreground">
                   {["vm", "k8s", "container", "database", "site", "cve", "proxy", "ssh"].map((s) => (
                     <span key={s} className="rounded border border-border/70 bg-background/75 px-2 py-0.5">
                       {s}
@@ -592,7 +599,7 @@ export function LandingPage() {
                   <span>site: app.example.com</span>
                   <span className="text-success">HTTP 200</span>
                 </div>
-                <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
+                <div className="flex flex-wrap items-center gap-1.5 pt-1 text-2xs">
                   {["SiteSpec", "nginx -t", "reload", "health", "rollback"].map((step, i) => (
                     <span key={step} className="inline-flex items-center gap-1">
                       <span className="rounded bg-card px-1.5 py-0.5 text-foreground/90 ring-1 ring-inset ring-border/70">
@@ -630,7 +637,7 @@ export function LandingPage() {
                 </p>
               </div>
               <div className="mt-5 space-y-3">
-                <div className="grid grid-cols-5 gap-1.5 rounded-lg border border-border/65 bg-background/80 p-2.5 font-mono text-[11px]">
+                <div className="grid grid-cols-5 gap-1.5 rounded-lg border border-border/65 bg-background/80 p-2.5 font-mono text-2xs">
                   {[
                     { n: "01", s: "create" },
                     { n: "02", s: "stage" },
@@ -646,7 +653,7 @@ export function LandingPage() {
                           : "border-border/60 bg-card/65 text-foreground/90"
                       }`}
                     >
-                      <div className="text-[10px] text-muted-foreground">{st.n}</div>
+                      <div className="text-2xs text-muted-foreground">{st.n}</div>
                       <div className="font-medium">{st.s}</div>
                     </div>
                   ))}
@@ -673,12 +680,12 @@ export function LandingPage() {
               </div>
             </article>
           </div>
-        </div>
+        </PortalContainer>
       </section>
 
       {/* 5. SEVEN SECURITY GATES (Balanced 4 + 3 layout!) & RADICAL HONESTY */}
       <section id="security" className="scroll-mt-20 border-t border-border/45 bg-card/15 py-20 sm:py-24">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <PortalContainer>
           <div className="mb-12 text-center">
             <span className="eyebrow justify-center">
               <span className="h-px w-6 bg-border" />
@@ -752,74 +759,82 @@ export function LandingPage() {
               )
             })}
           </div>
-        </div>
+        </PortalContainer>
       </section>
 
-      {/* 6. INTERACTIVE 3-PATH QUICKSTART */}
+      {/* 6. INTERACTIVE 3-PATH QUICKSTART — aligned flush to PortalContainer via 12-col split */}
       <section id="quickstart" className="scroll-mt-20 border-t border-border/45 py-20 sm:py-24">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6">
-          <div className="mb-10 text-center">
-            <span className="eyebrow justify-center">
-              <span className="h-px w-6 bg-border" />
-              Quickstart
-              <span className="h-px w-6 bg-border" />
-            </span>
-            <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-              按你的角色，三分钟上手 DoOps
-            </h2>
-            <p className="mx-auto mt-3 max-w-xl text-pretty text-sm text-muted-foreground">
-              所有命令均与当前源码与契约测试保持一致，可直接复制执行。
-            </p>
-          </div>
-
-          <div className="mb-5 grid gap-3 sm:grid-cols-3">
-            {QUICKSTART_TRACKS.map((t) => {
-              const selected = t.id === trackId
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setTrackId(t.id)}
-                  className={`cursor-pointer rounded-xl border p-4 text-left transition-all ${
-                    selected
-                      ? "border-primary/70 bg-primary/12 shadow-[0_0_28px_-14px_color-mix(in_oklch,var(--primary)_70%,transparent)]"
-                      : "border-border/70 bg-card/45 hover:border-border hover:bg-card/80"
-                  }`}
-                >
-                  <span className="font-mono text-2xs text-accent">{t.badge}</span>
-                  <div className="mt-1 text-sm font-semibold text-foreground">{t.title}</div>
-                  <p className="mt-1.5 text-2xs leading-relaxed text-muted-foreground">{t.summary}</p>
-                </button>
-              )
-            })}
-          </div>
-
-          <div className="portal-frame space-y-5 p-5 sm:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/55 pb-4">
-              <div>
-                <h3 className="text-base font-semibold text-foreground">{activeTrack.title}</h3>
-                <p className="mt-0.5 text-xs text-muted-foreground">{activeTrack.summary}</p>
-              </div>
-              <Link href={activeTrack.docHref} className="btn btn-sm">
+        <PortalContainer>
+          <div className="mb-10 flex flex-col items-start justify-between gap-4 md:flex-row md:items-end">
+            <div className="max-w-2xl">
+              <span className="eyebrow">
+                <span className="h-px w-6 bg-accent" />
+                Quickstart
+              </span>
+              <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+                按你的角色，三分钟上手 DoOps
+              </h2>
+              <p className="mt-3 text-pretty text-sm leading-relaxed text-muted-foreground">
+                所有命令均与当前源码与契约测试保持一致，可直接复制执行。
+              </p>
+            </div>
+            <Button asChild size="sm" className="shrink-0">
+              <Link href={activeTrack.docHref}>
                 <BookOpen className="size-3.5 text-primary" aria-hidden="true" />
                 {activeTrack.docLabel}
               </Link>
+            </Button>
+          </div>
+
+          <div className="grid items-start gap-5 lg:grid-cols-12">
+            <div className="grid gap-3 sm:grid-cols-3 lg:col-span-4 lg:grid-cols-1">
+              {QUICKSTART_TRACKS.map((t) => {
+                const selected = t.id === trackId
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setTrackId(t.id)}
+                    className={`cursor-pointer rounded-xl border p-4 text-left transition-all ${
+                      selected
+                        ? "border-primary/70 bg-primary/12 shadow-lg ring-1 ring-primary/35"
+                        : "border-border/70 bg-card/45 hover:border-border hover:bg-card/80"
+                    }`}
+                  >
+                    <span className="font-mono text-2xs text-accent">{t.badge}</span>
+                    <div className="mt-1 text-sm font-semibold text-foreground">{t.title}</div>
+                    <p className="mt-1.5 text-2xs leading-relaxed text-muted-foreground">{t.summary}</p>
+                  </button>
+                )
+              })}
             </div>
-            <div className="space-y-4">
-              {activeTrack.steps.map((st) => (
-                <div key={st.label} className="space-y-2">
-                  <div className="text-xs font-medium text-foreground/90">{st.label}</div>
-                  <CopyBlock code={st.code} />
+
+            <div className="portal-frame min-w-0 space-y-5 p-5 sm:p-6 lg:col-span-8">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/55 pb-4">
+                <div>
+                  <h3 className="text-base font-semibold text-foreground">{activeTrack.title}</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{activeTrack.summary}</p>
                 </div>
-              ))}
+                <span className="rounded-full border border-border/70 bg-background/75 px-2.5 py-0.5 font-mono text-2xs text-accent">
+                  {activeTrack.badge}
+                </span>
+              </div>
+              <div className="space-y-4">
+                {activeTrack.steps.map((st) => (
+                  <div key={st.label} className="space-y-2">
+                    <div className="text-xs font-medium text-foreground/90">{st.label}</div>
+                    <CopyBlock code={st.code} />
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+        </PortalContainer>
       </section>
 
       {/* 7. DOCS & ENGINEERING READING HUB */}
       <section className="border-t border-border/45 py-20">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <PortalContainer>
           <div className="mb-10 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
             <div>
               <span className="eyebrow">
@@ -896,23 +911,32 @@ export function LandingPage() {
               )
             })}
           </div>
-        </div>
+        </PortalContainer>
       </section>
 
-      {/* 8. FAQ (Clean numbered accordion — no misleading checkmarks!) */}
+      {/* 8. FAQ — 12-col editorial split aligned flush with PortalContainer */}
       <section id="faq" className="scroll-mt-20 border-t border-border/45 py-20 sm:py-24">
-        <div className="mx-auto max-w-3xl px-4 sm:px-6">
-          <div className="mb-10 text-center">
-            <span className="eyebrow justify-center">
+        <PortalContainer className="grid items-start gap-8 lg:grid-cols-12">
+          <div className="lg:sticky lg:top-24 lg:col-span-4">
+            <span className="eyebrow">
               <span className="h-px w-6 bg-border" />
               FAQ
-              <span className="h-px w-6 bg-border" />
             </span>
             <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
               开发者常见疑问
             </h2>
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+              围绕反向隧道、安全边界、受管凭据与 AI 协同机制的常见问题解答。
+            </p>
+            <Link
+              href="/docs"
+              className="mt-5 inline-flex items-center gap-1.5 text-xs font-medium text-accent transition-opacity hover:opacity-85"
+            >
+              查阅完整工程文档
+              <ArrowRight className="size-3.5" aria-hidden="true" />
+            </Link>
           </div>
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 lg:col-span-8">
             {FAQS.map((item, idx) => (
               <details
                 key={item.q}
@@ -930,51 +954,56 @@ export function LandingPage() {
                     aria-hidden="true"
                   />
                 </summary>
-                <p className="px-5 pb-5 pl-[3.1rem] text-xs leading-relaxed text-muted-foreground sm:text-sm">
+                <p className="px-5 pb-5 pl-12 text-xs leading-relaxed text-muted-foreground sm:text-sm">
                   {item.a}
                 </p>
               </details>
             ))}
           </div>
-        </div>
+        </PortalContainer>
       </section>
 
-      {/* 9. FINAL CTA */}
-      <section className="relative overflow-hidden border-t border-border/45 py-20 sm:py-24">
-        <div aria-hidden="true" className="portal-grid-bg pointer-events-none absolute inset-0 opacity-50" />
-        <div aria-hidden="true" className="hero-ambient pointer-events-none absolute inset-0 opacity-85" />
-        <div className="relative mx-auto max-w-3xl px-4 text-center sm:px-6">
-          <span className="eyebrow justify-center">
-            <span className="h-px w-6 bg-primary" />
-            Open Source · MIT
-            <span className="h-px w-6 bg-accent" />
-          </span>
-          <h2 className="mt-4 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-            用一扇可审计的门，重塑你的开发者运维体验
-          </h2>
-          <p className="mx-auto mt-3 max-w-xl text-pretty text-sm leading-relaxed text-muted-foreground sm:text-base">
-            从一台测试机或一个在线演示开始，把终端排障、数据库治理、K8s 发布与智能巡检统一收拢到 DoOps。
-          </p>
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Link href="/console" className="btn btn-primary btn-lg w-full sm:w-auto">
-              <Rocket className="size-4" aria-hidden="true" />
-              进入控制台
-            </Link>
-            <Link href="/docs" className="btn btn-lg w-full bg-card/85 sm:w-auto">
-              <BookOpen className="size-4 text-accent" aria-hidden="true" />
-              阅读文档中心
-            </Link>
-            <a
-              href={GITHUB_REPO_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="btn btn-ghost btn-lg w-full sm:w-auto"
-            >
-              查看 GitHub 源码
-              <ArrowRight className="size-4" aria-hidden="true" />
-            </a>
+      {/* 9. FINAL CTA — framed full-width inside PortalContainer */}
+      <section className="border-t border-border/45 py-20 sm:py-24">
+        <PortalContainer>
+          <div className="portal-frame relative overflow-hidden px-6 py-14 text-center sm:px-12 sm:py-16">
+            <div aria-hidden="true" className="portal-grid-bg pointer-events-none absolute inset-0 opacity-45" />
+            <div aria-hidden="true" className="hero-ambient pointer-events-none absolute inset-0 opacity-85" />
+            <div className="relative mx-auto max-w-3xl">
+              <span className="eyebrow justify-center">
+                <span className="h-px w-6 bg-primary" />
+                Open Source · MIT
+                <span className="h-px w-6 bg-accent" />
+              </span>
+              <h2 className="mt-4 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+                用一扇可审计的门，重塑你的开发者运维体验
+              </h2>
+              <p className="mx-auto mt-3 max-w-xl text-pretty text-sm leading-relaxed text-muted-foreground sm:text-base">
+                从一台测试机或一个在线演示开始，把终端排障、数据库治理、K8s 发布与智能巡检统一收拢到 DoOps。
+              </p>
+              <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                <Button asChild variant="primary" size="lg" className="w-full sm:w-auto">
+                  <Link href="/console">
+                    <Rocket className="size-4" aria-hidden="true" />
+                    进入控制台
+                  </Link>
+                </Button>
+                <Button asChild size="lg" className="w-full bg-card/85 sm:w-auto">
+                  <Link href="/docs">
+                    <BookOpen className="size-4 text-accent" aria-hidden="true" />
+                    阅读文档中心
+                  </Link>
+                </Button>
+                <Button asChild variant="ghost" size="lg" className="w-full sm:w-auto">
+                  <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
+                    查看 GitHub 源码
+                    <ArrowRight className="size-4" aria-hidden="true" />
+                  </a>
+                </Button>
+              </div>
+            </div>
           </div>
-        </div>
+        </PortalContainer>
       </section>
 
       <SiteFooter />

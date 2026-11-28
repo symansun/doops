@@ -22,7 +22,8 @@ DoOps architecture, security, release, and verification boundaries.
 | Operator Skill | `skills/doops/SKILL.md` + `backend/docs/*.md` | Installed into projects by `backend/scripts/install.sh` |
 | Helm Charts | `backend/deploy/helm/` | Runtime assets only |
 | Release scripts | `backend/scripts/` | Python contract tests live in `backend/test/` |
-| Web console | `app/`, `components/`, `lib/` (Next.js) | Built from `Dockerfile.web` |
+| Web console | `app/`, `components/`, `lib/` (Next.js) | Built from `Dockerfile.web`; UI primitives live in `components/ui/` (`components.json`) |
+| Frontend design & UI standards | `DESIGN.md` | Authoritative UI framework, tokens, component red lines, and frontend working standards |
 | Release notes | `CHANGELOG.md` | Bundled into the Web image; the console's 更新内容 dialog reads it |
 
 `bin/`, `backend/bin/`, `backend/cli/bin/`, `.next/`, `node_modules/`, `.agent/skills/doops/` (the
@@ -44,6 +45,7 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 | Installation and onboarding | `backend/docs/CLUSTER_INSTALL_GUIDE.md` |
 | Day-to-day commands | `backend/docs/DOOPS_USAGE_GUIDE.md` |
 | Web console behavior | `backend/docs/DOOPS_WEBUI.md` |
+| Web frontend UI framework & design standards | `DESIGN.md` |
 | Model settings | `backend/docs/MODEL_STANDARDS.md` |
 | Configuration and environment variables | `backend/docs/CONFIGURATION.md` |
 | Runtime timeouts and limits | `backend/docs/RUNTIME_LIMITS.md` |
@@ -183,6 +185,32 @@ local directory (`.gitignore` excludes `docs/operations/`, `docs/reviews/`, `bac
   extracted command fails.
 - One `doops login` is shared by configured targets on the same normalized Gateway URL. Target
   credential listing and use inherit target operation authority; management enforces ownership.
+
+## Frontend Engineering Contract
+
+All Web UI work across the public portal (`/`, `/cases`, `/docs`, `/blog`) and the console
+(`/console`, `/console/admin`) follows the authoritative standards in [DESIGN.md](DESIGN.md):
+
+- **Framework-only UI (zero px-driven hand styling)**: Use the repository's standard
+  **shadcn/ui (`components.json`) + Radix UI + Tailwind CSS v4 + TanStack Table v8** stack via
+  `@/components/ui`. Do not write arbitrary `[...px]` Tailwind utility classes (`w-[...px]`,
+  `min-w-[...px]`, `text-[11px]`, `shadow-[...px...]`), do not add custom CSS widget classes
+  (`.btn*`, `.input*`, `.status-*`, `.console-sidebar`, `.portal-container`), and do not write raw
+  HTML `<table>` tags or custom modal/drawer overlays outside `components/ui/`.
+- **Semantic OKLCH tokens & standard `rem` scale**: Preserve Tailwind v4's standard `rem`
+  typography scale in `app/globals.css` (do not override `--text-xs`/`--text-sm`/`--text-base`/
+  `--text-lg`/`--text-xl`). Never hardcode hex colors or bare Tailwind color scales (`slate-*`,
+  `sky-*`, `cyan-*`, `emerald-*`, `amber-*`, `rose-*`, etc.) in components or `console.css`. Keep
+  `app/console/console.css` strictly scoped to `@agent-cloud/agent-ui` overrides.
+- **Canonical layout & component entrypoints**: Every public portal outer rail uses
+  `<PortalContainer>`; console navigation uses `<Sidebar>` + Radix `<Sheet>` (never native
+  `<dialog>`); dialogs use `components/ui/dialog.tsx` (`<Dialog>`/`<Modal>`); selects use Radix
+  `<Select>`; tabular data uses `<Table>` / `<DataTable>`.
+- **Package manager discipline**: Always install or update Web dependencies with
+  `corepack pnpm` (`pnpm@10.18.0`, matching `package.json#packageManager`) so
+  `pnpm-workspace.yaml` `patchedDependencies` (e.g., `@agent-cloud/agent-ui`) remain intact.
+- **Automated guard**: `lib/console-guards.test.mjs` enforces the whole-site UI framework rules
+  above. Never weaken or bypass the guard; fix violations at the source.
 
 ## Required Documentation
 

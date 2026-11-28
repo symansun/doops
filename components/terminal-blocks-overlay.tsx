@@ -5,6 +5,7 @@ import type { TerminalBlock } from "@/lib/terminal-shell-integration"
 import type { TerminalFocusAction } from "@/lib/terminal-ai-context"
 import { looksLikeNaturalLanguageMistype } from "@/lib/terminal-intent"
 import { SparkIcon } from "./icons"
+import { Button } from "./ui"
 
 export function TerminalBlocksOverlay({
   blocks,
@@ -43,10 +44,10 @@ export function TerminalBlocksOverlay({
   return (
     <div
       data-testid="terminal-blocks-bar"
-      className="flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-[#0d1424] px-2.5 py-1 text-[11px] text-slate-300"
+      className="flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-card px-2.5 py-1 text-2xs text-foreground/85"
     >
       {inAlternateScreen ? (
-        <span className="text-amber-300">全屏程序运行中</span>
+        <span className="text-warning">全屏程序运行中</span>
       ) : (
         <>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
@@ -54,14 +55,14 @@ export function TerminalBlocksOverlay({
               const isSelected = activeBlock?.id === block.id
               const failed = block.state === "done" && block.exitCode !== undefined && block.exitCode !== 0
               const dotClass = block.isAiPrompt
-                ? "bg-sky-400"
+                ? "bg-primary"
                 : block.state === "running"
-                  ? "bg-blue-400 animate-pulse"
+                  ? "bg-primary animate-pulse"
                   : block.state === "interrupted"
-                    ? "bg-amber-400"
+                    ? "bg-warning"
                     : failed
-                      ? "bg-rose-400"
-                      : "bg-emerald-400/80"
+                      ? "bg-destructive"
+                      : "bg-success/80"
               return (
                 <button
                   key={block.id}
@@ -72,13 +73,13 @@ export function TerminalBlocksOverlay({
                   }}
                   title={`${block.command}${block.exitCode !== undefined ? ` (exit ${block.exitCode})` : ""}`}
                   className={
-                    "inline-flex max-w-[13rem] items-center gap-1.5 rounded px-1.5 py-0.5 font-mono transition " +
-                    (isSelected ? "bg-white/15 text-white" : "bg-white/5 text-slate-300 hover:bg-white/10")
+                    "inline-flex max-w-52 items-center gap-1.5 rounded px-1.5 py-0.5 font-mono transition " +
+                    (isSelected ? "bg-white/15 text-white" : "bg-white/5 text-foreground/85 hover:bg-white/10")
                   }
                 >
                   <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
                   <span className="truncate">{block.command}</span>
-                  {failed && <span className="shrink-0 text-rose-300">exit {block.exitCode}</span>}
+                  {failed && <span className="shrink-0 text-destructive">exit {block.exitCode}</span>}
                 </button>
               )
             })}
@@ -87,14 +88,16 @@ export function TerminalBlocksOverlay({
             <div className="flex shrink-0 items-center gap-1">
               {activeBlock.isAiPrompt ? (
                 onReopenAiBlock ? (
-                  <button
+                  <Button
                     type="button"
+                    size="sm"
+                    variant="ghost"
                     disabled={aiDisabled}
                     onClick={() => onReopenAiBlock(activeBlock)}
-                    className="whitespace-nowrap rounded bg-sky-500/20 px-1.5 py-0.5 text-sky-200 hover:bg-sky-500/30 disabled:opacity-40"
+                    className="h-5 bg-primary/20 px-1.5 text-2xs text-primary hover:bg-primary/30 hover:text-primary"
                   >
                     重问
-                  </button>
+                  </Button>
                 ) : null
               ) : (
                 <>
@@ -102,61 +105,73 @@ export function TerminalBlocksOverlay({
                     activeBlock.exitCode === 127 &&
                     onAskBlockAsNaturalLanguage &&
                     looksLikeNaturalLanguageMistype(activeBlock.command) && (
-                      <button
+                      <Button
                         type="button"
+                        size="sm"
+                        variant="primary"
                         disabled={aiDisabled}
                         onClick={() => onAskBlockAsNaturalLanguage(activeBlock)}
-                        className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-sky-500/25 px-1.5 py-0.5 text-sky-100 hover:bg-sky-500/35 disabled:opacity-40"
+                        className="h-5 px-1.5 text-2xs"
                       >
                         <SparkIcon width={11} height={11} aria-hidden="true" />
                         <span>转 AI</span>
-                      </button>
+                      </Button>
                     )}
                   {activeBlock.state === "done" && activeBlock.exitCode !== undefined && activeBlock.exitCode !== 0 && (
-                    <button
+                    <Button
                       type="button"
+                      size="sm"
+                      variant="danger-outline"
                       disabled={aiDisabled}
                       onClick={() => onBlockAiAction(activeBlock, "fix")}
-                      className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-rose-500/20 px-1.5 py-0.5 text-rose-200 hover:bg-rose-500/30 disabled:opacity-40"
+                      className="h-5 px-1.5 text-2xs"
                     >
                       <SparkIcon width={11} height={11} aria-hidden="true" />
                       <span>修复</span>
-                    </button>
+                    </Button>
                   )}
-                  <button
+                  <Button
                     type="button"
+                    size="sm"
+                    variant="ghost"
                     disabled={aiDisabled}
                     onClick={() => onBlockAiAction(activeBlock, "explain")}
-                    className="whitespace-nowrap rounded px-1.5 py-0.5 text-sky-300 hover:bg-white/10 disabled:opacity-40"
+                    className="h-5 px-1.5 text-2xs text-primary hover:text-primary"
                   >
                     解释
-                  </button>
+                  </Button>
                   {onEscalateBlock && (
-                    <button
+                    <Button
                       type="button"
+                      size="sm"
+                      variant="ghost"
                       disabled={aiDisabled}
                       onClick={() => onEscalateBlock(activeBlock)}
-                      className="whitespace-nowrap rounded px-1.5 py-0.5 text-slate-300 hover:bg-white/10 hover:text-sky-200 disabled:opacity-40"
+                      className="h-5 px-1.5 text-2xs text-foreground/85 hover:text-primary"
                       title="附带该命令输出直接派给 AI 助手分析"
                     >
                       派给 AI
-                    </button>
+                    </Button>
                   )}
-                  <button
+                  <Button
                     type="button"
+                    size="sm"
+                    variant="ghost"
                     onClick={() => onCopyOutput(activeBlock)}
-                    className="whitespace-nowrap rounded px-1.5 py-0.5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                    className="h-5 px-1.5 text-2xs text-muted-foreground"
                     title="复制输出"
                   >
                     复制
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    size="sm"
+                    variant="ghost"
                     onClick={() => onCopyCommand(activeBlock)}
                     className="sr-only"
                   >
                     复制命令
-                  </button>
+                  </Button>
                 </>
               )}
             </div>

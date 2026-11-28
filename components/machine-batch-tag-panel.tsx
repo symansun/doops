@@ -199,7 +199,7 @@ export function MachineBatchTagPanel({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-foreground">{plan.machine.name}</span>
-                    <code className="font-mono text-[11px] text-muted-foreground">{plan.machine.asset_id}</code>
+                    <code className="font-mono text-2xs text-muted-foreground">{plan.machine.asset_id}</code>
                     <Badge variant="outline">{plan.targetKey}</Badge>
                     <Badge
                       variant={
@@ -221,7 +221,7 @@ export function MachineBatchTagPanel({
                             : "标签已是最新"}
                     </Badge>
                   </div>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-2xs text-muted-foreground">
                     已有标签：{plan.merge.existing.length > 0 ? plan.merge.existing.join("、") : "暂无"}
                   </span>
                 </div>
@@ -242,7 +242,7 @@ export function MachineBatchTagPanel({
                           disabled={already || applying}
                           onClick={() => toggleTag(plan.machine.asset_id, item.tag)}
                           title={`${item.evidence || item.source}（置信度：${item.confidence}）`}
-                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-[11px] transition-colors ${
+                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-2xs transition-colors ${
                             already
                               ? "border-border bg-muted/40 text-muted-foreground"
                               : checked
@@ -259,7 +259,7 @@ export function MachineBatchTagPanel({
                             />
                           )}
                           <span>{item.tag}</span>
-                          {already && <span className="font-sans text-[10px]">(已有)</span>}
+                          {already && <span className="font-sans text-2xs">(已有)</span>}
                         </button>
                       )
                     })}

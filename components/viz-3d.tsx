@@ -673,8 +673,8 @@ export function LayeredArchitecture3D({
       label: "L4 · 业务系统层（Business）",
       emptyText: "暂未登记在役业务系统",
       actionLabel: "登记业务系统",
-      accent: "border-cyan-400/30 bg-cyan-950/15",
-      tagColor: "text-cyan-300",
+      accent: "border-accent/30 bg-accent/10",
+      tagColor: "text-accent",
       cols: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-5",
       zOffset: 30,
     },
@@ -683,8 +683,8 @@ export function LayeredArchitecture3D({
       label: "L3 · 应用服务、容器与数据库层（App / Container / DB）",
       emptyText: "暂无已探测的应用、容器或数据库实例",
       actionLabel: "查看资源明细",
-      accent: "border-blue-400/30 bg-blue-950/15",
-      tagColor: "text-blue-300",
+      accent: "border-primary/30 bg-primary/10",
+      tagColor: "text-primary",
       cols: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4",
       zOffset: 20,
     },
@@ -693,8 +693,8 @@ export function LayeredArchitecture3D({
       label: "L2 · Kubernetes 集群与编排层（Cluster）",
       emptyText: "暂未关联 Kubernetes 集群",
       actionLabel: "管理集群台账",
-      accent: "border-indigo-400/30 bg-indigo-950/20",
-      tagColor: "text-indigo-300",
+      accent: "border-primary/35 bg-primary/12",
+      tagColor: "text-primary",
       cols: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3",
       zOffset: 10,
     },
@@ -703,8 +703,8 @@ export function LayeredArchitecture3D({
       label: "L1 · 机器资源层（物理机 / GPU / 虚拟机 / SSH 托管主机）",
       emptyText: "暂未登记或采集到机器资源",
       actionLabel: "管理机器台账",
-      accent: "border-emerald-400/30 bg-emerald-950/15",
-      tagColor: "text-emerald-300",
+      accent: "border-success/30 bg-success/10",
+      tagColor: "text-success",
       cols: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4",
       zOffset: 0,
     },
@@ -861,16 +861,16 @@ export function LayeredArchitecture3D({
 
                           const dotCls =
                             node.status === "critical"
-                              ? "bg-destructive shadow-[0_0_8px_rgba(248,113,113,0.9)]"
+                              ? "bg-destructive ring-2 ring-destructive/40"
                               : node.status === "warning"
-                                ? "bg-warning shadow-[0_0_8px_rgba(251,191,36,0.85)]"
-                                : "bg-success shadow-[0_0_8px_rgba(52,211,153,0.85)]"
+                                ? "bg-warning ring-2 ring-warning/40"
+                                : "bg-success ring-2 ring-success/40"
                           const borderCls = isSelected
                             ? "border-accent bg-primary/15 ring-1 ring-accent/50"
                             : isUp
-                              ? "border-amber-400/70 bg-amber-500/10"
+                              ? "border-warning/70 bg-warning/10"
                               : isDown
-                                ? "border-cyan-400/70 bg-cyan-500/10"
+                                ? "border-accent/70 bg-accent/10"
                                 : node.status === "critical"
                                   ? "border-destructive/60 bg-destructive/10 hover:border-destructive"
                                   : node.status === "warning"
@@ -892,12 +892,12 @@ export function LayeredArchitecture3D({
                                 <span className="truncate text-xs font-semibold text-foreground">{node.title}</span>
                                 <span className="flex shrink-0 items-center gap-1">
                                   {isUp && (
-                                    <span className="rounded bg-amber-500/20 px-1 py-0.2 font-mono text-[10px] text-amber-300">
+                                    <span className="rounded bg-warning/20 px-1 py-0.2 font-mono text-2xs text-warning">
                                       上游影响
                                     </span>
                                   )}
                                   {isDown && (
-                                    <span className="rounded bg-cyan-500/20 px-1 py-0.2 font-mono text-[10px] text-cyan-300">
+                                    <span className="rounded bg-accent/20 px-1 py-0.2 font-mono text-2xs text-accent">
                                       下游承载
                                     </span>
                                   )}
@@ -918,17 +918,17 @@ export function LayeredArchitecture3D({
                 {layerIdx < layers.length - 1 && (
                   <div
                     aria-hidden="true"
-                    className="pointer-events-none flex items-center justify-center gap-3 py-1 font-mono text-[11px]"
+                    className="pointer-events-none flex items-center justify-center gap-3 py-1 font-mono text-2xs"
                   >
                     <span
                       className={`h-px flex-1 max-w-28 transition-colors ${
-                        activeBetween ? "bg-cyan-400/70" : "bg-border/50"
+                        activeBetween ? "bg-accent/70" : "bg-border/50"
                       }`}
                     />
                     <span
                       className={`rounded-full border px-2 py-0.5 transition-colors ${
                         activeBetween
-                          ? "border-cyan-400/60 bg-cyan-500/15 text-cyan-300"
+                          ? "border-accent/60 bg-accent/15 text-accent"
                           : "border-border/50 bg-background/60 text-muted-foreground"
                       }`}
                     >
@@ -936,7 +936,7 @@ export function LayeredArchitecture3D({
                     </span>
                     <span
                       className={`h-px flex-1 max-w-28 transition-colors ${
-                        activeBetween ? "bg-cyan-400/70" : "bg-border/50"
+                        activeBetween ? "bg-accent/70" : "bg-border/50"
                       }`}
                     />
                   </div>
@@ -1017,8 +1017,8 @@ export function ResourceBars3D({
         <svg viewBox={`0 0 ${W} ${H}`} className="h-52 w-full select-none" role="img" aria-label="3D 立体资源水位柱状图">
           <defs>
             <linearGradient id="doops3dFloor" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.16" />
-              <stop offset="100%" stopColor="#1e3a8a" stopOpacity="0.02" />
+              <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.18" />
+              <stop offset="100%" stopColor="var(--background)" stopOpacity="0.02" />
             </linearGradient>
           </defs>
 
@@ -1026,7 +1026,7 @@ export function ResourceBars3D({
           <polygon
             points={`56,${baseY - 12} ${W - 36},${baseY - 12} ${W - 14},${baseY + 24} 32,${baseY + 24}`}
             fill="url(#doops3dFloor)"
-            stroke="rgba(56,189,248,0.28)"
+            stroke="color-mix(in oklch, var(--primary) 30%, transparent)"
             strokeWidth="1"
           />
 
@@ -1035,8 +1035,8 @@ export function ResourceBars3D({
             const y = baseY - (pct / 100) * maxBarH
             return (
               <g key={pct}>
-                <line x1={48} y1={y} x2={W - 24} y2={y} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 4" />
-                <text x={40} y={y + 3} textAnchor="end" fontSize="10" fill="#94a3b8">
+                <line x1={48} y1={y} x2={W - 24} y2={y} stroke="color-mix(in oklch, var(--muted-foreground) 18%, transparent)" strokeDasharray="3 4" />
+                <text x={40} y={y + 3} textAnchor="end" fontSize="11" fill="var(--muted-foreground)">
                   {pct}%
                 </text>
               </g>
@@ -1055,12 +1055,32 @@ export function ResourceBars3D({
 
             const colors =
               val >= 85 || item.status === "critical"
-                ? { front: "#ef4444", side: "#b91c1c", top: "#fca5a5", glow: "rgba(239,68,68,0.45)" }
+                ? {
+                    front: "var(--destructive)",
+                    side: "color-mix(in oklch, var(--destructive) 72%, var(--background))",
+                    top: "color-mix(in oklch, var(--destructive) 70%, var(--foreground))",
+                    glow: "color-mix(in oklch, var(--destructive) 42%, transparent)",
+                  }
                 : val >= 70 || item.status === "warning"
-                  ? { front: "#f59e0b", side: "#b45309", top: "#fde68a", glow: "rgba(245,158,11,0.42)" }
+                  ? {
+                      front: "var(--warning)",
+                      side: "color-mix(in oklch, var(--warning) 72%, var(--background))",
+                      top: "color-mix(in oklch, var(--warning) 72%, var(--foreground))",
+                      glow: "color-mix(in oklch, var(--warning) 40%, transparent)",
+                    }
                   : metric === "gpu" && val > 0
-                    ? { front: "#14b8a6", side: "#0f766e", top: "#99f6e4", glow: "rgba(45,212,191,0.45)" }
-                    : { front: "#3b82f6", side: "#1d4ed8", top: "#93c5fd", glow: "rgba(59,130,246,0.42)" }
+                    ? {
+                        front: "var(--accent)",
+                        side: "color-mix(in oklch, var(--accent) 70%, var(--background))",
+                        top: "color-mix(in oklch, var(--accent) 75%, var(--foreground))",
+                        glow: "color-mix(in oklch, var(--accent) 42%, transparent)",
+                      }
+                    : {
+                        front: "var(--primary)",
+                        side: "color-mix(in oklch, var(--primary) 72%, var(--background))",
+                        top: "color-mix(in oklch, var(--primary) 72%, var(--foreground))",
+                        glow: "color-mix(in oklch, var(--primary) 42%, transparent)",
+                      }
 
             const frontPts = `${x},${yTop - lift} ${x + barW},${yTop - lift} ${x + barW},${baseY - lift} ${x},${baseY - lift}`
             const sidePts = `${x + barW},${yTop - lift} ${x + barW + depthX},${yTop - depthY - lift} ${x + barW + depthX},${baseY - depthY - lift} ${x + barW},${baseY - lift}`
@@ -1078,27 +1098,27 @@ export function ResourceBars3D({
                 <ellipse cx={cx + depthX * 0.45} cy={baseY + 4} rx={barW * 0.85} ry={6} fill={colors.glow} opacity={isHover ? 0.85 : 0.45} />
 
                 {/* 3D extruded prism faces */}
-                <polygon points={sidePts} fill={colors.side} stroke="rgba(255,255,255,0.12)" strokeWidth="0.6" />
-                <polygon points={frontPts} fill={colors.front} fillOpacity={0.92} stroke="rgba(255,255,255,0.18)" strokeWidth="0.7" />
-                <polygon points={topPts} fill={colors.top} stroke="rgba(255,255,255,0.35)" strokeWidth="0.8" />
+                <polygon points={sidePts} fill={colors.side} stroke="color-mix(in oklch, var(--foreground) 12%, transparent)" strokeWidth="0.6" />
+                <polygon points={frontPts} fill={colors.front} fillOpacity={0.92} stroke="color-mix(in oklch, var(--foreground) 18%, transparent)" strokeWidth="0.7" />
+                <polygon points={topPts} fill={colors.top} stroke="color-mix(in oklch, var(--foreground) 30%, transparent)" strokeWidth="0.8" />
 
                 {/* Floating value badge above top cap */}
                 <text
                   x={cx + depthX / 2}
                   y={yTop - depthY - lift - 6}
                   textAnchor="middle"
-                  fontSize="10.5"
+                  fontSize="11"
                   fontWeight="600"
-                  fill={isHover ? "#f8fafc" : "#cbd5e1"}
+                  fill={isHover ? "var(--foreground)" : "var(--muted-foreground)"}
                 >
                   {metric === "gpu" && item.gpu == null ? "—" : `${val.toFixed(0)}%`}
                 </text>
 
                 {/* Asset label */}
-                <text x={cx + 4} y={baseY + 18} textAnchor="middle" fontSize="10.5" fontWeight="500" fill="#e2e8f0">
+                <text x={cx + 4} y={baseY + 18} textAnchor="middle" fontSize="11" fontWeight="500" fill="var(--foreground)">
                   {item.label}
                 </text>
-                <text x={cx + 4} y={baseY + 32} textAnchor="middle" fontSize="9.5" fill="#94a3b8">
+                <text x={cx + 4} y={baseY + 32} textAnchor="middle" fontSize="11" fill="var(--muted-foreground)">
                   {item.sublabel}
                 </text>
               </g>
@@ -1107,7 +1127,7 @@ export function ResourceBars3D({
         </svg>
 
         {hovered && (
-          <div className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 px-2 pt-1.5 font-mono text-2xs text-slate-200">
+          <div className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 px-2 pt-1.5 font-mono text-2xs text-foreground/95">
             <span>
               选中资产：<strong>{hovered.label}</strong>（{hovered.sublabel}）
             </span>

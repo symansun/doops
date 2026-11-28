@@ -133,7 +133,7 @@ export function LandingTopology() {
             onClick={() => setSelected("entries")}
             className={`h-full cursor-pointer rounded-xl border p-4 text-left transition-all ${
               selected === "entries"
-                ? "border-primary/70 bg-primary/10 shadow-[0_0_30px_-14px_color-mix(in_oklch,var(--primary)_70%,transparent)]"
+                ? "border-primary/70 bg-primary/10 shadow-lg ring-1 ring-primary/35"
                 : "border-border/70 bg-card/55 hover:border-border hover:bg-card/85"
             }`}
           >
@@ -141,7 +141,7 @@ export function LandingTopology() {
               <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
                 01 · 四端入口
               </span>
-              <span className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-[10px] text-accent">
+              <span className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-2xs text-accent">
                 1 Login
               </span>
             </div>
@@ -168,12 +168,12 @@ export function LandingTopology() {
 
           {/* Symmetric Connector 1: Client -> Gateway */}
           <div className="flex flex-col items-center justify-center gap-1.5 py-1">
-            <span className="inline-flex items-center gap-1 rounded-full border border-border/75 bg-card/80 px-2.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1 rounded-full border border-border/75 bg-card/80 px-2.5 py-0.5 font-mono text-2xs text-muted-foreground">
               HTTPS/WS
               <ArrowRight className="size-2.5 text-primary" aria-hidden="true" />
             </span>
             <div className="portal-pulse-line h-0.5 w-full rounded-full bg-border" />
-            <span className="font-mono text-[10px] text-muted-foreground/80">Token 鉴权</span>
+            <span className="font-mono text-2xs text-muted-foreground/80">Token 鉴权</span>
           </div>
 
           {/* Layer 2: Gateway Hub */}
@@ -182,7 +182,7 @@ export function LandingTopology() {
             onClick={() => setSelected("gateway")}
             className={`h-full cursor-pointer rounded-xl border p-4 text-left transition-all ${
               selected === "gateway"
-                ? "border-accent/70 bg-primary/12 shadow-[0_0_36px_-14px_color-mix(in_oklch,var(--accent)_65%,transparent)]"
+                ? "border-accent/70 bg-primary/12 shadow-lg ring-1 ring-accent/35"
                 : "border-border/70 bg-card/55 hover:border-border hover:bg-card/85"
             }`}
           >
@@ -191,7 +191,7 @@ export function LandingTopology() {
                 <Shield className="size-3.5" aria-hidden="true" />
                 02 · doops-gateway
               </span>
-              <span className="rounded bg-success/15 px-1.5 py-0.5 font-mono text-[10px] text-success">
+              <span className="rounded bg-success/15 px-1.5 py-0.5 font-mono text-2xs text-success">
                 控制面
               </span>
             </div>
@@ -213,7 +213,7 @@ export function LandingTopology() {
             </div>
           </button>
 
-          {/* Symmetric Connector 2: Reverse Tunnel (interactive pill rail!) */}
+          {/* Symmetric Connector 2: Reverse Tunnel */}
           <button
             type="button"
             onClick={() => setSelected("tunnel")}
@@ -221,7 +221,7 @@ export function LandingTopology() {
             className="group flex cursor-pointer flex-col items-center justify-center gap-1.5 py-1 text-center"
           >
             <span
-              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 font-mono text-[10px] transition-colors ${
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 font-mono text-2xs transition-colors ${
                 selected === "tunnel"
                   ? "border-accent bg-accent/18 font-medium text-accent"
                   : "border-accent/40 bg-accent/10 text-accent group-hover:border-accent"
@@ -231,7 +231,7 @@ export function LandingTopology() {
               反向隧道
             </span>
             <div className="portal-pulse-line h-0.5 w-full rounded-full bg-accent/40" />
-            <span className="font-mono text-[10px] text-muted-foreground/85">主动出站连出</span>
+            <span className="font-mono text-2xs text-muted-foreground/85">主动出站连出</span>
           </button>
 
           {/* Layer 3: Target Agents */}
@@ -240,7 +240,7 @@ export function LandingTopology() {
             onClick={() => setSelected("agents")}
             className={`h-full cursor-pointer rounded-xl border p-4 text-left transition-all ${
               selected === "agents"
-                ? "border-primary/70 bg-primary/10 shadow-[0_0_30px_-14px_color-mix(in_oklch,var(--primary)_70%,transparent)]"
+                ? "border-primary/70 bg-primary/10 shadow-lg ring-1 ring-primary/35"
                 : "border-border/70 bg-card/55 hover:border-border hover:bg-card/85"
             }`}
           >
@@ -248,7 +248,7 @@ export function LandingTopology() {
               <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
                 03 · doops-agent
               </span>
-              <span className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-[10px] text-success">
+              <span className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-2xs text-success">
                 0 入站端口
               </span>
             </div>

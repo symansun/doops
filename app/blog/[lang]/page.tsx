@@ -52,7 +52,7 @@ export default async function BlogLangIndexPage({ params }: LangPageProps) {
                 href={`/blog/${lang}/${post.slug}`}
                 className="group -mx-4 flex flex-col gap-5 rounded-2xl px-4 py-2 transition-colors hover:bg-foreground/[0.025] sm:flex-row sm:items-start"
               >
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 max-w-3xl flex-1">
                   {post.series ? (
                     <span className="mb-2 inline-block rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
                       {post.series}
@@ -87,7 +87,7 @@ export default async function BlogLangIndexPage({ params }: LangPageProps) {
                   ) : null}
                 </div>
                 {post.cover ? (
-                  <div className="w-full shrink-0 overflow-hidden rounded-xl ring-1 ring-border/60 sm:w-44">
+                  <div className="w-full shrink-0 overflow-hidden rounded-xl ring-1 ring-border/60 sm:ml-auto sm:w-56 md:w-64">
                     <BlogCover
                       src={post.cover}
                       alt={post.title}

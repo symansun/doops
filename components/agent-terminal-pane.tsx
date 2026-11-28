@@ -10,6 +10,7 @@ import {
 import { destructiveCommandReason, type TerminalPrefill } from "@/lib/shell-blocks"
 import type { TerminalAiActionMode, TerminalModeKind } from "@/lib/terminal-ai"
 import { TerminalPty, type TerminalPtyActions, type TerminalPtyChromeState } from "./terminal-pty"
+import { Button } from "./ui"
 
 export type AgentTerminalTab = "log" | "pty"
 
@@ -91,44 +92,48 @@ export function AgentTerminalPane({
     <section
       aria-label="执行过程与交互终端"
       data-testid="agent-terminal-pane"
-      className="flex h-full min-h-0 flex-col bg-[#080d18] text-slate-200"
+      className="flex h-full min-h-0 flex-col bg-background text-foreground/95"
     >
       {/* 极简单行顶栏：执行过程 | 交互终端 + 按需操作 */}
-      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-white/10 bg-[#0d1424] px-2.5 text-xs">
-        <button
+      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-white/10 bg-card px-2.5 text-xs">
+        <Button
           type="button"
+          size="sm"
+          variant="ghost"
           data-testid="ask-terminal-tab-log"
           aria-pressed={activeTab === "log"}
           onClick={() => onTabChange("log")}
           className={
-            "shrink-0 whitespace-nowrap rounded px-2 py-0.5 transition " +
-            (activeTab === "log" ? "bg-sky-500/20 text-sky-200 font-medium" : "text-slate-400 hover:bg-white/5 hover:text-slate-200")
+            "h-6 shrink-0 px-2 text-xs " +
+            (activeTab === "log" ? "bg-primary/20 font-medium text-primary hover:bg-primary/25 hover:text-primary" : "text-muted-foreground")
           }
         >
           执行过程{entries.length > 0 ? ` (${entries.length})` : ""}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          size="sm"
+          variant="ghost"
           data-testid="ask-terminal-tab-pty"
           aria-pressed={activeTab === "pty"}
           onClick={() => onTabChange("pty")}
           className={
-            "shrink-0 whitespace-nowrap rounded px-2 py-0.5 transition " +
-            (activeTab === "pty" ? "bg-sky-500/20 text-sky-200 font-medium" : "text-slate-400 hover:bg-white/5 hover:text-slate-200")
+            "h-6 shrink-0 px-2 text-xs " +
+            (activeTab === "pty" ? "bg-primary/20 font-medium text-primary hover:bg-primary/25 hover:text-primary" : "text-muted-foreground")
           }
         >
           交互终端
-        </button>
+        </Button>
         {activeTab === "pty" && ptyMounted && (
-          <span className="flex min-w-0 items-center gap-1.5 pl-1 text-[11px] text-slate-400">
+          <span className="flex min-w-0 items-center gap-1.5 pl-1 text-2xs text-muted-foreground">
             <span
               className={
                 "inline-block h-1.5 w-1.5 shrink-0 rounded-full " +
                 (ptyChrome.status === "ready"
-                  ? "bg-emerald-400"
+                  ? "bg-success"
                   : ptyChrome.status === "connecting" || ptyChrome.status === "reconnecting"
-                    ? "animate-pulse bg-amber-400"
-                    : "bg-rose-400")
+                    ? "animate-pulse bg-warning"
+                    : "bg-destructive")
               }
             />
             <span className="truncate font-mono">{ptyChrome.cwd || (ptyChrome.status === "ready" ? "/workspace" : ptyChrome.detail)}</span>
@@ -136,19 +141,18 @@ export function AgentTerminalPane({
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
           {activeTab === "log" && hasNonShell && (
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant={onlyShell ? "secondary" : "ghost"}
               onClick={() => setOnlyShell((v) => !v)}
-              className={
-                "whitespace-nowrap rounded px-2 py-0.5 text-[11px] transition " +
-                (onlyShell ? "bg-white/10 text-slate-100" : "text-slate-400 hover:bg-white/5 hover:text-slate-200")
-              }
+              className="h-6 px-2 text-2xs"
             >
               仅命令
-            </button>
+            </Button>
           )}
           {activeTab === "pty" && ptyChrome.actionNotice && (
-            <span role="status" className="max-w-[10rem] truncate text-[11px] text-sky-300">
+            <span role="status" className="max-w-40 truncate text-2xs text-primary">
               {ptyChrome.actionNotice}
             </span>
           )}
@@ -164,46 +168,52 @@ export function AgentTerminalPane({
               }
               onClick={() => { ptyActionsRef.current?.toggleAiMirror() }}
               className={
-                "whitespace-nowrap rounded px-2 py-0.5 text-[11px] transition " +
+                "whitespace-nowrap rounded px-2 py-0.5 text-2xs transition " +
                 (ptyChrome.aiMirrorEnabled !== false
-                  ? "bg-white/10 text-sky-200 hover:bg-white/15"
-                  : "text-slate-400 hover:bg-white/5 hover:text-slate-200")
+                  ? "bg-primary/15 text-primary hover:bg-primary/25"
+                  : "text-muted-foreground hover:bg-muted/30 hover:text-foreground")
               }
             >
               AI 回显
             </button>
           )}
           {activeTab === "pty" && onAskAi && (
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="ghost"
               disabled={targetOffline}
               data-testid="ask-pty-send-to-ai"
               title="将右侧交互终端刚执行的命令与输出发回左侧 AI 继续分析"
               onClick={() => { ptyActionsRef.current?.sendHandbackToAi() }}
-              className="whitespace-nowrap rounded bg-sky-500/15 px-2 py-0.5 text-[11px] text-sky-200 hover:bg-sky-500/25 disabled:opacity-40"
+              className="h-6 bg-primary/15 px-2 text-2xs text-primary hover:bg-primary/25 hover:text-primary"
             >
               ← 发给 AI
-            </button>
+            </Button>
           )}
           {activeTab === "pty" && (ptyChrome.status === "error" || ptyChrome.status === "closed" || ptyChrome.status === "reconnecting") && (
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="ghost"
               onClick={() => ptyActionsRef.current?.reconnect()}
-              className="whitespace-nowrap rounded bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300 hover:bg-emerald-500/25"
+              className="h-6 bg-success/15 px-2 text-2xs text-success hover:bg-success/25 hover:text-success"
             >
               重连
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             type="button"
+            size="icon-xs"
+            variant="ghost"
             aria-label="收起终端"
             data-testid="ask-terminal-close"
             onClick={onClose}
-            className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-slate-100"
+            className="text-muted-foreground"
             title="收起右侧终端"
           >
             <X aria-hidden="true" className="size-3.5" />
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -212,18 +222,20 @@ export function AgentTerminalPane({
         ref={logRef}
         hidden={activeTab !== "log"}
         data-testid="agent-execution-log"
-        className={activeTab === "log" ? "min-h-0 flex-1 overflow-y-auto bg-[#070b15] px-3 py-2.5 font-mono text-xs leading-relaxed" : "hidden"}
+        className={activeTab === "log" ? "min-h-0 flex-1 overflow-y-auto bg-background px-3 py-2.5 font-mono text-xs leading-relaxed" : "hidden"}
       >
         {visibleEntries.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 font-sans text-xs text-slate-500">
+          <div className="flex h-full flex-col items-center justify-center gap-2 font-sans text-xs text-muted-foreground/80">
             <span>Agent 执行的命令与输出会实时显示在这里</span>
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="ghost"
               onClick={() => onTabChange("pty")}
-              className="rounded px-2.5 py-1 text-sky-300 hover:bg-white/5"
+              className="text-primary hover:text-primary"
             >
               打开交互终端 →
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="space-y-2.5">
@@ -246,9 +258,9 @@ export function AgentTerminalPane({
                   className={
                     "group rounded border-l-2 px-2.5 py-1.5 transition " +
                     (focused
-                      ? "border-sky-400 bg-sky-500/10"
+                      ? "border-primary bg-primary/10"
                       : failed
-                        ? "border-rose-500/60 hover:bg-white/[0.03]"
+                        ? "border-destructive/60 hover:bg-white/[0.03]"
                         : "border-transparent hover:bg-white/[0.03]")
                   }
                 >
@@ -257,10 +269,10 @@ export function AgentTerminalPane({
                       className={
                         "shrink-0 select-none " +
                         (running
-                          ? "text-sky-400 animate-pulse"
+                          ? "text-primary animate-pulse"
                           : failed
-                            ? "text-rose-400"
-                            : "text-emerald-400")
+                            ? "text-destructive"
+                            : "text-success")
                       }
                     >
                       {entry.isShell ? "$" : running ? "●" : failed ? "✗" : "✓"}
@@ -268,45 +280,47 @@ export function AgentTerminalPane({
                     <span
                       className={
                         "min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all " +
-                        (failed ? "text-rose-200" : "text-slate-100")
+                        (failed ? "text-destructive" : "text-foreground")
                       }
                     >
                       {entry.command || (entry.summary ? `[${entry.toolName}] ${entry.summary}` : entry.toolName)}
                     </span>
-                    <div className="flex shrink-0 items-center gap-1.5 font-sans text-[11px]">
+                    <div className="flex shrink-0 items-center gap-1.5 font-sans text-2xs">
                       {entry.exitCode !== undefined && entry.exitCode !== 0 && (
-                        <span className="font-mono text-rose-300">exit {entry.exitCode}</span>
+                        <span className="font-mono text-destructive">exit {entry.exitCode}</span>
                       )}
-                      {duration && <span className="font-mono text-slate-500">{duration}</span>}
+                      {duration && <span className="font-mono text-muted-foreground/80">{duration}</span>}
                       {entry.command && (
-                        <button
+                        <Button
                           type="button"
+                          size="sm"
+                          variant="secondary"
                           onClick={(e) => {
                             e.stopPropagation()
                             onReplayCommand(entry.command!, { run: false })
                           }}
                           title={risky ? `高风险命令：填入交互终端手动确认（${risky}）` : "填入右侧交互终端重跑或改参数"}
-                          className="whitespace-nowrap rounded bg-white/10 px-1.5 py-0.5 text-slate-200 opacity-0 transition hover:bg-white/15 group-hover:opacity-100 focus-visible:opacity-100"
+                          className="h-5 px-1.5 text-2xs opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
                         >
                           在终端重跑
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>
                   {entry.cwd && (
-                    <div className="mt-0.5 pl-4 text-[10px] text-slate-500">{entry.cwd}</div>
+                    <div className="mt-0.5 pl-4 text-2xs text-muted-foreground/80">{entry.cwd}</div>
                   )}
                   {entry.output ? (
                     <pre
                       className={
-                        "mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all pl-4 text-[11.5px] leading-5 " +
-                        (failed ? "text-rose-300/90" : "text-slate-300")
+                        "mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all pl-4 text-2xs leading-5 " +
+                        (failed ? "text-destructive/90" : "text-foreground/85")
                       }
                     >
                       {entry.output}
                     </pre>
                   ) : running ? (
-                    <div className="mt-1 pl-4 font-sans text-[11px] text-slate-500">执行中…</div>
+                    <div className="mt-1 pl-4 font-sans text-2xs text-muted-foreground/80">执行中…</div>
                   ) : null}
                 </div>
               )

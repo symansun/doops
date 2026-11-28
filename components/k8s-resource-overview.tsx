@@ -1,12 +1,12 @@
 "use client"
 
 import { Boxes, RefreshCw } from "lucide-react"
-import { useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { fetchK8sOverview, K8S_OVERVIEW_QUERIES, type K8sOverview, type K8sOverviewKey, type K8sResource } from "@/lib/k8s-overview"
 import { formatDateTime } from "@/lib/format"
 import { useLoader } from "@/lib/use-loader"
 import type { Session, Target } from "@/lib/client"
-import { Button, Input } from "./ui"
+import { Button, DataTable, DataTableColumnHeader, EmptyState, FilterBar, Input, Skeleton, type ColumnDef } from "./ui"
 
 export function K8sResourceOverview({ session, target, sessionId, initialNamespace = "", running, onOpenDetails }: {
   session: Session
@@ -22,14 +22,14 @@ export function K8sResourceOverview({ session, target, sessionId, initialNamespa
   const [namespace, setNamespace] = useState(initialNamespace)
   const [namespaceInput, setNamespaceInput] = useState(initialNamespace)
   const { cluster, instance } = target
-  function changeScope(value: string) {
+  const changeScope = useCallback((value: string) => {
     setNamespaceInput(value)
     if (value === namespace) return
     setRefreshKey((n) => n + 1)
     setFilter("")
     setKind("pods")
     setNamespace(value)
-  }
+  }, [namespace])
 
   const { data: overview, loading, error: loadError } = useLoader(
     (signal) => fetchK8sOverview(session, { cluster, instance }, sessionId, signal, namespace),
@@ -39,7 +39,82 @@ export function K8sResourceOverview({ session, target, sessionId, initialNamespa
   const group = overview?.[kind]
   const namespaced = kind === "deployments" || kind === "pods"
   const term = filter.trim().toLowerCase()
-  const items = group?.items.filter((item) => item.name.includes(term) || item.namespace?.includes(term)) ?? []
+  const items = useMemo(
+    () => group?.items.filter((item) => item.name.includes(term) || item.namespace?.includes(term)) ?? [],
+    [group, term],
+  )
+
+  const columns = useMemo<ColumnDef<K8sResource, unknown>[]>(() => {
+    const cols: ColumnDef<K8sResource, unknown>[] = [
+      {
+        accessorKey: "name",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="名称" />,
+        cell: ({ row }) => (
+          <Button
+            type="button"
+            variant="link"
+            size="sm"
+            disabled={running}
+            onClick={() => onOpenDetails(kind, row.original)}
+            className="h-auto p-0 break-all text-left font-mono"
+          >
+            {row.original.name}
+          </Button>
+        ),
+      },
+    ]
+    if (namespaced) {
+      cols.push({
+        accessorKey: "namespace",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="命名空间" />,
+        cell: ({ row }) => <span className="break-all text-muted-foreground">{row.original.namespace}</span>,
+      })
+    }
+    cols.push({
+      accessorKey: "status",
+      header: ({ column }) => <DataTableColumnHeader column={column} title="状态" />,
+    })
+    if (namespaced) {
+      cols.push({
+        accessorKey: "ready",
+        header: "就绪",
+        cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.ready ?? "—"}</span>,
+      })
+    }
+    if (kind === "nodes") {
+      cols.push(
+        {
+          accessorKey: "cpu",
+          header: ({ column }) => <DataTableColumnHeader column={column} title="CPU 容量" />,
+          cell: ({ row }) => row.original.cpu ?? "未上报",
+        },
+        {
+          accessorKey: "memory",
+          header: ({ column }) => <DataTableColumnHeader column={column} title="内存容量" />,
+          cell: ({ row }) => row.original.memory ?? "未上报",
+        },
+      )
+    }
+    if (kind === "namespaces") {
+      cols.push({
+        id: "workloads",
+        header: "工作负载",
+        enableSorting: false,
+        cell: ({ row }) => (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={running}
+            aria-label={`查看 ${row.original.name} 工作负载`}
+            onClick={() => changeScope(row.original.name)}
+          >
+            查看工作负载
+          </Button>
+        ),
+      })
+    }
+    return cols
+  }, [changeScope, kind, namespaced, onOpenDetails, running])
 
   return (
     <section aria-label="Kubernetes 资源" className="card-surface min-w-0 p-4">
@@ -73,7 +148,7 @@ export function K8sResourceOverview({ session, target, sessionId, initialNamespa
         <Button type="submit" size="sm" disabled={running || namespaceInput === namespace}>应用范围</Button>
         {namespace && <Button type="button" size="sm" variant="ghost" disabled={running} onClick={() => changeScope("")}>返回整个集群</Button>}
       </form>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+      <FilterBar className="mb-3 justify-between">
         <div role="group" aria-label="资源类别" className="flex flex-wrap gap-1">
           {K8S_OVERVIEW_QUERIES.filter((query) => !namespace || query.allNamespaces).map(({ key, label }) => {
             const result = overview?.[key]
@@ -86,34 +161,30 @@ export function K8sResourceOverview({ session, target, sessionId, initialNamespa
           })}
         </div>
         <Input type="search" scale="sm" className="w-full sm:w-60" aria-label="筛选资源" value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={namespaced ? "按名称或命名空间筛选" : "按名称筛选"} />
-      </div>
-      {!group ? <p role="status" className="py-8 text-center text-sm text-muted-foreground">正在读取资源…</p> : group.error ? (
+      </FilterBar>
+      {!group ? (
+        <div role="status" className="space-y-2 py-2">
+          <span className="sr-only">正在读取资源…</span>
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-36 w-full" />
+        </div>
+      ) : group.error ? (
         <p role="alert" className="rounded-lg bg-warning/10 px-3 py-3 text-sm text-warning [overflow-wrap:anywhere]">{group.error}</p>
       ) : items.length === 0 ? (
-        <p role="status" className="py-8 text-center text-sm text-muted-foreground">{group.items.length ? "没有匹配的资源" : namespace ? `命名空间 ${namespace} 的查询返回 0 项` : "当前目标没有此类资源"}</p>
+        <EmptyState
+          role="status"
+          icon={<Boxes className="size-6" aria-hidden="true" />}
+          title={group.items.length ? "没有匹配的资源" : namespace ? `命名空间 ${namespace} 的查询返回 0 项` : "当前目标没有此类资源"}
+          action={filter ? <Button size="sm" onClick={() => setFilter("")}>清空筛选</Button> : undefined}
+        />
       ) : (
-        <div className="max-h-[55dvh] overflow-auto rounded-lg border border-border/60">
-          <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 bg-card text-xs text-muted-foreground">
-              <tr><th scope="col" className="px-3 py-2">名称</th>{namespaced && <th scope="col" className="px-3 py-2">命名空间</th>}<th scope="col" className="px-3 py-2">状态</th>{namespaced && <th scope="col" className="px-3 py-2">就绪</th>}
-                {kind === "nodes" && <><th scope="col" className="px-3 py-2">CPU 容量</th><th scope="col" className="px-3 py-2">内存容量</th></>}
-                {kind === "namespaces" && <th scope="col" className="px-3 py-2">工作负载</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {items.map((item) => (
-                <tr key={`${item.namespace}/${item.name}`} className="hover:bg-muted/30">
-                  <td className="px-3 py-2"><button type="button" disabled={running} onClick={() => onOpenDetails(kind, item)} className="break-all text-left font-mono text-primary hover:underline disabled:opacity-50">{item.name}</button></td>
-                  {namespaced && <td className="break-all px-3 py-2 text-muted-foreground">{item.namespace}</td>}
-                  <td className="px-3 py-2">{item.status}</td>
-                  {namespaced && <td className="px-3 py-2 font-mono tabular-nums">{item.ready ?? "—"}</td>}
-                  {kind === "nodes" && <><td className="px-3 py-2">{item.cpu ?? "未上报"}</td><td className="px-3 py-2">{item.memory ?? "未上报"}</td></>}
-                  {kind === "namespaces" && <td className="px-3 py-2"><Button size="sm" variant="ghost" disabled={running} aria-label={`查看 ${item.name} 工作负载`} onClick={() => changeScope(item.name)}>查看工作负载</Button></td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={columns}
+          data={items}
+          getRowId={(item) => `${item.namespace ?? ""}/${item.name}`}
+          paginate={items.length > 20}
+          initialPageSize={20}
+        />
       )}
     </section>
   )

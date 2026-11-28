@@ -69,7 +69,7 @@ function InlineText({ text }: { text: string }) {
       {parseInline(text).map((token: InlineToken, index) => {
         if (token.kind === "code") {
           return (
-            <code key={index} className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground">
+            <code key={index} className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">
               {token.text}
             </code>
           )

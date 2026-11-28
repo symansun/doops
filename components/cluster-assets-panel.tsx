@@ -5,7 +5,7 @@ import { assetRequest } from "@/lib/assets"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { formatDateTime } from "@/lib/format"
 import { targetClusterAvailable } from "@/lib/gateway"
-import { Button, Input, Select } from "./ui"
+import { Button, EmptyState, FilterBar, Input, PageHeader, Select, Skeleton, StatusBanner } from "./ui"
 import type { ClusterListState, ClusterSourcePage, RenderAssetTargetAction } from "./asset-inventory"
 import { AssetNodeLinks } from "./asset-node-links"
 
@@ -136,21 +136,24 @@ export function ClusterAssetsPanel({ session, targets, selectedTarget, initialPa
   }
 
   return <section aria-label="K8s 集群资产" className="space-y-4">
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <div><h1 className="text-xl font-semibold">Kubernetes 集群台账</h1><p className="text-sm text-muted-foreground">登记待接入的集群，或从 Agent 验证并纳管。命名空间来自实际发现。</p></div>
-      <div className="flex flex-wrap gap-2">
-        {selectedTarget && selectedTarget.status !== "offline" && targetClusterAvailable(selectedTarget) !== false && onOpenTargetK8s && (
-          <Button size="sm" disabled={busy} onClick={() => onOpenTargetK8s(selectedTarget)} title={`直接浏览 ${selectedTarget.cluster}/${selectedTarget.instance} 的实时 Pod、Deployment 与节点`}>
-            直接查看当前目标（{selectedTarget.instance}）
-          </Button>
-        )}
-        <Button size="sm" disabled={reading||busy||!!readError} onClick={()=>{setOpen(false);setConfirm(null);setError("");setEditor({...emptyProfile})}}>登记待接入集群</Button>
-        <Button size="sm" disabled={reading || busy} onClick={() => void read()}>刷新列表</Button>
-        <Button size="sm" variant="primary" disabled={busy || !online.length} onClick={() => start()}>{admin ? "从 Agent 导入" : "从 Agent 发现"}</Button>
-      </div>
-    </header>
+    <PageHeader
+      title="Kubernetes 集群台账"
+      description="登记待接入的集群，或从 Agent 验证并纳管。命名空间来自实际发现。"
+      actions={
+        <>
+          {selectedTarget && selectedTarget.status !== "offline" && targetClusterAvailable(selectedTarget) !== false && onOpenTargetK8s && (
+            <Button size="sm" disabled={busy} onClick={() => onOpenTargetK8s(selectedTarget)} title={`直接浏览 ${selectedTarget.cluster}/${selectedTarget.instance} 的实时 Pod、Deployment 与节点`}>
+              直接查看当前目标（{selectedTarget.instance}）
+            </Button>
+          )}
+          <Button size="sm" disabled={reading||busy||!!readError} onClick={()=>{setOpen(false);setConfirm(null);setError("");setEditor({...emptyProfile})}}>登记待接入集群</Button>
+          <Button size="sm" disabled={reading || busy} onClick={() => void read()}>刷新列表</Button>
+          <Button size="sm" variant="primary" disabled={busy || !online.length} onClick={() => start()}>{admin ? "从 Agent 导入" : "从 Agent 发现"}</Button>
+        </>
+      }
+    />
     {notice && <p role="status" className="text-sm text-primary">{notice}</p>}
-    {!open && error && <p role="alert" className="status-error">{error}</p>}
+    {!open && error && <StatusBanner tone="error">{error}</StatusBanner>}
     {editor && <form data-assist-scope="asset-entry" className="card-surface space-y-3 p-4" onSubmit={e=>{e.preventDefault();void maintain(editor.id?"update":"create",editor)}}><h2>{editor.id?"编辑集群资料":"登记待接入集群"}</h2><fieldset className="grid gap-3 sm:grid-cols-3" disabled={busy}>{([["name","集群名称"],["environment","环境"],["contact","负责人"]] as const).map(([key,label])=><label key={key}>{label}<Input value={editor[key]} required={key==="name"} maxLength={80} onChange={e=>setEditor({...editor,[key]:e.target.value})}/></label>)}</fieldset><Button disabled={busy} type="submit">保存集群资料</Button> <Button type="button" onClick={()=>setEditor(null)}>取消</Button></form>}
     {confirm && <div className="card-surface space-y-2 p-3"><p>{confirm.source ? "解除 "+confirm.source.cluster+"/"+confirm.source.instance+" 的来源关联？此来源的命名空间和采集快照将移除；不会修改实际集群。" : "仅移除「"+confirm.profile.name+"」的待接入登记，不销毁集群。"}</p><Button disabled={busy} onClick={()=>void maintain(confirm.source?"unlink":"delete",confirm.profile,confirm.source)}>确认{confirm.source?"解除关联":"移除"}</Button> <Button disabled={busy} onClick={()=>setConfirm(null)}>取消</Button></div>}
     {open && <form data-assist-scope="asset-entry" className="card-surface space-y-3 p-4" onSubmit={(e) => { e.preventDefault(); void discover() }}>
@@ -179,10 +182,12 @@ export function ClusterAssetsPanel({ session, targets, selectedTarget, initialPa
         {busy && <span role="status" className="self-center text-xs text-muted-foreground">正在处理…</span>}
       </div>
     </form>}
-    <Input type="search" scale="sm" className="max-w-sm" aria-label="搜索集群资产" placeholder="搜索资产编号、集群或命名空间" value={query} onChange={(e) => setQuery(e.target.value)} />
+    <FilterBar>
+      <Input type="search" scale="sm" className="w-full sm:max-w-sm" aria-label="搜索集群资产" placeholder="搜索资产编号、集群或命名空间" value={query} onChange={(e) => setQuery(e.target.value)} />
+    </FilterBar>
     {!reading&&!readError&&pending.filter(matches).map(p=><article key={p.id} className="card-surface space-y-2 p-4"><h3 className="font-semibold">{p.name} · 待接入</h3><p className="text-sm">{p.environment||"未填环境"} · {p.contact||"未填负责人"} · 未验证命名空间</p><div className="flex flex-wrap gap-2"><Button size="sm" onClick={()=>{setOpen(false);setConfirm(null);setEditor(p)}}>编辑资料</Button><Button size="sm" disabled={!online.length} onClick={()=>start(undefined,p)}>关联来源 Agent</Button><Button size="sm" onClick={()=>{setOpen(false);setEditor(null);setConfirm({profile:p})}}>移出台账</Button></div></article>)}
-    {readError ? <p role="alert" className="text-sm text-destructive">{readError}</p> : reading ? <p role="status">正在读取台账…</p>
-      : !visible.length && !pending.some(matches) ? <p className="py-4 text-sm text-muted-foreground">{records.length ? "无匹配集群" : "当前没有可见的集群资产"}</p>
+    {readError ? <StatusBanner tone="error">{readError}</StatusBanner> : reading ? <div role="status" className="space-y-3"><span className="sr-only">正在读取台账…</span><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></div>
+      : !visible.length && !pending.some(matches) ? <EmptyState title={records.length ? "无匹配集群" : "当前没有可见的集群资产"} description={records.length ? "可尝试清空关键词后重新筛选。" : "点击右上角「登记待接入集群」或从在线 Agent 发现并纳管。"} action={query ? <Button size="sm" onClick={() => setQuery("")}>清空筛选</Button> : undefined} />
       : [...byAsset].map(([id, sources]) => <article key={id} className="card-surface space-y-3 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-semibold">{sources[0].name} <span className="text-xs font-normal text-muted-foreground">{id}</span></h3>

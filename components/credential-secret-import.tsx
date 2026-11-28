@@ -88,7 +88,7 @@ export function SecretImportDialog({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1 text-xs text-muted-foreground">
             目标
-            <div className="input font-mono text-xs text-foreground">
+            <div className="min-h-9 rounded-md border border-input bg-muted/40 px-3 py-2 font-mono text-xs text-foreground">
               {target.cluster}/{target.instance}
             </div>
           </div>

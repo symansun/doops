@@ -146,7 +146,7 @@ export function InlineCatalogManager({
             <Database className="size-4 text-primary" aria-hidden="true" />
             <span>{activeSchema.label}</span>
             <Badge variant="outline">{visibleRows.length} 条</Badge>
-            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
               {activeSchema.env_var}
             </code>
           </CardTitle>
@@ -279,7 +279,7 @@ export function InlineCatalogManager({
               </label>
             </fieldset>
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-2xs text-muted-foreground">
                 仅登记非敏感拓扑定位元数据（存储键 <code>{activeKind}</code>），严禁填写密钥、口令或令牌。
               </span>
               <div className="flex gap-2">
@@ -337,7 +337,7 @@ export function InlineCatalogManager({
                         {row.cluster ? `${row.cluster}/${row.instance}${target ? " · 在线" : " · 离线"}` : "待接入"}
                       </Badge>
                     </div>
-                    <p className="break-all font-mono text-[11px] text-muted-foreground">
+                    <p className="break-all font-mono text-2xs text-muted-foreground">
                       {formatPluginCatalogAddress(activeSchema, row)}
                     </p>
                   </div>

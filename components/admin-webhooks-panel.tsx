@@ -510,19 +510,19 @@ export function AdminWebhooksPanel({ session }: { session: Session }) {
                     return (
                       <TableRow key={endpoint.id}>
                         <TableCell>
-                          <div className="min-w-[220px] space-y-1">
+                          <div className="min-w-56 space-y-1">
                             <div className="font-medium text-foreground">{endpoint.name}</div>
                             <div className="font-mono text-xs text-muted-foreground" title={endpoint.url_host || undefined}>
                               {endpoint.url_host || "未知主机"}
                             </div>
-                            <div className="break-all font-mono text-[11px] text-muted-foreground" title={endpoint.url_sha256 || undefined}>
+                            <div className="break-all font-mono text-2xs text-muted-foreground" title={endpoint.url_sha256 || undefined}>
                               {endpoint.url_sha256 ? "sha256:" + endpoint.url_sha256 : "URL hash 不可用"}
                             </div>
                             <div className="text-xs text-muted-foreground">更新于 {formatEndpointTime(endpoint.updated_at || endpoint.created_at)}</div>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex max-w-[300px] flex-wrap gap-1">
+                          <div className="flex max-w-72 flex-wrap gap-1">
                             {(endpoint.event_types || []).map((event) => (
                               <Badge key={event} variant="outline" title={event}>{eventLabel(event)}</Badge>
                             ))}
@@ -532,7 +532,7 @@ export function AdminWebhooksPanel({ session }: { session: Session }) {
                           <span className="text-xs text-muted-foreground">{scopeLabel(endpoint)}</span>
                         </TableCell>
                         <TableCell>
-                          <div className="min-w-[190px] space-y-1.5">
+                          <div className="min-w-48 space-y-1.5">
                             <Badge variant={status.variant}>{status.label}</Badge>
                             <div className="text-xs text-muted-foreground">
                               最近成功：{formatDeliveryTime(endpoint.last_success_at_ms)}
@@ -541,14 +541,14 @@ export function AdminWebhooksPanel({ session }: { session: Session }) {
                               最近失败：{formatDeliveryTime(endpoint.last_failure_at_ms)}
                             </div>
                             {endpoint.last_error_category ? (
-                              <div className="max-w-[220px] truncate text-xs text-destructive" title={endpoint.last_error_category}>
+                              <div className="max-w-56 truncate text-xs text-destructive" title={endpoint.last_error_category}>
                                 {endpoint.last_error_category}
                               </div>
                             ) : null}
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex min-w-[230px] flex-wrap justify-end gap-1.5">
+                          <div className="flex min-w-56 flex-wrap justify-end gap-1.5">
                             {!readonly ? (
                               <>
                                 <Button type="button" size="sm" variant="ghost" onClick={() => openEdit(endpoint)} disabled={isBusy} title="编辑">
@@ -628,7 +628,7 @@ export function AdminWebhooksPanel({ session }: { session: Session }) {
                   <label key={eventOption.value} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted/30">
                     <Checkbox checked={form.eventTypes.includes(eventOption.value)} onChange={() => toggleEvent(eventOption.value)} disabled={busyAction === "save"} />
                     <span>{eventOption.label}</span>
-                    <code className="ml-auto text-[10px] text-muted-foreground">{eventOption.value}</code>
+                    <code className="ml-auto text-2xs text-muted-foreground">{eventOption.value}</code>
                   </label>
                 ))}
               </div>
@@ -711,12 +711,12 @@ export function AdminWebhooksPanel({ session }: { session: Session }) {
               <TableBody>
                 {deliveries.map((delivery) => (
                   <TableRow key={delivery.id}>
-                    <TableCell><code className="max-w-[180px] truncate text-xs" title={delivery.event_id}>{delivery.event_id}</code></TableCell>
+                    <TableCell><code className="max-w-44 truncate text-xs" title={delivery.event_id}>{delivery.event_id}</code></TableCell>
                     <TableCell><Badge variant={deliveryStatusVariant(delivery.status)}>{deliveryStatusLabel(delivery.status)}</Badge></TableCell>
                     <TableCell>{formatNumber(delivery.attempt, { fallback: "—" })}</TableCell>
                     <TableCell>{delivery.response_status > 0 ? formatNumber(delivery.response_status, { fallback: "—" }) : "—"}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDeliveryTime(delivery.delivered_at_ms || delivery.updated_at_ms || delivery.created_at_ms)}</TableCell>
-                    <TableCell className="max-w-[180px] truncate text-xs text-muted-foreground" title={delivery.error_category || undefined}>{delivery.error_category || "—"}</TableCell>
+                    <TableCell className="max-w-44 truncate text-xs text-muted-foreground" title={delivery.error_category || undefined}>{delivery.error_category || "—"}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

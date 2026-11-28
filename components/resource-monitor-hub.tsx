@@ -7,7 +7,7 @@ import type { ResourceMonitorSubTab } from "@/lib/console-views"
 import { targetModeLabel } from "@/lib/gateway"
 import { AgentMonitor } from "./asset-monitor-panel"
 import { SystemResourceMonitor } from "./system-resource-monitor"
-import { Badge, Button, Inline, PageTabs, Select, Stack } from "./ui"
+import { Badge, Button, Inline, PageHeader, PageTabs, Select, Stack } from "./ui"
 
 function resolveTargetByKey(
   key: string | undefined,
@@ -85,38 +85,37 @@ export function ResourceMonitorHub({
 
   return (
     <section aria-label="资源监控" className="space-y-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-foreground">资源监控</h1>
+      <PageHeader
+        title="资源监控"
+        badge={
+          <>
             <Badge variant="outline">全网汇总与单目标时序</Badge>
             <Badge variant="outline">
               在线 {onlineCount} / 可见 {targets.length} 台 Agent
             </Badge>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            统一查看全网主机、集群、容器、应用与数据库的实时资源水位，以及单目标设备级曲线、阈值告警规则与 Skill 巡检趋势。
-          </p>
-        </div>
-
-        <Inline gap={2} className="flex-wrap">
-          {onOpenSituation && (
-            <Button size="sm" variant="ghost" onClick={onOpenSituation}>
-              态势感知
-            </Button>
-          )}
-          {onOpenInspection && (
-            <Button size="sm" variant="ghost" onClick={() => onOpenInspection()}>
-              智能巡检
-            </Button>
-          )}
-          {onOpenPlatformMonitor && (
-            <Button size="sm" variant="ghost" onClick={onOpenPlatformMonitor}>
-              Agent 运行监控
-            </Button>
-          )}
-        </Inline>
-      </header>
+          </>
+        }
+        description="统一查看全网主机、集群、容器、应用与数据库的实时资源水位，以及单目标设备级曲线、阈值告警规则与 Skill 巡检趋势。"
+        actions={
+          <>
+            {onOpenSituation && (
+              <Button size="sm" variant="ghost" onClick={onOpenSituation}>
+                态势感知
+              </Button>
+            )}
+            {onOpenInspection && (
+              <Button size="sm" variant="ghost" onClick={() => onOpenInspection()}>
+                智能巡检
+              </Button>
+            )}
+            {onOpenPlatformMonitor && (
+              <Button size="sm" variant="ghost" onClick={onOpenPlatformMonitor}>
+                Agent 运行监控
+              </Button>
+            )}
+          </>
+        }
+      />
 
       <PageTabs
         ariaLabel="资源监控视图"

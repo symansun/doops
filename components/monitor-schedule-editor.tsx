@@ -236,20 +236,24 @@ export function MonitorScheduleEditor({
               <div className="flex flex-wrap items-center justify-between gap-2 text-muted-foreground">
                 <span>选择目标 Agent（已选 {selectedTargetKeys.length} 个）：</span>
                 <Inline gap={2}>
-                  <button
+                  <Button
                     type="button"
-                    className="text-primary hover:underline"
+                    size="sm"
+                    variant="link"
+                    className="h-auto p-0 text-xs"
                     onClick={() => setSelectedTargetKeys(targets.map((t) => t.key))}
                   >
                     全选 ({targets.length})
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    className="text-muted-foreground hover:underline"
+                    size="sm"
+                    variant="link"
+                    className="h-auto p-0 text-xs text-muted-foreground"
                     onClick={() => setSelectedTargetKeys([])}
                   >
                     清空
-                  </button>
+                  </Button>
                 </Inline>
               </div>
               {targets.length === 0 ? (
@@ -276,9 +280,9 @@ export function MonitorScheduleEditor({
               <div className="flex flex-wrap items-center justify-between gap-2 text-muted-foreground">
                 <span>关联系统 Skill（可选，已选 {selectedSkills.length}；周期任务仅支持系统 Skill）</span>
                 {onOpenSkills && (
-                  <button type="button" className="text-primary hover:underline" onClick={onOpenSkills}>
+                  <Button type="button" size="sm" variant="link" className="h-auto p-0 text-xs" onClick={onOpenSkills}>
                     管理 Skill 能力包 →
-                  </button>
+                  </Button>
                 )}
               </div>
               <div className="flex flex-wrap gap-2">

@@ -1,11 +1,11 @@
 "use client"
 
 import { Globe2, RefreshCw } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 import { useLoader } from "@/lib/use-loader"
-import { Button, Input } from "./ui"
+import { Button, DataTable, DataTableColumnHeader, EmptyState, FilterBar, Input, Skeleton, type ColumnDef } from "./ui"
 
 type Site = { site_id: string; domain: string; current_release: string; previous_release: string | null; updated_at: string }
 
@@ -41,7 +41,54 @@ export function WebsiteInventory({ session, target, sessionId, revision, running
 
   const sites = data ?? []
   const term = filter.trim().toLowerCase()
-  const visible = sites.filter((site) => site.site_id.includes(term) || site.domain.includes(term))
+  const visible = useMemo(
+    () => sites.filter((site) => site.site_id.includes(term) || site.domain.includes(term)),
+    [sites, term],
+  )
+  const columns = useMemo<ColumnDef<Site, unknown>[]>(
+    () => [
+      {
+        accessorKey: "site_id",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="站点 ID" />,
+        cell: ({ row }) => (
+          <Button
+            type="button"
+            variant="link"
+            size="sm"
+            title="带入站点巡检"
+            disabled={running}
+            onClick={() => onInspect(row.original.site_id, row.original.domain)}
+            className="h-auto p-0 text-left font-mono"
+          >
+            {row.original.site_id}
+          </Button>
+        ),
+      },
+      {
+        accessorKey: "domain",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="域名" />,
+      },
+      {
+        accessorKey: "current_release",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="当前版本" />,
+        cell: ({ row }) => <span className="font-mono">{row.original.current_release}</span>,
+      },
+      {
+        accessorKey: "previous_release",
+        header: "上一版本",
+        cell: ({ row }) => <span className="font-mono">{row.original.previous_release ?? "—"}</span>,
+      },
+      {
+        accessorKey: "updated_at",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="更新时间" />,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">{new Date(row.original.updated_at).toLocaleString()}</span>
+        ),
+      },
+    ],
+    [onInspect, running],
+  )
+
   return (
     <section aria-label="已发布站点" className="card-surface min-w-0 p-4">
       <header className="mb-4 flex items-center justify-between gap-3">
@@ -51,29 +98,34 @@ export function WebsiteInventory({ session, target, sessionId, revision, running
         </div>
         <Button size="sm" aria-label="刷新站点" onClick={onRefresh} disabled={loading || running}><RefreshCw aria-hidden="true" className={`size-3.5 ${loading ? "motion-safe:animate-spin" : ""}`} />刷新</Button>
       </header>
-      {loading ? <p role="status" className="py-6 text-center text-sm text-muted-foreground">正在读取站点发布记录…</p> : error ? (
+      {loading ? (
+        <div role="status" className="space-y-2 py-2">
+          <span className="sr-only">正在读取站点发布记录…</span>
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-32 w-full" />
+        </div>
+      ) : error ? (
         <p role="alert" className="rounded-lg bg-warning/10 px-3 py-3 text-sm text-warning [overflow-wrap:anywhere]">读取站点失败 · {error}</p>
-      ) : sites.length === 0 ? <p role="status" className="py-6 text-center text-sm text-muted-foreground">当前目标没有 DoWeb 发布记录</p> : (
-        <>
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      ) : sites.length === 0 ? (
+        <EmptyState role="status" icon={<Globe2 className="size-6" aria-hidden="true" />} title="当前目标没有 DoWeb 发布记录" />
+      ) : (
+        <div className="space-y-3">
+          <FilterBar className="justify-between">
             <span className="text-xs text-muted-foreground">{visible.length} 个站点</span>
             <Input type="search" scale="sm" aria-label="筛选站点" placeholder="按站点 ID 或域名筛选" className="w-full sm:w-64" value={filter} onChange={(event) => setFilter(event.target.value)} />
-          </div>
-          {visible.length === 0 ? <p role="status" className="py-6 text-center text-sm text-muted-foreground">没有匹配的站点</p> : (
-            <div className="max-h-[55dvh] overflow-auto rounded-lg border border-border/60">
-              <table className="min-w-[42rem] w-full text-left text-sm">
-                <thead className="sticky top-0 bg-card text-xs text-muted-foreground"><tr>{["站点 ID", "域名", "当前版本", "上一版本", "更新时间"].map((label) => <th key={label} scope="col" className="px-3 py-2">{label}</th>)}</tr></thead>
-                <tbody className="divide-y divide-border/50">{visible.map((site) => (
-                  <tr key={site.site_id} className="hover:bg-muted/30">
-                    <td className="px-3 py-2"><button type="button" title="带入站点巡检" disabled={running} onClick={() => onInspect(site.site_id, site.domain)} className="text-left font-mono text-primary hover:underline disabled:opacity-50">{site.site_id}</button></td>
-                    <td className="px-3 py-2">{site.domain}</td><td className="px-3 py-2 font-mono">{site.current_release}</td><td className="px-3 py-2 font-mono">{site.previous_release ?? "—"}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{new Date(site.updated_at).toLocaleString()}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
+          </FilterBar>
+          {visible.length === 0 ? (
+            <EmptyState role="status" title="没有匹配的站点" action={<Button size="sm" onClick={() => setFilter("")}>清空筛选</Button>} />
+          ) : (
+            <DataTable
+              columns={columns}
+              data={visible}
+              getRowId={(site) => site.site_id}
+              paginate={visible.length > 20}
+              initialPageSize={20}
+            />
           )}
-        </>
+        </div>
       )}
     </section>
   )

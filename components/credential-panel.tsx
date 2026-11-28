@@ -36,7 +36,7 @@ import {
   type OpaquePayloadEntry,
   type StructuredCredentialPayloadInput,
 } from "@/lib/credential-workflow"
-import { Badge, Button, Input, Modal, SegmentedControl, Select, StatusBanner, Textarea } from "./ui"
+import { Badge, Button, Input, Modal, SegmentedControl, Select, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Textarea } from "./ui"
 import {
   BanIcon,
   CheckIcon,
@@ -492,23 +492,20 @@ export function CredentialPanel({
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {/* Fixed column widths keep the table inside a 1200px window. The
-            action column wraps its buttons and stays pinned to the right, so
-            a narrow window may scroll the table but never hides an action. */}
-        <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
-          <thead className="sticky top-0 z-20 bg-card">
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="w-[240px] px-4 py-2.5 font-medium">名称</th>
-              <th className="w-[120px] px-3 py-2.5 font-medium">类型</th>
-              <th className="w-[64px] px-3 py-2.5 font-medium">归属</th>
-              <th className="w-[84px] px-3 py-2.5 font-medium">状态</th>
-              <th className="px-3 py-2.5 font-medium">
+        <Table bare className="min-w-full border-collapse text-sm">
+          <TableHeader className="sticky top-0 z-20 bg-card">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-60 px-4 py-2.5">名称</TableHead>
+              <TableHead className="w-32">类型</TableHead>
+              <TableHead className="w-16">归属</TableHead>
+              <TableHead className="w-20">状态</TableHead>
+              <TableHead>
                 {view === "target" ? "目标绑定" : "版本 / 目标绑定"}
-              </th>
-              <th className="sticky right-0 w-[240px] border-l bg-card px-3 py-2.5 text-right font-medium">操作</th>
-            </tr>
-          </thead>
-          <tbody>
+              </TableHead>
+              <TableHead className="sticky right-0 w-60 border-l bg-card text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {visibleRows.map((resource) => {
               const versions = versionsByCredential[resource.id] ?? []
               const version = versions.find(
@@ -527,8 +524,8 @@ export function CredentialPanel({
                   })
                 : null
               return (
-              <tr key={resource.id} className="border-b border-border/60 align-top">
-                <td className="px-4 py-3">
+              <TableRow key={resource.id} className="align-top">
+                <TableCell className="px-4 py-3 align-top">
                   <div className="break-words font-medium text-foreground">{resource.name}</div>
                   {stage && (
                     <div className="mt-1 space-y-0.5">
@@ -545,26 +542,20 @@ export function CredentialPanel({
                       >
                         {stage.label}
                       </Badge>
-                      <div className="text-[11px] leading-snug text-muted-foreground">{stage.hint}</div>
+                      <div className="text-2xs leading-snug text-muted-foreground">{stage.hint}</div>
                     </div>
                   )}
-                </td>
-                <td className="px-3 py-3 text-xs text-foreground">{TYPE_LABELS[resource.type]}</td>
-                <td className="px-3 py-3 text-xs text-muted-foreground">
+                </TableCell>
+                <TableCell className="py-3 align-top text-xs text-foreground">{TYPE_LABELS[resource.type]}</TableCell>
+                <TableCell className="py-3 align-top text-xs text-muted-foreground">
                   {resource.scope === "platform" ? "平台" : "个人"}
-                </td>
-                <td className="px-3 py-3">
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-xs ${
-                      resource.state === "active"
-                        ? "bg-success/15 text-success"
-                        : "bg-muted text-muted-foreground"
-                    }`}
-                  >
+                </TableCell>
+                <TableCell className="py-3 align-top">
+                  <Badge variant={resource.state === "active" ? "success" : "default"}>
                     {stateLabel(resource.state)}
-                  </span>
-                </td>
-                <td className="min-w-0 break-words px-3 py-3 text-xs text-muted-foreground">
+                  </Badge>
+                </TableCell>
+                <TableCell className="min-w-0 break-words py-3 align-top text-xs text-muted-foreground">
                   {view === "target" ? (
                     <div className="flex flex-col gap-2">
                       <BindingSummary
@@ -607,8 +598,8 @@ export function CredentialPanel({
                       />
                     </div>
                   )}
-                </td>
-                <td className="sticky right-0 z-10 border-l border-border/60 bg-background px-3 py-3">
+                </TableCell>
+                <TableCell className="sticky right-0 z-10 border-l border-border/60 bg-background py-3 align-top">
                   <div className="flex flex-wrap justify-end gap-1.5 [&>button]:whitespace-nowrap">
                     <Button size="sm" onClick={() => setAction({ kind: "version", credential: resource, version })}>详情</Button>
                     {target && view === "managed" && resource.state === "active" && canImportFromSecret(resource.type) && (
@@ -679,13 +670,13 @@ export function CredentialPanel({
                       </>
                     )}
                   </div>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
               )
             })}
             {!visibleRows.length && !loading && (
-              <tr>
-                <td colSpan={6} className="px-4 py-14 text-center text-sm text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="px-4 py-14 text-center text-sm text-muted-foreground">
                   {error ? (
                     "凭据加载失败，请查看错误并刷新"
                   ) : typeFilter !== "all" ? (
@@ -718,11 +709,11 @@ export function CredentialPanel({
                   ) : (
                     "当前账号没有可管理的凭据"
                   )}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {action?.kind === "payload" && (
@@ -979,7 +970,7 @@ function BindingSummary({
             </Badge>
             {binding.scope.use && <span>{USE_LABELS[binding.scope.use]}</span>}
             {binding.scope.namespace && bindingNeedsExplicitNamespace(binding.scope.use) && (
-              <span className="font-mono text-[11px]">ns:{binding.scope.namespace}</span>
+              <span className="font-mono text-2xs">ns:{binding.scope.namespace}</span>
             )}
             {binding.state === "active" && !disabled && version?.state === "staged" && (
               <Button
@@ -1381,7 +1372,7 @@ function PayloadDialog({
                 onChange={setBaseURL}
                 placeholder={activePreset.baseURLPlaceholder}
               />
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-2xs text-muted-foreground">
                 留空使用服务商默认接口；如使用兼容代理或自定义端点请填写完整 https:// 地址，高级字段（如 image_model）可切换高级 JSON。
               </p>
             </div>
@@ -1701,7 +1692,7 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
       {label}
-      <div className="input break-all text-sm text-foreground">{value}</div>
+      <div className="min-h-9 rounded-md border border-input bg-muted/40 px-3 py-2 break-all text-sm text-foreground">{value}</div>
     </div>
   )
 }

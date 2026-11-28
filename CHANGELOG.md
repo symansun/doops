@@ -6,6 +6,16 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [Unreleased]
+
+### Changed
+
+- 全站前端彻底框架化重构（标准 **shadcn/ui + Radix UI + Tailwind CSS v4 + TanStack Table v8**），消除手写 CSS 组件、任意 `px` 布局与硬编码色值：
+  - **框架底座与标准设计令牌**：新增标准 `components.json`，引入 `@radix-ui/react-{slot,select,label,checkbox,switch}` 与 `@tanstack/react-table`；`app/globals.css` 恢复 Tailwind v4 标准 `rem` 字号标尺（仅保留语义 `text-2xs`）并补齐 OKLCH `--sidebar-*` 令牌，移除 250+ 行手写 `.btn`/`.input`/`.segmented`/`.page-tab`/`.checkbox`/`.status-*` CSS 类；`app/console/console.css` 清除全部硬编码 hex 色值与手写侧栏样式，仅保留 `@agent-cloud/agent-ui` 作用域适配；
+  - **统一组件原语体系**：全面补齐 `Button`（CVA + `asChild`）、`Input`/`Textarea`/`Label`、`Checkbox`/`RadixCheckbox`/`Switch`、Radix `Select`（替代手算 `getBoundingClientRect` 像素定位并保持 `FormData` / AI 表单辅助兼容）、`Sheet`、`Sidebar`、`DataTable`、`PageHeader`/`PageSection`/`StatCard`/`FilterBar`/`EmptyState`、`Skeleton`、`PortalContainer`，并删除重复的 `components/ui/modal.tsx`；
+  - **官网公开门户全页重构（`/`、`/cases`、`/docs`、`/blog`）**：全站统一接入 `<PortalContainer>`、`<Button asChild>` 与 Radix `<Sheet>` 移动端抽屉，统一页头、首页、案例、文档侧栏+正文+目录、博客与页脚左右对齐基准，博客文章页补齐右侧吸顶目录，修复 `/blog` 与 `/docs` 在 `1024px` / `390px` 视口下的换行与横向溢出；
+  - **控制台与管理后台全页统一（`/console`、`/console/admin`）**：侧栏与移动端菜单升级为 `<Sidebar>` + Radix `<Sheet>`，修复控制台移动端顶栏折行与溢出；控制台终端/AI 分栏抽离为可键盘调节的 `<SplitResizeHandle>`；全站裸 `<table>`/`<select>`/`<textarea>`/非文件 `<input>` 与手写 `role="switch"` 全部清零，迁移至 `@/components/ui` 原语；核心台账、插件中心、资源监控与平台监控页面全面接入 `<PageHeader>`、`<FilterBar>`、`<EmptyState>`、`<Skeleton>`、Radix `<Switch>` 与 TanStack `<DataTable>`（支持列排序与分页），彻底清除全站任意 `[...px]`/`[...rem|em|%]` 与裸色阶/硬编码 hex，并收紧全站框架契约守卫测试防止回退。
+
 ## [0.3.78] — 2026-11-28
 
 ### Changed

@@ -77,6 +77,7 @@ import {
   PageTabs,
   Select,
   StatusBanner,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -1017,25 +1018,14 @@ function SkillPluginInputField({
       <div className="flex flex-col justify-between rounded-md border bg-muted/20 px-3 py-2 text-xs">
         <div className="flex items-center justify-between gap-2">
           <span className="font-medium text-foreground">{input.label}</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={checked}
+          <Switch
+            checked={checked}
             aria-label={input.label}
             disabled={disabled}
-            onClick={() => onChange(!checked)}
-            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
-              checked ? "border-primary bg-primary" : "border-border bg-muted"
-            }`}
-          >
-            <span
-              className={`inline-block size-3.5 rounded-full bg-background shadow transition-transform ${
-                checked ? "translate-x-4" : "translate-x-0.5"
-              }`}
-            />
-          </button>
+            onCheckedChange={(next) => onChange(next)}
+          />
         </div>
-        {input.description && <p className="mt-1 text-[11px] text-muted-foreground">{input.description}</p>}
+        {input.description && <p className="mt-1 text-2xs text-muted-foreground">{input.description}</p>}
       </div>
     )
   }
@@ -1057,7 +1047,7 @@ function SkillPluginInputField({
             </option>
           ))}
         </Select>
-        {input.description && <span className="block text-[11px] text-muted-foreground">{input.description}</span>}
+        {input.description && <span className="block text-2xs text-muted-foreground">{input.description}</span>}
       </label>
     )
   }
@@ -1083,7 +1073,7 @@ function SkillPluginInputField({
             </option>
           ))}
         </Select>
-        {input.description && <span className="block text-[11px] text-muted-foreground">{input.description}</span>}
+        {input.description && <span className="block text-2xs text-muted-foreground">{input.description}</span>}
       </label>
     )
   }
@@ -1105,7 +1095,7 @@ function SkillPluginInputField({
         disabled={disabled}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
       />
-      {input.description && <span className="block text-[11px] text-muted-foreground">{input.description}</span>}
+      {input.description && <span className="block text-2xs text-muted-foreground">{input.description}</span>}
     </label>
   )
 }
@@ -1177,7 +1167,7 @@ function SkillPluginViewBlock({
               <div key={kpi.key} className="rounded-lg border bg-card p-3">
                 <div className="flex items-center justify-between gap-1">
                   <span className="truncate text-xs text-muted-foreground">{kpi.label}</span>
-                  <Badge variant={tone} className="px-1.5 py-0 text-[10px]">
+                  <Badge variant={tone} className="px-1.5 py-0 text-2xs">
                     {tone === "danger" ? "严重" : tone === "warning" ? "告警" : "正常"}
                   </Badge>
                 </div>
@@ -1261,7 +1251,7 @@ function SkillPluginViewBlock({
                     const pct = Math.max(2, Math.min(100, bar.ratio * 100))
                     return (
                       <div key={bar.label} className="space-y-0.5">
-                        <div className="flex items-center justify-between text-[11px]">
+                        <div className="flex items-center justify-between text-2xs">
                           <span className="truncate text-muted-foreground">{bar.label}</span>
                           <span className="font-mono font-medium tabular-nums text-foreground">
                             {formatChartValue(bar.value, chart.unit)}
@@ -1430,7 +1420,7 @@ function SkillPluginTrendSection({
                     {geom.areaPath && <path d={geom.areaPath} fill="currentColor" fillOpacity={0.12} />}
                     {geom.path && <path d={geom.path} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" />}
                   </svg>
-                  <div className="flex justify-between font-mono text-[10px] text-muted-foreground">
+                  <div className="flex justify-between font-mono text-2xs text-muted-foreground">
                     <span>最低 {formatMetricValue(geom.min, s.unit)}</span>
                     <span>{s.points.length} 点</span>
                     <span>最高 {formatMetricValue(geom.max, s.unit)}</span>
@@ -1532,11 +1522,11 @@ function SkillPluginFindingsSection({
                       <Badge variant="outline">{f.priority}</Badge>
                       <span className="font-semibold text-foreground">{f.title}</span>
                     </div>
-                    <span className="font-mono text-[11px] text-muted-foreground">{f.id} · {f.root_cause}</span>
+                    <span className="font-mono text-2xs text-muted-foreground">{f.id} · {f.root_cause}</span>
                   </div>
                   <div className="mt-1.5 space-y-1 text-muted-foreground">
                     <div>资产：<code className="text-foreground">{f.asset}</code></div>
-                    <div>证据：<span className="font-mono text-[11px]">{f.evidence}</span></div>
+                    <div>证据：<span className="font-mono text-2xs">{f.evidence}</span></div>
                     <div>建议：<span className="text-foreground">{f.recommendation}</span></div>
                   </div>
                 </div>
@@ -1810,7 +1800,7 @@ function SkillPluginActionWorkbench({
               }}
             >
               {act.label}
-              <Badge variant="outline" className="ml-1 px-1 py-0 text-[10px]">{modeLabel(act.mode)}</Badge>
+              <Badge variant="outline" className="ml-1 px-1 py-0 text-2xs">{modeLabel(act.mode)}</Badge>
             </Button>
           ))}
         </div>
@@ -1852,7 +1842,7 @@ function SkillPluginActionWorkbench({
         {error && <StatusBanner tone="error">{error}</StatusBanner>}
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="font-mono text-[11px] text-muted-foreground">
+          <span className="font-mono text-2xs text-muted-foreground">
             目标：{target ? `${target.cluster}/${target.instance}` : "暂无在线目标"} · Skill：{activeAction?.skill || skillSlug}
           </span>
           <div className="flex flex-wrap items-center gap-2">

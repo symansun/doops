@@ -3,6 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, ArrowRight } from "lucide-react"
+import { Button } from "./ui"
 import {
   ServerIcon,
   TerminalIcon,
@@ -21,7 +22,7 @@ import {
 function ArrowFlow({ label }: { label?: string }) {
   return (
     <span aria-hidden className="flex flex-1 flex-col items-center gap-1 px-2 text-center font-mono text-2xs text-muted-foreground">
-      {label ? <span className="text-[10px] text-accent">{label}</span> : null}
+      {label ? <span className="text-2xs text-accent">{label}</span> : null}
       <span className="portal-pulse-line h-0.5 w-full rounded-full bg-border" />
     </span>
   )
@@ -40,11 +41,13 @@ function Cmd({ children }: { children: string }) {
       <pre className="overflow-x-auto px-3.5 py-3 pr-20 font-mono text-xs leading-relaxed text-foreground">
         {children}
       </pre>
-      <button
+      <Button
         type="button"
+        size="sm"
+        variant="outline"
         onClick={copy}
         aria-label="复制命令"
-        className="absolute right-2 top-2 flex cursor-pointer items-center gap-1 rounded-md border border-border/80 bg-card/90 px-2 py-1 text-2xs text-muted-foreground transition-colors hover:border-primary/45 hover:text-foreground"
+        className="absolute right-2 top-2 h-7 bg-card/90 px-2 text-2xs text-muted-foreground"
       >
         {copied ? (
           <>
@@ -55,7 +58,7 @@ function Cmd({ children }: { children: string }) {
             <CopyIcon width={12} height={12} /> 复制
           </>
         )}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -363,19 +366,17 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
           </p>
         </div>
         {onEnterConsole ? (
-          <button
-            type="button"
-            onClick={onEnterConsole}
-            className="btn btn-primary shrink-0"
-          >
+          <Button type="button" variant="primary" onClick={onEnterConsole} className="shrink-0">
             <RefreshIcon width={16} height={16} />
             刷新机器列表
-          </button>
+          </Button>
         ) : (
-          <Link href="/console" className="btn btn-primary shrink-0">
-            <ServerIcon width={16} height={16} />
-            进入控制台
-          </Link>
+          <Button asChild variant="primary" className="shrink-0">
+            <Link href="/console">
+              <ServerIcon width={16} height={16} />
+              进入控制台
+            </Link>
+          </Button>
         )}
       </div>
     </div>
@@ -385,7 +386,7 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
 // 公开文档页：位于 app/docs/layout.tsx 之内，复用统一侧栏与页头页脚
 export function DeployGuide() {
   return (
-    <div className="min-w-0 max-w-4xl">
+    <div className="min-w-0">
       <nav
         aria-label="面包屑导航"
         className="mb-5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"

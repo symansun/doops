@@ -1,10 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { assetRequest } from "@/lib/assets"
 import { assetKinds } from "@/lib/console-views"
 import type { Target } from "@/lib/client"
-import { Badge, Button, Input, Select, StatusBanner } from "./ui"
+import { Badge, Button, DataTable, DataTableColumnHeader, EmptyState, FilterBar, Input, PageHeader, Select, Skeleton, StatusBanner, type ColumnDef } from "./ui"
 
 export type ResourceKind = "database" | "website" | "image"
 export type CatalogRow = {
@@ -116,52 +116,132 @@ export function ResourceCatalogPanel({
     }
   }
 
-  const visible = rows?.filter((r) =>
-    [r.name, r.environment, r.cluster, r.instance, resourceAddress(r)]
-      .join(" ")
-      .toLowerCase()
-      .includes(query.trim().toLowerCase()),
+  const visible = useMemo(
+    () =>
+      rows?.filter((r) =>
+        [r.name, r.environment, r.cluster, r.instance, resourceAddress(r)]
+          .join(" ")
+          .toLowerCase()
+          .includes(query.trim().toLowerCase()),
+      ) ?? [],
+    [rows, query],
   )
 
   const actionLabel =
     kind === "database" ? "打开数据库操作" : kind === "website" ? "打开站点操作" : "打开镜像操作"
 
+  const columns = useMemo<ColumnDef<CatalogRow, unknown>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="名称 / 环境" />,
+        cell: ({ row }) => (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-medium text-foreground">{row.original.name}</span>
+            {row.original.environment && <Badge variant="outline">{row.original.environment}</Badge>}
+          </div>
+        ),
+      },
+      {
+        id: "address",
+        accessorFn: (r) => resourceAddress(r),
+        header: ({ column }) => <DataTableColumnHeader column={column} title="连接位置" />,
+        cell: ({ row }) => <span className="break-all font-mono text-xs">{resourceAddress(row.original)}</span>,
+      },
+      {
+        id: "agent",
+        accessorFn: (r) => (r.cluster ? `${r.cluster}/${r.instance}` : ""),
+        header: ({ column }) => <DataTableColumnHeader column={column} title="归属 Agent" />,
+        cell: ({ row }) => {
+          const r = row.original
+          const target = targets.find(
+            (t) => t.cluster === r.cluster && t.instance === r.instance && t.status !== "offline",
+          )
+          return (
+            <Badge variant={r.cluster ? (target ? "success" : "warning") : "default"}>
+              {r.cluster ? `${r.cluster}/${r.instance}${target ? " · 在线" : " · 离线"}` : "待接入"}
+            </Badge>
+          )
+        },
+      },
+      {
+        id: "actions",
+        header: () => <span className="block text-right">操作</span>,
+        enableSorting: false,
+        cell: ({ row }) => {
+          const r = row.original
+          const target = targets.find(
+            (t) => t.cluster === r.cluster && t.instance === r.instance && t.status !== "offline",
+          )
+          return (
+            <div className="flex flex-wrap justify-end gap-1.5">
+              <Button size="sm" variant="primary" disabled={!target || busy} onClick={() => target && onOperate(r, target)}>
+                {actionLabel}
+              </Button>
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => {
+                  edit({ ...r, details: { ...r.details } })
+                  setRemove(null)
+                }}
+              >
+                编辑
+              </Button>
+              <Button
+                size="sm"
+                variant="danger-outline"
+                disabled={busy}
+                onClick={() => {
+                  edit(null)
+                  setRemove(r)
+                }}
+              >
+                移出台账
+              </Button>
+            </div>
+          )
+        },
+      },
+    ],
+    [actionLabel, busy, onOperate, targets],
+  )
+
   return (
     <main className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">{label}台账</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            统一登记资产位置与归属 Agent；已选定在线目标时也可直接进入该节点的实时操作面板。
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {onlineSelected && onOpenTargetTool && (
+      <PageHeader
+        title={`${label}台账`}
+        badge={rows ? <Badge variant="outline" className="font-mono">{rows.length}</Badge> : undefined}
+        description="统一登记资产位置与归属 Agent；已选定在线目标时也可直接进入该节点的实时操作面板。"
+        actions={
+          <>
+            {onlineSelected && onOpenTargetTool && (
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => onOpenTargetTool(onlineSelected)}
+                title={`无需预先登记台账，直接进入 ${onlineSelected.cluster}/${onlineSelected.instance} 的${label}操作面板`}
+              >
+                直接操作当前目标（{onlineSelected.instance}）
+              </Button>
+            )}
+            <Button size="sm" onClick={() => refresh((n) => n + 1)} disabled={busy}>
+              刷新
+            </Button>
             <Button
               size="sm"
-              disabled={busy}
-              onClick={() => onOpenTargetTool(onlineSelected)}
-              title={`无需预先登记台账，直接进入 ${onlineSelected.cluster}/${onlineSelected.instance} 的${label}操作面板`}
+              variant="primary"
+              disabled={!rows || busy}
+              onClick={() => {
+                edit(fresh())
+                setRemove(null)
+              }}
             >
-              直接操作当前目标（{onlineSelected.instance}）
+              登记{label}
             </Button>
-          )}
-          <Button size="sm" onClick={() => refresh((n) => n + 1)} disabled={busy}>
-            刷新
-          </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={!rows || busy}
-            onClick={() => {
-              edit(fresh())
-              setRemove(null)
-            }}
-          >
-            登记{label}
-          </Button>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {error && <StatusBanner tone="error">{error}</StatusBanner>}
 
@@ -284,70 +364,45 @@ export function ResourceCatalogPanel({
         </div>
       )}
 
-      <Input
-        type="search"
-        aria-label="搜索资产"
-        placeholder={
-          kind === "database"
-            ? "搜索实例、引擎或库名"
-            : kind === "website"
-              ? "搜索名称或域名"
-              : "搜索仓库、镜像名或版本"
-        }
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-      />
+      <FilterBar>
+        <Input
+          type="search"
+          scale="sm"
+          className="w-full sm:max-w-sm"
+          aria-label="搜索资产"
+          placeholder={
+            kind === "database"
+              ? "搜索实例、引擎或库名"
+              : kind === "website"
+                ? "搜索名称或域名"
+                : "搜索仓库、镜像名或版本"
+          }
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </FilterBar>
 
-      {!rows && !error && <p role="status" className="text-sm text-muted-foreground">正在读取台账…</p>}
-      {visible?.length === 0 && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {query ? "没有匹配的资产。" : "尚未登记可见的" + label + "。"}
-        </p>
-      )}
-
-      {visible?.map((row) => {
-        const target = targets.find(
-          (t) => t.cluster === row.cluster && t.instance === row.instance && t.status !== "offline",
-        )
-        return (
-          <article className="card-surface space-y-2 p-4" key={row.id}>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-semibold">{row.name}</h2>
-              {row.environment && <Badge variant="outline">{row.environment}</Badge>}
-              <Badge variant={row.cluster ? (target ? "success" : "warning") : "default"}>
-                {row.cluster ? `${row.cluster}/${row.instance}${target ? " · 在线" : " · 离线"}` : "待接入"}
-              </Badge>
-            </div>
-            <p className="break-all font-mono text-sm">{resourceAddress(row)}</p>
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="primary" disabled={!target || busy} onClick={() => target && onOperate(row, target)}>
-                {actionLabel}
-              </Button>
-              <Button
-                size="sm"
-                disabled={busy}
-                onClick={() => {
-                  edit({ ...row, details: { ...row.details } })
-                  setRemove(null)
-                }}
-              >
-                编辑
-              </Button>
-              <Button
-                size="sm"
-                variant="danger-outline"
-                disabled={busy}
-                onClick={() => {
-                  edit(null)
-                  setRemove(row)
-                }}
-              >
-                移出台账
-              </Button>
-            </div>
-          </article>
-        )
-      })}
+      {!rows && !error ? (
+        <div role="status" className="space-y-2">
+          <span className="sr-only">正在读取台账…</span>
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-36 w-full" />
+        </div>
+      ) : rows && visible.length === 0 ? (
+        <EmptyState
+          role="status"
+          title={query ? "没有匹配的资产。" : `尚未登记可见的${label}。`}
+          action={query ? <Button size="sm" onClick={() => setQuery("")}>清空筛选</Button> : undefined}
+        />
+      ) : rows ? (
+        <DataTable
+          columns={columns}
+          data={visible}
+          getRowId={(r) => r.id}
+          paginate={visible.length > 20}
+          initialPageSize={20}
+        />
+      ) : null}
     </main>
   )
 }

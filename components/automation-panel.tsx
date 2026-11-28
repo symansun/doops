@@ -13,7 +13,7 @@ import { listBackgroundTasks } from "@/lib/background-tasks"
 import { fetchMonitorSchedules } from "@/lib/monitor-engine"
 import { BackgroundTasksPanel } from "./background-tasks-panel"
 import { MonitorTaskWorkspace } from "./monitor-task-workspace"
-import { Badge, Button, Card, CardContent, Inline, PageTabs, Stack } from "./ui"
+import { Badge, Button, Card, CardContent, Inline, PageHeader, PageTabs, Stack } from "./ui"
 
 export type AutomationTab = AutomationSubTab
 
@@ -122,10 +122,10 @@ export function AutomationPanel({
 
   return (
     <section aria-label="自动化" className="space-y-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-foreground">自动化</h1>
+      <PageHeader
+        title="自动化"
+        badge={
+          <>
             <Badge variant={isAdmin ? "primary" : "outline"}>
               {isAdmin ? "全局权限" : "本人授权范围"}
             </Badge>
@@ -135,17 +135,21 @@ export function AutomationPanel({
                 {selectedTarget.status === "offline" ? " · 离线" : ""}
               </Badge>
             )}
-          </div>
-          <p className="text-sm text-muted-foreground">
+          </>
+        }
+        description={
+          <>
             统一管理定时任务与 Skill 巡检、查看全部执行记录与报告，并托管当前目标的一次性后台命令（<code className="font-mono text-xs">exec --bg</code>）。
-          </p>
-        </div>
-        {onOpenSkills && (
-          <Button size="sm" variant="ghost" onClick={onOpenSkills}>
-            Skill 管理
-          </Button>
-        )}
-      </header>
+          </>
+        }
+        actions={
+          onOpenSkills ? (
+            <Button size="sm" variant="ghost" onClick={onOpenSkills}>
+              Skill 管理
+            </Button>
+          ) : undefined
+        }
+      />
 
       <PageTabs
         ariaLabel="自动化视图"

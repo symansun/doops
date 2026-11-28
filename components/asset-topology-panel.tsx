@@ -98,24 +98,24 @@ function Topology3DView({
       {
         key: "top" as const,
         title: "L3 · 业务系统与访问入口层",
-        accent: "border-cyan-400/35 bg-cyan-950/20",
-        labelColor: "text-cyan-300",
+        accent: "border-accent/35 bg-accent/10",
+        labelColor: "text-accent",
         z: 34,
         nodes: grouped.top,
       },
       {
         key: "mid" as const,
         title: "L2 · 应用服务、工作负载、Pod 与数据库运行层",
-        accent: "border-blue-400/35 bg-blue-950/20",
-        labelColor: "text-blue-300",
+        accent: "border-primary/35 bg-primary/10",
+        labelColor: "text-primary",
         z: 18,
         nodes: grouped.mid,
       },
       {
         key: "bottom" as const,
         title: "L1 · Kubernetes 集群、Node 与物理机/虚机承载层",
-        accent: "border-emerald-400/35 bg-emerald-950/20",
-        labelColor: "text-emerald-300",
+        accent: "border-success/35 bg-success/10",
+        labelColor: "text-success",
         z: 0,
         nodes: grouped.bottom,
       },
@@ -209,7 +209,7 @@ function Topology3DView({
                         onMouseLeave={() => setHoveredId("")}
                         onClick={() => choose(n.id)}
                         aria-pressed={isSelected}
-                        className={`doops-3d-node min-w-[140px] max-w-[230px] rounded-lg border px-3 py-2 text-left text-xs ${
+                        className={`doops-3d-node min-w-36 max-w-56 rounded-lg border px-3 py-2 text-left text-xs ${
                           isSelected
                             ? "border-accent bg-primary/20 doops-3d-node-active"
                             : isRelated
@@ -234,7 +234,7 @@ function Topology3DView({
                   {[0, 1, 2, 3].map((b) => (
                     <div
                       key={b}
-                      className="doops-beam-pulse h-4 w-0.5 rounded-full bg-gradient-to-b from-cyan-400/55 via-blue-400/35 to-emerald-400/55"
+                      className="doops-beam-pulse h-4 w-0.5 rounded-full bg-gradient-to-b from-accent/55 via-primary/35 to-success/55"
                     />
                   ))}
                 </div>

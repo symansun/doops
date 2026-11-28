@@ -46,14 +46,14 @@ export function AgentRunOutput({
       )}
       {shellBlocks.length > 0 && onFillTerminal && (
         <div className="space-y-1.5 rounded-md border bg-muted/20 p-2.5">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+          <div className="flex items-center gap-1.5 text-2xs font-medium text-muted-foreground">
             <Terminal className="size-3.5 text-primary" aria-hidden="true" />
             <span>终端联动命令（点击仅预填至交互终端，按回车确认执行）</span>
           </div>
           <div className="space-y-1.5">
             {shellBlocks.map((block, idx) => (
               <div key={`${idx}-${block.command.slice(0, 32)}`} className="flex items-start justify-between gap-2 rounded border bg-background/80 px-2.5 py-1.5">
-                <code className="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">{block.command}</code>
+                <code className="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono text-2xs text-foreground">{block.command}</code>
                 <Button
                   type="button"
                   size="sm"

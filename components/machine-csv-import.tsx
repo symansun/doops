@@ -5,7 +5,7 @@ import { MachineTextFields } from "./machine-text-fields"
 import { machineTextPlan, type MachineKind, type TextInventoryMachine } from "@/lib/machine-text-import"
 import { assetRequest } from "@/lib/assets"
 import { consoleFetch } from "@/lib/network-error"
-import { Button, Input, Select } from "./ui"
+import { Button, Input, Select, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
 
 const metadata = "machine_metadata"
 const withLogins = "machine_and_credentials"
@@ -121,8 +121,16 @@ export function MachineCsvImport({ machines, machine, textMode = false, onClose,
 
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{machine ? `添加登录凭据 · ${machine.name}` : textMode ? "文本导入" : "机器导入"}</h3>
-      {!machine && !textMode && scope && <a className="btn btn-sm" download={loginMode ? "machine-logins.csv" : "machine-assets.csv"}
-        href={`data:text/csv;charset=utf-8,${encodeURIComponent((loginMode ? "asset_id,username,password" : header) + "\r\n")}`}>下载 CSV 模板</a>}
+      {!machine && !textMode && scope && (
+        <Button asChild size="sm">
+          <a
+            download={loginMode ? "machine-logins.csv" : "machine-assets.csv"}
+            href={`data:text/csv;charset=utf-8,${encodeURIComponent((loginMode ? "asset_id,username,password" : header) + "\r\n")}`}
+          >
+            下载 CSV 模板
+          </a>
+        </Button>
+      )}
     </div>
     {plan ? <MachineTextFields source={source} onSource={value=>{setSource(value); resetResult()}} plan={plan} busy={!!busy}
       kind={kind} onKind={value=>{setKind(value); resetResult()}} saveLogins={loginMode} onSaveLogins={value=>{setScope(value ? withLogins : metadata); resetResult()}} /> : machine ? <div className="grid max-w-xl gap-3 sm:grid-cols-2">
@@ -138,7 +146,7 @@ export function MachineCsvImport({ machines, machine, textMode = false, onClose,
       {loginMode && <p className="text-xs text-muted-foreground">已有机器可用资产编号、账号、密码三列补录。Excel 也可用管理 IP 匹配已有机器。新增机器的 CSV 还需填写 name、kind。</p>}
     </>}
     {skipped.length > 0 && <details className="text-sm"><summary>Excel 中有 {skipped.length} 个未匹配的源行，将跳过</summary><p className="break-words">行号 {skipped.join("、")}</p></details>}
-    {error && <p role="alert" className="status-error">{error}</p>}
+    {error && <StatusBanner tone="error">{error}</StatusBanner>}
     {receipt && credentials && <div className="space-y-2"><div role="status" className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
       <h4 className="font-semibold">{receipt.action === "preview" ? "导入预览" : "导入结果"}</h4>
       {receipt.result.scope === withLogins ? <span>机器{receipt.action === "preview" ? "可新增" : "已新增"} {changed.size} 台 · 已登记 {existingMachines.size} 台 · 行错误 {counts.error}</span>
@@ -146,9 +154,10 @@ export function MachineCsvImport({ machines, machine, textMode = false, onClose,
       {receipt.result.scope === withLogins ? <span>{receipt.action === "preview" ? `待保存登录凭据 ${credentials.expected}` : `已保存登录凭据 ${credentials.saved}`} 条 · 已有 {credentials.existing} 条</span> : <span>本批保存登录凭据 0 条</span>}
       <span className="break-all font-mono text-xs text-muted-foreground">批次号 {receipt.result.batch_id}</span>
     </div>
-    <div className="max-h-72 overflow-auto rounded-md border"><table className="w-full text-left text-sm"><thead className="bg-muted"><tr>{[receipt.sourceLines ? "文本行号" : "导入行号","资产编号","机器状态",...(receipt.result.scope === withLogins ? ["凭据状态"] : []),"说明"].map(label=><th key={label} scope="col" className="px-3 py-2">{label}</th>)}</tr></thead>
-      <tbody>{rows.map(row=><tr key={row.line} className="border-t"><td className="px-3 py-2">{receipt.sourceLines?.[row.line - 2] ?? row.line}</td><td className="px-3 py-2 font-mono">{row.asset_id || "—"}</td><td className="px-3 py-2">{statusLabel[row.status]}</td>{receipt.result.scope === withLogins && <td className="px-3 py-2">{loginStatusLabel[row.credential_status ?? ""] ?? "—"}</td>}<td className="px-3 py-2">{loginErrorLabel[row.code] ?? row.message}</td></tr>)}</tbody>
-    </table></div></div>}
+    <Table wrapperClassName="max-h-72 overflow-auto rounded-md border">
+      <TableHeader className="bg-muted"><TableRow className="hover:bg-transparent">{[receipt.sourceLines ? "文本行号" : "导入行号","资产编号","机器状态",...(receipt.result.scope === withLogins ? ["凭据状态"] : []),"说明"].map(label=><TableHead key={label}>{label}</TableHead>)}</TableRow></TableHeader>
+      <TableBody>{rows.map(row=><TableRow key={row.line}><TableCell>{receipt.sourceLines?.[row.line - 2] ?? row.line}</TableCell><TableCell className="font-mono">{row.asset_id || "—"}</TableCell><TableCell>{statusLabel[row.status]}</TableCell>{receipt.result.scope === withLogins && <TableCell>{loginStatusLabel[row.credential_status ?? ""] ?? "—"}</TableCell>}<TableCell>{loginErrorLabel[row.code] ?? row.message}</TableCell></TableRow>)}</TableBody>
+    </Table></div>}
     <div className="flex flex-wrap gap-2"><Button size="sm" disabled={!!busy || !scope || (textMode ? !plan?.csv : !machine && !file)} onClick={() => void run("preview")}>{busy === "preview" ? "正在预览…" : textMode ? "预览导入" : loginMode ? "预览导入" : receipt || error ? "重新预览" : "预览 CSV"}</Button>
       {receipt?.action === "preview" && <Button size="sm" variant="primary" disabled={!!busy || !pending} onClick={() => void run("import")}>{loginMode ? "确认保存凭据" : `仅导入可新增的 ${counts.new} 行`}</Button>}
       <Button size="sm" variant="ghost" disabled={!!busy} onClick={onClose}>{machine ? "返回机器详情" : "返回台账"}</Button></div>

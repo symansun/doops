@@ -3,6 +3,7 @@ import Link from "next/link"
 import { notFound } from "next/navigation"
 
 import { BlogCover, BlogMarkdown } from "@/components/blog-markdown"
+import { DocsToc } from "@/components/docs-shell"
 import {
   BLOG_LANGS,
   BLOG_LANG_LABELS,
@@ -12,6 +13,7 @@ import {
   isBlogLang,
   listPosts,
 } from "@/lib/blog"
+import { extractMarkdownToc } from "@/lib/markdown-render"
 
 type SlugPageProps = { params: Promise<{ lang: string; slug: string }> }
 
@@ -47,59 +49,64 @@ export default async function BlogPostPage({ params }: SlugPageProps) {
   if (!post) notFound()
 
   const ui = BLOG_UI[lang]
+  const toc = extractMarkdownToc(post.body).filter((item) => item.level >= 2 && item.level <= 3)
 
   return (
-    <article>
-      <Link
-        href={`/blog/${lang}`}
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        ← {ui.backToAll}
-      </Link>
+    <div className="flex items-start justify-between gap-10">
+      <article className="min-w-0 max-w-4xl flex-1">
+        <Link
+          href={`/blog/${lang}`}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          ← {ui.backToAll}
+        </Link>
 
-      <header className="mt-6 border-b border-border/40 pb-8">
-        {post.series ? (
-          <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-2xs font-medium text-primary ring-1 ring-inset ring-primary/20">
-            {post.series}
-          </span>
-        ) : null}
-        <h1 className="mt-4 text-balance text-3xl leading-[1.15] font-semibold tracking-tight sm:text-[2.6rem]">
-          {post.title}
-        </h1>
-        {post.subtitle ? (
-          <p className="mt-3 text-base leading-relaxed text-muted-foreground">{post.subtitle}</p>
-        ) : null}
-        <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          {post.date ? <time dateTime={post.date}>{formatBlogDate(post.date, lang)}</time> : null}
-          <span aria-hidden="true">·</span>
-          <span>{BLOG_LANG_LABELS[lang]}</span>
-          <span aria-hidden="true">·</span>
-          <span>
-            {post.readingMinutes} {ui.minutes}
-          </span>
+        <header className="mt-6 border-b border-border/40 pb-8">
+          {post.series ? (
+            <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-2xs font-medium text-primary ring-1 ring-inset ring-primary/20">
+              {post.series}
+            </span>
+          ) : null}
+          <h1 className="mt-4 text-balance text-3xl leading-tight font-semibold tracking-tight sm:text-4xl">
+            {post.title}
+          </h1>
+          {post.subtitle ? (
+            <p className="mt-3 text-base leading-relaxed text-muted-foreground">{post.subtitle}</p>
+          ) : null}
+          <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            {post.date ? <time dateTime={post.date}>{formatBlogDate(post.date, lang)}</time> : null}
+            <span aria-hidden="true">·</span>
+            <span>{BLOG_LANG_LABELS[lang]}</span>
+            <span aria-hidden="true">·</span>
+            <span>
+              {post.readingMinutes} {ui.minutes}
+            </span>
+          </div>
+          {post.tags.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {post.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-md border border-border/60 px-1.5 py-0.5 text-2xs text-muted-foreground"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {post.cover ? (
+            <div className="mt-8 overflow-hidden rounded-2xl ring-1 ring-border/60">
+              <BlogCover src={post.cover} alt={post.title} />
+            </div>
+          ) : null}
+        </header>
+
+        <div className="pt-8">
+          <BlogMarkdown content={post.body} />
         </div>
-        {post.tags.length > 0 ? (
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {post.tags.map((tag) => (
-              <span
-                key={tag}
-                className="rounded-md border border-border/60 px-1.5 py-0.5 text-2xs text-muted-foreground"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        ) : null}
-        {post.cover ? (
-          <div className="mt-8 overflow-hidden rounded-2xl ring-1 ring-border/60">
-            <BlogCover src={post.cover} alt={post.title} />
-          </div>
-        ) : null}
-      </header>
+      </article>
 
-      <div className="pt-8">
-        <BlogMarkdown content={post.body} />
-      </div>
-    </article>
+      <DocsToc items={toc} />
+    </div>
   )
 }

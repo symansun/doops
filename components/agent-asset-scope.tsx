@@ -7,7 +7,7 @@ import type { TargetRef } from "@/lib/console-refresh"
 import { filterWorkspaceAssets, resourceKindLabel, type WorkspaceAssetRow } from "@/lib/target-manifest"
 import { AgentPicker } from "./agent-picker"
 import { TargetManifestCard } from "./target-manifest-card"
-import { Button, Input, SegmentedControl, Select, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
+import { Button, EmptyState, Input, PageHeader, SegmentedControl, Select, Skeleton, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
 
 type ScopeTab = "manifest" | "workspace"
 
@@ -113,11 +113,11 @@ export function WorkspaceScopeSection({ target, manage, allowManageToggle = fals
       ) : (
         <Table>
           <TableHeader>
-            <tr>
+            <TableRow className="hover:bg-transparent">
               {["类型", "名称 / 编号", "管理地址", "范围来源", ...(effectiveManage ? ["调整范围"] : [])].map(label => (
                 <TableHead key={label}>{label}</TableHead>
               ))}
-            </tr>
+            </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.map(row => (
@@ -206,21 +206,35 @@ export function AgentDirectory({ targets, error, loading, isAdmin, onRefresh, on
   onDeploy: () => void
 }) {
   return <section className="space-y-4 overflow-auto p-4">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <h1 className="text-xl font-semibold">选择 Agent</h1>
-      <div className="flex gap-2">
-        <Button size="sm" disabled={loading} onClick={onRefresh}>刷新列表</Button>
-        {isAdmin && <Button size="sm" onClick={onDeploy}>接入 Agent</Button>}
-      </div>
-    </div>
-    {error && <p role="alert" className="status-error">{error}</p>}
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{targets.map(target => (
-      <button key={target.key} className="card-surface space-y-2 p-4 text-left hover:border-primary" onClick={() => onEnter(target)}>
-        <span className="block break-all font-semibold">{target.key}</span>
-        <span className="text-sm text-muted-foreground">{target.status === "offline" ? "离线 · 查看资产与历史指标" : "在线 · 进入工作区"}</span>
-      </button>
-    ))}</div>
-    {!targets.length && !error && <p role="status">{loading ? "正在读取 Agent…" : "当前账号暂无可见 Agent。"}</p>}
+    <PageHeader
+      title="选择 Agent"
+      actions={
+        <>
+          <Button size="sm" disabled={loading} onClick={onRefresh}>刷新列表</Button>
+          {isAdmin && <Button size="sm" variant="primary" onClick={onDeploy}>接入 Agent</Button>}
+        </>
+      }
+    />
+    {error && <StatusBanner tone="error">{error}</StatusBanner>}
+    {targets.length > 0 ? (
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{targets.map(target => (
+        <button key={target.key} type="button" className="card-surface space-y-2 p-4 text-left hover:border-primary" onClick={() => onEnter(target)}>
+          <span className="block break-all font-semibold">{target.key}</span>
+          <span className="text-sm text-muted-foreground">{target.status === "offline" ? "离线 · 查看资产与历史指标" : "在线 · 进入工作区"}</span>
+        </button>
+      ))}</div>
+    ) : !error ? (
+      loading ? (
+        <div role="status" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <span className="sr-only">正在读取 Agent…</span>
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : (
+        <EmptyState role="status" title="当前账号暂无可见 Agent。" action={isAdmin ? <Button size="sm" variant="primary" onClick={onDeploy}>接入 Agent</Button> : undefined} />
+      )
+    ) : null}
   </section>
 }
 
@@ -228,7 +242,7 @@ export function PlatformAssetScope({ targets, loading, error }: { targets: Targe
   return <div className="space-y-4">
     <h2 className="text-lg font-semibold">Agent管理</h2>
     <p className="text-sm text-muted-foreground">跨 Agent 集中分配机器、集群或业务系统（单目标就地调整与实时发现资源对账请前往「目标运维 → Agent 概览」）。同一资产可分配给多个 Agent；台账直接关联由对应资产详情维护。</p>
-    {error ? <p role="alert" className="status-error">{error}</p> : targets.length ? (
+    {error ? <StatusBanner tone="error">{error}</StatusBanner> : targets.length ? (
       <AgentPicker targets={targets} label="目标 Agent">{target => <WorkspaceScopeSection target={target} manage />}</AgentPicker>
     ) : <p role="status">{loading ? "正在读取 Agent…" : "平台尚未登记 Agent。"}</p>}
   </div>

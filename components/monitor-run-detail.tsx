@@ -277,23 +277,23 @@ export function MonitorRunDetailView({
 
               {run.summary && <p className="text-sm font-medium text-foreground">{run.summary}</p>}
               <Inline gap={2} wrap>
-                <div className="min-w-[112px] flex-1 rounded-md border bg-background/60 p-2.5">
+                <div className="min-w-28 flex-1 rounded-md border bg-background/60 p-2.5">
                   <div className="text-2xs text-muted-foreground">目标 / 产物数</div>
                   <div className="font-mono text-base font-semibold">{run.total_targets} / {run.total_assets}</div>
                 </div>
-                <div className="min-w-[112px] flex-1 rounded-md border bg-background/60 p-2.5">
+                <div className="min-w-28 flex-1 rounded-md border bg-background/60 p-2.5">
                   <div className="text-2xs text-muted-foreground">通过</div>
                   <div className="font-mono text-base font-semibold text-success">{run.passed_checks}</div>
                 </div>
-                <div className="min-w-[112px] flex-1 rounded-md border bg-background/60 p-2.5">
+                <div className="min-w-28 flex-1 rounded-md border bg-background/60 p-2.5">
                   <div className="text-2xs text-muted-foreground">告警</div>
                   <div className="font-mono text-base font-semibold text-warning">{run.warning_checks}</div>
                 </div>
-                <div className="min-w-[112px] flex-1 rounded-md border bg-background/60 p-2.5">
+                <div className="min-w-28 flex-1 rounded-md border bg-background/60 p-2.5">
                   <div className="text-2xs text-muted-foreground">严重 / 失败</div>
                   <div className="font-mono text-base font-semibold text-destructive">{run.failed_checks}</div>
                 </div>
-                <div className="min-w-[112px] flex-1 rounded-md border bg-background/60 p-2.5">
+                <div className="min-w-28 flex-1 rounded-md border bg-background/60 p-2.5">
                   <div className="text-2xs text-muted-foreground">离线 / 跳过</div>
                   <div className="font-mono text-base font-semibold">{run.offline_targets} / {run.skipped_checks}</div>
                 </div>

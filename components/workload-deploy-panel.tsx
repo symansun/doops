@@ -154,7 +154,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
             }}
           />}
         </div>
-        <div className="flex h-[36rem] min-w-0 flex-col lg:h-auto lg:min-h-0">
+        <div className="flex h-144 min-w-0 flex-col lg:h-auto lg:min-h-0">
           <div className="flex shrink-0 items-center justify-between border-b px-4 py-2">
             <div className="min-w-0">
               <h3 className="text-sm font-medium">执行过程</h3>

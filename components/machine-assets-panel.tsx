@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { assetRequest } from "@/lib/assets"
-import { Badge, Button, Checkbox, Input, SegmentedControl, Select, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
+import { Badge, Button, Checkbox, EmptyState, FilterBar, Input, PageHeader, SegmentedControl, Select, Skeleton, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
 import { MachineDiagnosticPanel } from "./machine-diagnostic-panel"
 import { inspectionKey } from "@/lib/machine-inspection"
 import { formatMachineCreatedDate, formatMachineCreatedDetail, resolveMachineCreatedAtPayload, toMachineDateInput } from "@/lib/machine-created-at"
@@ -142,43 +142,48 @@ function Inventory({ session, targets, directory, initialPage, renderTargetActio
 
   return (
     <section aria-label="机器台账" className="card-surface min-w-0 space-y-4 p-4">
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-xl font-semibold">机器台账{machines ? ` (${machines.length})` : ""}</h2>
-        {admin && screen.page === "create" && <Button size="sm" onClick={() => setScreen({ page: "text" })}>文本导入</Button>}
-        {screen.page === "list" && <div className="flex flex-wrap gap-2">
-          {onOpenInspection && <Button size="sm" variant="ghost" onClick={onOpenInspection}>前往智能巡检</Button>}
-          <Button
-            size="sm"
-            variant={batchDiscoveryOpen ? "primary" : "default"}
-            disabled={!filtered.length || inspection.running}
-            onClick={() => setBatchDiscoveryOpen((open) => !open)}
-          >
-            {batchDiscoveryOpen ? "收起部署挖掘打标" : "批量部署挖掘与打标"}
-          </Button>
-          <Button size="sm" variant="primary" disabled={!filtered.length || inspection.running} onClick={() => inspect(filtered)}>{inspection.running ? "检测中…" : "快捷主机采样"}</Button>
-          <Button size="sm" onClick={refresh} disabled={inspection.running || (!machines && !readError)}>刷新</Button>
-          {admin && <>
-            <Button size="sm" disabled={!machines} onClick={() => setScreen({ page: "text" })}>文本导入</Button>
-            <Button size="sm" disabled={!machines} onClick={() => setScreen({ page: "csv" })}>CSV 导入</Button>
-            <Button size="sm" variant="primary" disabled={!machines} onClick={() => setScreen({ page: "create" })}>手工新增</Button>
-          </>}
-        </div>}
-      </header>
+      <PageHeader
+        title="机器台账"
+        badge={machines ? <Badge variant="outline" className="font-mono">{machines.length}</Badge> : undefined}
+        actions={
+          <>
+            {admin && screen.page === "create" && <Button size="sm" onClick={() => setScreen({ page: "text" })}>文本导入</Button>}
+            {screen.page === "list" && <>
+              {onOpenInspection && <Button size="sm" variant="ghost" onClick={onOpenInspection}>前往智能巡检</Button>}
+              <Button
+                size="sm"
+                variant={batchDiscoveryOpen ? "primary" : "default"}
+                disabled={!filtered.length || inspection.running}
+                onClick={() => setBatchDiscoveryOpen((open) => !open)}
+              >
+                {batchDiscoveryOpen ? "收起部署挖掘打标" : "批量部署挖掘与打标"}
+              </Button>
+              <Button size="sm" variant="primary" disabled={!filtered.length || inspection.running} onClick={() => inspect(filtered)}>{inspection.running ? "检测中…" : "快捷主机采样"}</Button>
+              <Button size="sm" onClick={refresh} disabled={inspection.running || (!machines && !readError)}>刷新</Button>
+              {admin && <>
+                <Button size="sm" disabled={!machines} onClick={() => setScreen({ page: "text" })}>文本导入</Button>
+                <Button size="sm" disabled={!machines} onClick={() => setScreen({ page: "csv" })}>CSV 导入</Button>
+                <Button size="sm" variant="primary" disabled={!machines} onClick={() => setScreen({ page: "create" })}>手工新增</Button>
+              </>}
+            </>}
+          </>
+        }
+      />
       {machines === null && (
-        readError ? <div role="alert" className="status-error flex flex-wrap items-center justify-between gap-2">
+        readError ? <StatusBanner tone="error" className="flex flex-wrap items-center justify-between gap-2">
           <span className="break-words">读取机器台账失败。{readError}</span><Button size="sm" onClick={refresh}>重新读取台账</Button>
-        </div> : <p role="status" className="text-sm text-muted-foreground">正在读取机器台账…</p>
+        </StatusBanner> : <div role="status" className="space-y-2.5"><span className="sr-only">正在读取机器台账…</span><Skeleton className="h-10 w-full" /><Skeleton className="h-44 w-full" /></div>
       )}
       {admin && (screen.page === "csv" || screen.page === "text") && <MachineCsvImport key={screen.page} textMode={screen.page === "text"} machines={machines ?? []} onClose={back} onReadback={refresh} />}
       {admin && screen.page === "login" && <MachineCsvImport machines={[]} machine={{asset_id: screen.id, name: selected?.name ?? screen.id}} onClose={() => detail(screen.id)} onReadback={refresh} />}
       {machines && screen.page === "list" && <>
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <FilterBar className="justify-between">
           <div className="flex flex-wrap items-center gap-2">
             <SegmentedControl ariaLabel="机器类型" value={kind} options={kindOptions} onChange={(next) => { setKind(next); setPage(1) }} />
             <SegmentedControl ariaLabel="Agent 状态" value={agentFilter} options={agentFilterOptions} onChange={(next) => { setAgentFilter(next); setPage(1) }} />
           </div>
           <Input type="search" scale="sm" className="w-full sm:w-72" aria-label="搜索机器" placeholder="搜索编号、名称、地址、目标或标签" value={query} onChange={(e) => { setQuery(e.target.value); setPage(1) }} />
-        </div>
+        </FilterBar>
         {availableTags.length > 0 && <fieldset className="space-y-2 rounded-lg border bg-background/40 p-3"><legend className="px-1 text-xs font-medium text-muted-foreground">按自定义标签筛选（支持 key=value 分组，多选求交集）</legend>
           {Object.entries(groupedTags).map(([group, groupItems]) => (
             <div key={group} className="flex flex-wrap items-center gap-2 text-sm">
@@ -205,12 +210,12 @@ function Inventory({ session, targets, directory, initialPage, renderTargetActio
         {inspection.progress && <p role="status" className="text-sm">{inspection.running ? "巡检进行中" : "巡检结束"}：已处理 {inspection.progress.done}/{inspection.progress.total} 台，跳过 {inspection.progress.skipped} 台，请求失败 {inspection.progress.failed} 台。</p>}
         {filtered.length ? <>
           <Table wrapperClassName="rounded-lg border">
-            <TableHeader className="bg-muted/40"><tr>
+            <TableHeader className="bg-muted/40"><TableRow className="hover:bg-transparent">
               <TableHead>机器 / 资产编号</TableHead><TableHead>类型</TableHead>
               <TableHead className="hidden sm:table-cell">管理地址</TableHead><TableHead>Agent</TableHead>
               <TableHead className="whitespace-nowrap">录入时间</TableHead>
               <TableHead>主机巡检 / 采样时间</TableHead><TableHead>操作</TableHead>
-            </tr></TableHeader>
+            </TableRow></TableHeader>
             <TableBody>{paged.items.map((m) => {
               const target = online.get(bindingKey(m))
               const result = inspection.results[inspectionKey(m)]
@@ -281,10 +286,12 @@ function Inventory({ session, targets, directory, initialPage, renderTargetActio
               <span className="whitespace-nowrap">第 {paged.page} / {paged.totalPages} 页</span>
             </div>
           </nav>
-        </> : <div className="space-y-2 py-8 text-center text-sm text-muted-foreground" role="status">
-          <p>{machines.length ? "没有匹配的机器" : admin ? "尚未登记机器，可手工新增、粘贴文本或从 CSV 导入。" : "当前账号没有可查看的机器。"}</p>
-          {machines.length > 0 && <Button size="sm" onClick={() => { setQuery(""); setKind("all"); setAgentFilter("all"); setSelectedTags([]); setPage(1) }}>清除筛选</Button>}
-        </div>}
+        </> : <EmptyState
+          role="status"
+          title={machines.length ? "没有匹配的机器" : admin ? "尚未登记机器" : "当前账号没有可查看的机器"}
+          description={machines.length ? "请调整筛选条件或清空关键词后重试。" : admin ? "可手工新增、粘贴文本或从 CSV 导入。" : undefined}
+          action={machines.length > 0 ? <Button size="sm" onClick={() => { setQuery(""); setKind("all"); setAgentFilter("all"); setSelectedTags([]); setPage(1) }}>清除筛选</Button> : undefined}
+        />}
       </>}
       {machines && "id" in screen && !selected && <div role="status" className="space-y-2 text-sm"><p>这台机器已不在可见台账中。</p><Button size="sm" onClick={back}>返回台账</Button></div>}
       {screen.page === "detail" && selected && machines && <>
@@ -413,7 +420,7 @@ function MachineForm({ initialKind, machine, machines, online, onCancel, onSaved
         {Array.from(online, ([key, t]) => <option key={key} value={key}>{t.cluster}/{t.instance}</option>)}
       </Select></label>
     </fieldset>
-    {error && <div role="alert" className="status-error space-y-2"><p className="break-words">{error}</p><Button type="button" size="sm" disabled={busy} onClick={onReload}>放弃草稿并重新读取台账</Button></div>}
+    {error && <StatusBanner tone="error" className="space-y-2"><p className="break-words">{error}</p><Button type="button" size="sm" disabled={busy} onClick={onReload}>放弃草稿并重新读取台账</Button></StatusBanner>}
     <div className="flex flex-wrap gap-2"><Button type="submit" size="sm" variant="primary" disabled={busy || unavailable}>{busy ? "正在保存…" : "保存机器"}</Button><Button type="button" size="sm" disabled={busy} onClick={onCancel}>取消</Button></div>
   </form>
 }

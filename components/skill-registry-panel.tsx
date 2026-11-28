@@ -41,7 +41,7 @@ import {
   type SkillSyncTargetResult,
 } from "@/lib/skills-registry"
 import { InspectionArtifactViewer } from "./inspection-artifact-viewer"
-import { Badge, Button, Card, CardContent, Inline, Input, PageTabs, Select, Stack, StatusBanner, Textarea } from "./ui"
+import { Badge, Button, Card, CardContent, EmptyState, FilterBar, Inline, Input, PageHeader, PageTabs, Select, Skeleton, Stack, StatusBanner, Switch, Textarea } from "./ui"
 
 const CUSTOM_SKILL_TEMPLATE = `---
 name: custom-nginx-audit
@@ -541,44 +541,43 @@ export function SkillRegistryPanel({
 
   return (
     <section aria-label="Skill 管理" className="space-y-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-foreground">Skill 管理</h1>
+      <PageHeader
+        title="Skill 管理"
+        badge={
+          <>
             <Badge variant="primary">系统 {counts.system}</Badge>
             <Badge variant="success">自定义 {counts.custom}</Badge>
             <Badge variant="outline">在线 Agent {onlineTargetsCount}</Badge>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            文件目录化托管 Skill（支持 `.md` / `.zip`），统一同步至在线 Agent `/root/.agent/skills/` 并直接在线试跑验证，供 AI 助手与智能巡检共同调用。
-          </p>
-        </div>
-
-        <Inline gap={2} className="flex-wrap">
-          <Button size="sm" variant="primary" onClick={() => openNewSkill("custom")}>
-            <Upload width={14} height={14} />
-            上传 / 新建 Skill
-          </Button>
-          <Button size="sm" disabled={busy || onlineTargetsCount === 0} onClick={() => void handleSync()}>
-            <Send width={14} height={14} />
-            同步至在线 Agent
-          </Button>
-          {onOpenMcp && (
-            <Button size="sm" variant="ghost" onClick={onOpenMcp}>
-              MCP 管理
+          </>
+        }
+        description="文件目录化托管 Skill（支持 .md / .zip），统一同步至在线 Agent /root/.agent/skills/ 并直接在线试跑验证，供 AI 助手与智能巡检共同调用。"
+        actions={
+          <>
+            <Button size="sm" variant="primary" onClick={() => openNewSkill("custom")}>
+              <Upload width={14} height={14} />
+              上传 / 新建 Skill
             </Button>
-          )}
-          {onOpenInspection && (
-            <Button size="sm" variant="ghost" onClick={() => onOpenInspection()}>
-              智能巡检
+            <Button size="sm" disabled={busy || onlineTargetsCount === 0} onClick={() => void handleSync()}>
+              <Send width={14} height={14} />
+              同步至在线 Agent
             </Button>
-          )}
-          <Button size="sm" variant="ghost" disabled={loading || agentLoading} onClick={reload}>
-            <RefreshCw width={14} height={14} className={loading || agentLoading ? "animate-spin" : ""} />
-            刷新
-          </Button>
-        </Inline>
-      </header>
+            {onOpenMcp && (
+              <Button size="sm" variant="ghost" onClick={onOpenMcp}>
+                MCP 管理
+              </Button>
+            )}
+            {onOpenInspection && (
+              <Button size="sm" variant="ghost" onClick={() => onOpenInspection()}>
+                智能巡检
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" disabled={loading || agentLoading} onClick={reload}>
+              <RefreshCw width={14} height={14} className={loading || agentLoading ? "animate-spin" : ""} />
+              刷新
+            </Button>
+          </>
+        }
+      />
 
       <PageTabs
         ariaLabel="Skill 管理视图"
@@ -1001,7 +1000,7 @@ export function SkillRegistryPanel({
       {activeTab === "registry" ? (
         <>
           {/* Filter Toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <FilterBar className="justify-between">
             <div className="flex flex-wrap gap-1.5" role="group" aria-label="Skill 筛选">
               {(
                 [
@@ -1025,24 +1024,33 @@ export function SkillRegistryPanel({
             </div>
             <Input
               scale="sm"
-              className="w-60"
+              className="w-full sm:w-60"
               placeholder="搜索 Skill 名称、slug 或说明…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
-          </div>
+          </FilterBar>
 
           {/* Skills Grid */}
           {loading && skills.length === 0 ? (
-            <p role="status" className="py-10 text-center text-sm text-muted-foreground">
-              正在加载平台 Skill 仓库…
-            </p>
+            <div role="status" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <span className="sr-only">正在加载平台 Skill 仓库…</span>
+              <Skeleton className="h-44 w-full" />
+              <Skeleton className="h-44 w-full" />
+              <Skeleton className="h-44 w-full" />
+            </div>
           ) : filteredSkills.length === 0 ? (
-            <Card>
-              <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                当前筛选条件下暂无 Skill。点击右上角「上传 / 新建 Skill」即可导入 `.md` 或 `.zip` Skill 包。
-              </CardContent>
-            </Card>
+            <EmptyState
+              title="当前筛选条件下暂无 Skill"
+              description="点击右上角「上传 / 新建 Skill」即可导入 .md 或 .zip Skill 包。"
+              action={
+                query || filter !== "all" ? (
+                  <Button size="sm" onClick={() => { setFilter("all"); setQuery("") }}>
+                    重置筛选
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {filteredSkills.map((sk) => {
@@ -1060,23 +1068,12 @@ export function SkillRegistryPanel({
                             {sk.has_ui_plugin && <Badge variant="primary">L2 UI 插件</Badge>}
                             {sk.ui_manifest_error && <Badge variant="warning">plugin.yaml 异常</Badge>}
                           </div>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={sk.enabled}
+                          <Switch
+                            checked={sk.enabled}
                             aria-label={`${sk.enabled ? "停用" : "启用"} ${sk.name}`}
                             disabled={busy || !sk.can_edit}
-                            onClick={() => void handleToggle(sk)}
-                            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
-                              sk.enabled ? "border-primary bg-primary" : "border-border bg-muted"
-                            } ${!sk.can_edit ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
-                          >
-                            <span
-                              className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-                                sk.enabled ? "translate-x-4" : "translate-x-0.5"
-                              }`}
-                            />
-                          </button>
+                            onCheckedChange={() => void handleToggle(sk)}
+                          />
                         </div>
 
                         <div>
@@ -1090,7 +1087,7 @@ export function SkillRegistryPanel({
                           {sk.description || "无简介说明，点击编辑查看完整 SKILL.md 规范。"}
                         </p>
                         {sk.ui_manifest_error && (
-                          <div className="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+                          <div className="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-2xs text-warning">
                             plugin.yaml 校验错误：{sk.ui_manifest_error}
                           </div>
                         )}

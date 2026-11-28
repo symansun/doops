@@ -15,6 +15,7 @@ import {
   Sparkles,
   Terminal,
 } from "lucide-react"
+import { Button } from "./ui"
 
 type ModeId = "terminal" | "deploy" | "dosql" | "inspect"
 
@@ -95,7 +96,7 @@ export function LandingWorkbench() {
   }
 
   return (
-    <div className="portal-frame mx-auto mt-7 max-w-5xl overflow-hidden text-left">
+    <div className="portal-frame mt-8 w-full overflow-hidden text-left">
       {/* Window Titlebar */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/75 bg-card/90 px-4 py-2">
         <div className="flex items-center gap-3">
@@ -271,7 +272,7 @@ export function LandingWorkbench() {
                 <div key={item.step} className="rounded-lg border border-border/70 bg-card/50 p-3">
                   <div className="flex items-center justify-between gap-1 text-2xs">
                     <span className="font-sans font-medium text-foreground">{item.step}</span>
-                    <span className="rounded bg-success/15 px-1.5 py-0.5 text-[10px] text-success">
+                    <span className="rounded bg-success/15 px-1.5 py-0.5 text-2xs text-success">
                       {item.status}
                     </span>
                   </div>
@@ -353,10 +354,11 @@ export function LandingWorkbench() {
             <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-accent">CLI</span>
             <code className="whitespace-nowrap text-foreground/90">{current.cliCmd}</code>
           </div>
-          <button
+          <Button
             type="button"
+            size="sm"
             onClick={handleCopyCmd}
-            className="btn btn-sm h-7 shrink-0 gap-1.5 px-2.5 text-2xs"
+            className="h-7 shrink-0 gap-1.5 px-2.5 text-2xs"
           >
             {copied ? (
               <>
@@ -369,7 +371,7 @@ export function LandingWorkbench() {
                 复制命令
               </>
             )}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

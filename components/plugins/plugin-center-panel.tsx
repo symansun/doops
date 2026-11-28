@@ -46,7 +46,11 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  EmptyState,
+  PageHeader,
+  PageSection,
   StatusBanner,
+  Switch,
   Tabs,
   TabsContent,
   TabsList,
@@ -295,57 +299,57 @@ export function PluginCenterPanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-lg font-semibold text-foreground">插件中心</h1>
+      <PageHeader
+        title="插件中心"
+        badge={
+          <>
             <Badge variant="primary">{formatScenarioName(state.scenario_id)}</Badge>
             {state.customized && <Badge variant="warning">已自定义 +{overrideCount}</Badge>}
             <Badge variant="outline">已启用 {enabledCount}/{state.plugins.length} 个功能插件</Badge>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            统一装配控制台场景与前端功能插件，并管理 Agent Skill 能力包与 MCP 工具服务。
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {canMutate && !session.demo && (
-            <>
-              <input
-                ref={zipInputRef}
-                type="file"
-                accept=".zip,application/zip"
-                aria-label="选择外部插件压缩包 (.zip)"
-                className="sr-only"
-                onChange={(e) => void handlePluginZipSelected(e)}
-              />
-              <Button
-                size="sm"
-                variant="primary"
-                disabled={Boolean(busyKey)}
-                onClick={() => zipInputRef.current?.click()}
-              >
-                <Upload className="size-3.5" aria-hidden="true" />
-                {busyKey === "install-zip" ? "正在安装…" : "安装插件包 (.zip)"}
-              </Button>
-            </>
-          )}
-          <Button
-            size="sm"
-            variant="default"
-            disabled={pluginStatus === "loading" || Boolean(busyKey)}
-            onClick={() => void onRefreshPlugins()}
-          >
-            <RefreshCw className={`size-3.5 ${pluginStatus === "loading" ? "animate-spin" : ""}`} aria-hidden="true" />
-            刷新
-          </Button>
-          {canMutate && (state.scenario_id !== DEFAULT_PLUGIN_SCENARIO_ID || state.customized) && (
-            <Button size="sm" variant="ghost" disabled={Boolean(busyKey)} onClick={handleResetDefaults}>
-              <RotateCcw className="size-3.5" aria-hidden="true" />
-              恢复全功能默认
+          </>
+        }
+        description="统一装配控制台场景与前端功能插件，并管理 Agent Skill 能力包与 MCP 工具服务。"
+        actions={
+          <>
+            {canMutate && !session.demo && (
+              <>
+                <input
+                  ref={zipInputRef}
+                  type="file"
+                  accept=".zip,application/zip"
+                  aria-label="选择外部插件压缩包 (.zip)"
+                  className="sr-only"
+                  onChange={(e) => void handlePluginZipSelected(e)}
+                />
+                <Button
+                  size="sm"
+                  variant="primary"
+                  disabled={Boolean(busyKey)}
+                  onClick={() => zipInputRef.current?.click()}
+                >
+                  <Upload className="size-3.5" aria-hidden="true" />
+                  {busyKey === "install-zip" ? "正在安装…" : "安装插件包 (.zip)"}
+                </Button>
+              </>
+            )}
+            <Button
+              size="sm"
+              variant="default"
+              disabled={pluginStatus === "loading" || Boolean(busyKey)}
+              onClick={() => void onRefreshPlugins()}
+            >
+              <RefreshCw className={`size-3.5 ${pluginStatus === "loading" ? "animate-spin" : ""}`} aria-hidden="true" />
+              刷新
             </Button>
-          )}
-        </div>
-      </div>
+            {canMutate && (state.scenario_id !== DEFAULT_PLUGIN_SCENARIO_ID || state.customized) && (
+              <Button size="sm" variant="ghost" disabled={Boolean(busyKey)} onClick={handleResetDefaults}>
+                <RotateCcw className="size-3.5" aria-hidden="true" />
+                恢复全功能默认
+              </Button>
+            )}
+          </>
+        }
+      />
 
       <Tabs value={subTab} onValueChange={(val) => onSubTabChange(val as PluginCenterSubTab)}>
         <TabsList aria-label="插件中心分区" className="h-auto flex-wrap">
@@ -535,14 +539,16 @@ export function PluginCenterPanel({
           )}
 
           {/* Section 1: 5 Scenario Packs */}
-          <section aria-label="场景预设包" className="space-y-2.5">
-            <div className="flex flex-wrap items-baseline justify-between gap-1.5">
-              <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+          <PageSection
+            aria-label="场景预设包"
+            title={
+              <span className="inline-flex items-center gap-1.5 text-sm">
                 <Layers className="size-4 shrink-0 text-primary" aria-hidden="true" />
                 场景预设包（一键装配界面能力）
-              </h2>
-              <span className="text-xs text-muted-foreground">内核能力（首页 / AI 助手 / 终端 / 知识库 / 凭据 / 审计 / 升级）始终保留</span>
-            </div>
+              </span>
+            }
+            description="内核能力（首页 / AI 助手 / 终端 / 知识库 / 凭据 / 审计 / 升级）始终保留"
+          >
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {state.scenarios.map((scenario) => {
                 const isActive = scenario.id === state.scenario_id
@@ -556,7 +562,7 @@ export function PluginCenterPanel({
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <div className="text-sm font-semibold text-foreground">{scenario.name}</div>
-                            <div className="font-mono text-[11px] text-muted-foreground">{scenario.id}</div>
+                            <div className="font-mono text-2xs text-muted-foreground">{scenario.id}</div>
                           </div>
                           {isActive && (
                             <Badge variant={state.customized ? "warning" : "primary"}>
@@ -602,17 +608,19 @@ export function PluginCenterPanel({
                 )
               })}
             </div>
-          </section>
+          </PageSection>
 
           {/* Section 2: Built-in L1 Plugins */}
-          <section aria-label="内置功能插件清单" className="space-y-2.5">
-            <div className="flex flex-wrap items-baseline justify-between gap-1.5">
-              <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+          <PageSection
+            aria-label="内置功能插件清单"
+            title={
+              <span className="inline-flex items-center gap-1.5 text-sm">
                 <Puzzle className="size-4 shrink-0 text-primary" aria-hidden="true" />
                 内置功能插件（L1 · 按需单项微调）
-              </h2>
-              <span className="text-xs text-muted-foreground">修订版本 r{state.revision}</span>
-            </div>
+              </span>
+            }
+            actions={<span className="text-xs text-muted-foreground">修订版本 r{state.revision}</span>}
+          >
             <div className="grid gap-3 md:grid-cols-2">
               {builtinPlugins.map((plugin) => {
                 const isOverridden = plugin.override !== null && plugin.override !== plugin.scenario_default
@@ -633,48 +641,50 @@ export function PluginCenterPanel({
                             {plugin.effective ? "已启用" : "已隐藏"}
                           </Badge>
                           {canMutate && (
-                            <Button
-                              size="sm"
-                              variant={plugin.effective ? "default" : "primary"}
+                            <Switch
+                              checked={plugin.effective}
                               disabled={Boolean(busyKey)}
-                              onClick={() => handleTogglePlugin(plugin)}
-                            >
-                              {plugin.effective ? "隐藏" : "启用"}
-                            </Button>
+                              aria-label={`${plugin.effective ? "隐藏" : "启用"} ${plugin.name}`}
+                              onCheckedChange={() => handleTogglePlugin(plugin)}
+                            />
                           )}
                         </div>
                       </div>
 
                       {(plugin.dependencies.skills.length > 0 || plugin.dependencies.mcp.length > 0) && (
-                        <div className="flex flex-wrap items-center gap-1.5 border-t pt-2.5 text-[11px]">
+                        <div className="flex flex-wrap items-center gap-1.5 border-t pt-2.5 text-2xs">
                           <span className="text-muted-foreground">关联能力：</span>
                           {plugin.dependencies.skills.map((dep) => (
-                            <button
+                            <Button
                               key={`skill-${dep.slug}`}
                               type="button"
+                              size="sm"
+                              variant="outline"
                               onClick={() => onSubTabChange("skills")}
-                              className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] hover:bg-muted"
+                              className="h-6 gap-1 px-1.5 text-2xs"
                               title={`查看 Skill ${dep.slug}（${depStateLabel(dep.state)}）`}
                             >
                               <span className="font-mono">Skill:{dep.slug}</span>
-                              <Badge variant={depBadgeVariant(dep.state)} className="px-1 py-0 text-[10px]">
+                              <Badge variant={depBadgeVariant(dep.state)} className="px-1 py-0 text-2xs">
                                 {depStateLabel(dep.state)}
                               </Badge>
-                            </button>
+                            </Button>
                           ))}
                           {plugin.dependencies.mcp.map((dep) => (
-                            <button
+                            <Button
                               key={`mcp-${dep.slug}`}
                               type="button"
+                              size="sm"
+                              variant="outline"
                               onClick={() => onSubTabChange("mcp")}
-                              className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] hover:bg-muted"
+                              className="h-6 gap-1 px-1.5 text-2xs"
                               title={`查看 MCP ${dep.slug}（${depStateLabel(dep.state)}）`}
                             >
                               <span className="font-mono">MCP:{dep.slug}</span>
-                              <Badge variant={depBadgeVariant(dep.state)} className="px-1 py-0 text-[10px]">
+                              <Badge variant={depBadgeVariant(dep.state)} className="px-1 py-0 text-2xs">
                                 {depStateLabel(dep.state)}
                               </Badge>
-                            </button>
+                            </Button>
                           ))}
                         </div>
                       )}
@@ -683,23 +693,30 @@ export function PluginCenterPanel({
                 )
               })}
             </div>
-          </section>
+          </PageSection>
 
           {/* Section 3: Declarative L2 Skill Plugins */}
-          <section aria-label="声明式场景插件清单" className="space-y-2.5">
-            <div className="flex flex-wrap items-baseline justify-between gap-1.5">
-              <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+          <PageSection
+            aria-label="声明式场景插件清单"
+            title={
+              <span className="inline-flex items-center gap-1.5 text-sm">
                 <Sparkles className="size-4 shrink-0 text-primary" aria-hidden="true" />
                 扩展能力与插件工作台
-              </h2>
-              <span className="text-xs text-muted-foreground">上传含 plugin.yaml 的插件包即可自动装配独立工作台、资产目录与 MCP 工具</span>
-            </div>
+              </span>
+            }
+            description="上传含 plugin.yaml 的插件包即可自动装配独立工作台、资产目录与 MCP 工具"
+          >
             {declarativePlugins.length === 0 ? (
-              <Card>
-                <CardContent className="p-4 text-xs text-muted-foreground">
-                  当前暂无可装配的扩展插件。点击顶栏「安装插件包 (.zip)」或在「Skill 能力包」上传含 <code>plugin.yaml</code> 的能力包即可自动装配。
-                </CardContent>
-              </Card>
+              <EmptyState
+                icon={<Sparkles className="size-6" aria-hidden="true" />}
+                title="当前暂无可装配的扩展插件"
+                description="点击顶栏「安装插件包 (.zip)」或在「Skill 能力包」上传含 plugin.yaml 的能力包即可自动装配。"
+                action={
+                  <Button size="sm" onClick={() => onSubTabChange("skills")}>
+                    前往 Skill 能力包
+                  </Button>
+                }
+              />
             ) : (
               <div className="grid gap-3 md:grid-cols-2">
                 {declarativePlugins.map((plugin) => {
@@ -720,7 +737,7 @@ export function PluginCenterPanel({
                               {plugin.manifest?.plugin.opt_in && <Badge variant="outline">按需启用</Badge>}
                               {isOverridden && <Badge variant="warning">已覆盖</Badge>}
                             </div>
-                            <div className="font-mono text-[11px] text-muted-foreground">{plugin.id}</div>
+                            <div className="font-mono text-2xs text-muted-foreground">{plugin.id}</div>
                             <p className="text-xs leading-relaxed text-muted-foreground">{plugin.description}</p>
                           </div>
                           <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -733,21 +750,19 @@ export function PluginCenterPanel({
                                     ? "按需未启用"
                                     : "已隐藏"}
                             </Badge>
-                            <div className="flex flex-wrap justify-end gap-1.5">
+                            <div className="flex flex-wrap items-center justify-end gap-2">
                               {plugin.effective && onOpenPlugin && (
                                 <Button size="sm" variant="ghost" onClick={() => onOpenPlugin(plugin.id)}>
                                   打开工作台
                                 </Button>
                               )}
                               {canToggleL2 && (
-                                <Button
-                                  size="sm"
-                                  variant={plugin.effective ? "default" : "primary"}
+                                <Switch
+                                  checked={plugin.effective}
                                   disabled={Boolean(busyKey)}
-                                  onClick={() => handleTogglePlugin(plugin)}
-                                >
-                                  {plugin.effective ? "隐藏" : "启用"}
-                                </Button>
+                                  aria-label={`${plugin.effective ? "隐藏" : "启用"} ${plugin.name}`}
+                                  onCheckedChange={() => handleTogglePlugin(plugin)}
+                                />
                               )}
                               {canMutate && !session.demo && plugin.can_delete && plugin.skill_slug && (
                                 <Button
@@ -776,7 +791,7 @@ export function PluginCenterPanel({
                         )}
 
                         {plugin.manifest && (
-                          <div className="flex flex-wrap items-center gap-1.5 border-t pt-2.5 text-[11px] text-muted-foreground">
+                          <div className="flex flex-wrap items-center gap-1.5 border-t pt-2.5 text-2xs text-muted-foreground">
                             <span>能力插槽：</span>
                             {plugin.manifest.ui.slots.sidebar?.enabled && <Badge variant="outline">侧栏</Badge>}
                             {plugin.manifest.ui.slots.target_tab?.enabled && <Badge variant="outline">目标页签</Badge>}
@@ -794,13 +809,15 @@ export function PluginCenterPanel({
                             )}
                             {plugin.manifest.schedule_template && <Badge variant="outline">推荐定时计划</Badge>}
                             {!isSystem && (
-                              <button
+                              <Button
                                 type="button"
+                                size="sm"
+                                variant="link"
                                 onClick={() => onSubTabChange("skills")}
-                                className="ml-auto text-primary hover:underline"
+                                className="ml-auto h-auto p-0 text-2xs"
                               >
                                 在 Skill 能力包管理开关 →
-                              </button>
+                              </Button>
                             )}
                           </div>
                         )}
@@ -810,7 +827,7 @@ export function PluginCenterPanel({
                 })}
               </div>
             )}
-          </section>
+          </PageSection>
         </TabsContent>
 
         <TabsContent value="skills" className="mt-4">

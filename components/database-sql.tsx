@@ -5,7 +5,7 @@ import type { Session, Target, ToolCancel } from "@/lib/client"
 import { queryDatabase } from "@/lib/database-browser"
 import { describeGovernanceError, describeSegmentKind, lintDatabaseSql, type LintReport } from "@/lib/database-governance"
 import type { DatabaseCandidate } from "./database-inventory"
-import { Badge, Button, StatusBanner } from "./ui"
+import { Badge, Button, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Textarea } from "./ui"
 
 type QueryResult = Awaited<ReturnType<typeof queryDatabase>>
 type Statement = QueryResult["result"]["statements"][number]
@@ -13,12 +13,12 @@ type Statement = QueryResult["result"]["statements"][number]
 export function DatabaseRows({ statement }: { statement: Statement }) {
   const { columns, rows, truncated } = statement
   return <div className="min-w-0">
-    {!!columns?.length && <div className="max-h-80 max-w-full overflow-auto">
-      <table className="w-max min-w-full border-collapse text-left font-mono text-xs">
-        <thead><tr>{columns.map((column, i) => <th key={i} scope="col" className="whitespace-pre border p-2">{column}</th>)}</tr></thead>
-        <tbody>{rows?.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j} className="whitespace-pre border p-2">{cell}</td>)}</tr>)}</tbody>
-      </table>
-    </div>}
+    {!!columns?.length && (
+      <Table wrapperClassName="max-h-80 max-w-full overflow-auto rounded-md border" className="w-max min-w-full font-mono text-xs">
+        <TableHeader><TableRow className="hover:bg-transparent">{columns.map((column, i) => <TableHead key={i} className="whitespace-pre border-r last:border-r-0">{column}</TableHead>)}</TableRow></TableHeader>
+        <TableBody>{rows?.map((row, i) => <TableRow key={i}>{row.map((cell, j) => <TableCell key={j} className="whitespace-pre border-r py-1.5 last:border-r-0">{cell}</TableCell>)}</TableRow>)}</TableBody>
+      </Table>
+    )}
     <p className="mt-1 text-xs text-muted-foreground">{rows?.length ?? 0} 行{truncated && " · 结果已截断"}</p>
   </div>
 }
@@ -121,7 +121,7 @@ export function DatabaseSql({ session, target, sessionId, asset, database, crede
   return <section className="card-surface mt-4 min-w-0 space-y-3 p-4" aria-label="只读 SQL 操作" ref={region}>
     <h3 className="text-sm font-semibold">只读 SQL 与门禁预检</h3>
     <p className="break-all font-mono text-xs text-muted-foreground">{target.cluster}/{target.instance} · {asset.namespace}/{asset.service} · {asset.engine} · {database} · {credential.name}</p>
-    <label className="grid gap-1 text-xs">SQL 语句<textarea className="min-h-24 min-w-0 rounded-md border bg-background p-2 font-mono text-sm" disabled={disabled || running || linting} value={sql} onChange={(e) => setSql(e.target.value)} spellCheck={false} /></label>
+    <label className="grid gap-1 text-xs">SQL 语句<Textarea className="min-h-24 w-full font-mono text-sm" disabled={disabled || running || linting} value={sql} onChange={(e) => setSql(e.target.value)} spellCheck={false} /></label>
     <div className="flex flex-wrap justify-end gap-2">
       {running ? (
         <Button onClick={stop} disabled={!cancel || stopping}>{stopping ? "等待停止终态…" : "停止 SQL"}</Button>

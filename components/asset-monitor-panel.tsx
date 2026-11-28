@@ -376,7 +376,7 @@ function SkillTrendsView({
                     {s.label || s.key}{" "}
                     {s.unit && <small className="text-muted-foreground">{s.unit}</small>}
                   </h4>
-                  <Badge variant="outline" className="font-mono text-[11px]">{s.key}</Badge>
+                  <Badge variant="outline" className="font-mono text-2xs">{s.key}</Badge>
                 </div>
                 {latest && (
                   <>

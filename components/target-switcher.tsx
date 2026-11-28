@@ -263,7 +263,7 @@ export function TargetSwitcher({
           className={`h-2 w-2 shrink-0 rounded-full ${current ? statusDot(current) : "bg-muted-foreground"}`}
           aria-hidden
         />
-        <span className="max-w-[40vw] truncate text-xs font-medium text-foreground sm:max-w-[200px]">
+        <span className="max-w-32 truncate text-xs font-medium text-foreground sm:max-w-48">
           {current?.instance || "选择 Agent 目标"}
         </span>
         <span className="hidden truncate font-mono text-xs text-muted-foreground sm:inline">

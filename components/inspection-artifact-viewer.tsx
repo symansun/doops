@@ -36,6 +36,7 @@ import {
   Badge,
   Button,
   Inline,
+  Select,
   Table,
   TableBody,
   TableCell,
@@ -527,8 +528,9 @@ function TrendSection({
           <span className="font-mono text-2xs text-muted-foreground">{skill}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <select
-            className="h-7 rounded-md border bg-background px-1.5 text-2xs text-foreground"
+          <Select
+            scale="sm"
+            className="w-28"
             value={range}
             onChange={(e) => setRange(e.target.value as MonitorMetricRange)}
             aria-label="趋势时间范围"
@@ -538,7 +540,7 @@ function TrendSection({
                 {r.label}
               </option>
             ))}
-          </select>
+          </Select>
           <Button size="sm" variant="ghost" onClick={() => setRevision((n) => n + 1)}>
             重试
           </Button>

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react"
 import { fetchTargets, login, persistTokenSession, type Session } from "@/lib/client"
 import { PlugIcon } from "./icons"
 import { BrandStacked } from "./brand"
-import { Button, Input, SegmentedControl, Textarea } from "./ui"
+import { Button, Card, Input, Label, SegmentedControl, StatusBanner, Textarea } from "./ui"
 
 export function ConnectScreen({
   defaultGateway,
@@ -61,21 +61,21 @@ export function ConnectScreen({
   }
 
   return (
-    <main className="console-login relative flex min-h-dvh items-center justify-center overflow-hidden p-4">
+    <main className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-background p-4 text-foreground">
       <div aria-hidden className="hero-ambient pointer-events-none absolute inset-0 opacity-60" />
       <div className="relative w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
           <h1 className="sr-only">DoOps Console</h1>
-          <BrandStacked height={88} className="mb-5" />
-          <p className="max-w-sm text-sm leading-relaxed text-muted-foreground text-balance">
+          <BrandStacked height={84} className="mb-5" />
+          <p className="max-w-sm text-balance text-sm leading-relaxed text-muted-foreground">
             智能运维控制台 · 连接 doops-gateway 执行命令、自然语言运维与部署
           </p>
         </div>
 
-        <div className="card-surface p-6 sm:p-7">
-          <label htmlFor="login-gateway" className="mb-1.5 block text-sm font-medium text-foreground">
+        <Card className="card-surface p-6 sm:p-7">
+          <Label htmlFor="login-gateway" className="mb-1.5 block">
             Gateway 地址
-          </label>
+          </Label>
           <Input
             id="login-gateway"
             aria-label="Gateway 地址"
@@ -129,9 +129,9 @@ export function ConnectScreen({
           )}
 
           {error && (
-            <p role="alert" className="status-error mt-3">
+            <StatusBanner tone="error" className="mt-3">
               {error}
-            </p>
+            </StatusBanner>
           )}
 
           <Button
@@ -143,14 +143,14 @@ export function ConnectScreen({
             <PlugIcon width={16} height={16} />
             {busy ? "连接中…" : "连接"}
           </Button>
-        </div>
+        </Card>
 
-        <p className="mt-4 text-center text-sm text-muted-foreground">
+        <p className="mt-4 text-center text-xs text-muted-foreground">
           登录会话由当前工作台的 HttpOnly Cookie 保存，业务请求统一经过 Gateway 授权。
         </p>
 
-        <p className="mt-2 text-center text-sm">
-          <Link href="/blog" className="login-link underline underline-offset-4">
+        <p className="mt-2 text-center text-xs">
+          <Link href="/blog" className="text-primary underline underline-offset-4 transition-colors hover:text-foreground">
             查看博客 / Blog
           </Link>
         </p>

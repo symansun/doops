@@ -61,6 +61,7 @@ import {
 } from "./terminal-context-menu"
 import { TerminalBlocksOverlay } from "./terminal-blocks-overlay"
 import { TerminalAiInline, type TerminalSingleShotState } from "./terminal-ai-inline"
+import { Button } from "./ui"
 
 const AUTO_INTENT_STORAGE_KEY = "doops.terminal.autoIntent"
 const AI_MIRROR_STORAGE_KEY = "doops.terminal.aiMirror"
@@ -1546,17 +1547,17 @@ export function TerminalPty({
   return (
     <div className={"flex min-h-0 flex-1 flex-col " + (className || "")}>
       {!hideHeader && (
-      <div className="flex items-center gap-2 border-b border-white/10 px-2.5 py-1 text-[11px] text-slate-400">
+      <div className="flex items-center gap-2 border-b border-white/10 px-2.5 py-1 text-2xs text-muted-foreground">
         <span
           className={
             "inline-block h-2 w-2 shrink-0 rounded-full " +
             (status === "ready"
-              ? "bg-emerald-400"
+              ? "bg-success"
               : status === "connecting"
-                ? "bg-amber-400"
+                ? "bg-warning"
                 : status === "reconnecting"
-                  ? "animate-pulse bg-amber-400"
-                  : "bg-rose-400")
+                  ? "animate-pulse bg-warning"
+                  : "bg-destructive")
           }
         />
         <span data-testid="terminal-status-text" className="shrink-0 whitespace-nowrap">
@@ -1565,37 +1566,43 @@ export function TerminalPty({
         {cwd ? <span className="min-w-0 truncate font-mono opacity-70">{cwd}</span> : null}
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           {actionNotice ? (
-            <span role="status" className="max-w-[14rem] truncate text-primary">{actionNotice}</span>
+            <span role="status" className="max-w-56 truncate text-primary">{actionNotice}</span>
           ) : null}
-          <button
+          <Button
             type="button"
+            size="sm"
+            variant="ghost"
             disabled={aiDisabled}
             data-testid="terminal-inline-ai-trigger"
             title="终端 AI 提问（⌘I / Ctrl+Shift+I）"
-            className="shrink-0 whitespace-nowrap rounded bg-sky-500/15 px-2 py-0.5 text-sky-300 hover:bg-sky-500/25 disabled:opacity-40"
+            className="h-6 shrink-0 bg-primary/15 px-2 text-2xs text-primary hover:bg-primary/25 hover:text-primary"
             onClick={openInlineAiComposer}
           >
             AI 提问
-          </button>
+          </Button>
           {status === "error" || status === "closed" || status === "reconnecting" ? (
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="ghost"
               data-testid="terminal-reconnect-btn"
-              className="shrink-0 whitespace-nowrap rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-300 hover:bg-emerald-500/25"
+              className="h-6 shrink-0 bg-success/15 px-2 text-2xs text-success hover:bg-success/25 hover:text-success"
               onClick={manualReconnect}
             >
               {status === "reconnecting" ? "立即重连" : "重新连接"}
-            </button>
+            </Button>
           ) : null}
           {status === "ready" || status === "connecting" || status === "reconnecting" ? (
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="ghost"
               data-testid="terminal-disconnect-btn"
-              className="shrink-0 whitespace-nowrap rounded px-2 py-0.5 hover:bg-white/10"
+              className="h-6 shrink-0 px-2 text-2xs text-muted-foreground"
               onClick={() => { void shutdown() }}
             >
               断开
-            </button>
+            </Button>
           ) : null}
         </span>
       </div>
@@ -1603,12 +1610,12 @@ export function TerminalPty({
       {(aiMirrorSelection.activeRunning || pendingAiMirrorCount > 0) && (
         <div
           data-testid="terminal-ai-live-bar"
-          className="flex h-7 shrink-0 items-center gap-2 border-b border-sky-500/20 bg-sky-950/35 px-2.5 text-[11px] text-sky-200"
+          className="flex h-7 shrink-0 items-center gap-2 border-b border-primary/20 bg-primary/10 px-2.5 text-2xs text-primary"
         >
-          <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-sky-400" />
+          <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-primary" />
           {aiMirrorSelection.activeRunning ? (
             <span className="min-w-0 flex-1 truncate font-mono">
-              <span className="font-sans text-sky-300">AI 执行中：</span>
+              <span className="font-sans font-medium text-primary">AI 执行中：</span>
               {aiMirrorSelection.activeRunning.command
                 ? `$ ${aiMirrorSelection.activeRunning.command}`
                 : aiMirrorSelection.activeRunning.summary
@@ -1616,7 +1623,7 @@ export function TerminalPty({
                   : aiMirrorSelection.activeRunning.toolName}
             </span>
           ) : (
-            <span className="min-w-0 flex-1 truncate text-slate-300">
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">
               AI 新增 {pendingAiMirrorCount} 条命令输出（提示符空闲后自动回显）
             </span>
           )}
@@ -1625,7 +1632,7 @@ export function TerminalPty({
               type="button"
               data-testid="terminal-ai-live-inspect"
               onClick={() => onFocusAiEntry(aiMirrorSelection.activeRunning!.id)}
-              className="shrink-0 whitespace-nowrap rounded bg-sky-500/20 px-1.5 py-0.5 text-[10.5px] text-sky-200 hover:bg-sky-500/30"
+              className="shrink-0 whitespace-nowrap rounded bg-primary/20 px-1.5 py-0.5 text-2xs text-primary hover:bg-primary/30"
             >
               查看过程
             </button>
@@ -1700,7 +1707,7 @@ export function TerminalPty({
           const selected = termRef.current?.getSelection() || getSelectionTextWithin(hostRef.current)
           setMenuState({ x: event.clientX, y: event.clientY, selection: selected })
         }}
-        className="min-h-0 flex-1 overflow-hidden bg-[#0b1220] p-1"
+        className="min-h-0 flex-1 overflow-hidden bg-background p-1"
       />
       <TerminalAiInline
         targetLabel={`${target.cluster}/${target.instance}`}

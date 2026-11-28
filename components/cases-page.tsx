@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { SiteFooter, SiteHeader } from "./site-chrome"
+import { Button, PortalContainer, SegmentedControl } from "./ui"
 
 const DEMO_ENABLED = isDemoAllowed()
 
@@ -175,14 +176,14 @@ export function CasesPage() {
       <section className="relative overflow-hidden border-b border-border/45">
         <div aria-hidden="true" className="portal-grid-bg pointer-events-none absolute inset-0 opacity-65" />
         <div aria-hidden="true" className="hero-ambient pointer-events-none absolute inset-0" />
-        <div className="relative mx-auto max-w-5xl px-4 pb-16 pt-16 text-center sm:px-6 md:pb-20 md:pt-20">
+        <PortalContainer className="relative pb-16 pt-16 text-center md:pb-20 md:pt-20">
           <div className="brand-gradient mx-auto mb-5 inline-flex rounded-full p-px">
-            <span className="inline-flex items-center gap-2 rounded-full bg-background/95 px-3.5 py-1 font-mono text-2xs font-medium uppercase tracking-[0.14em] text-muted-foreground backdrop-blur">
+            <span className="inline-flex items-center gap-2 rounded-full bg-background/95 px-3.5 py-1 font-mono text-2xs font-medium uppercase tracking-widest text-muted-foreground backdrop-blur">
               <Sparkles className="size-3.5 text-accent" aria-hidden="true" />
               Developer Scenarios
             </span>
           </div>
-          <h1 className="mx-auto max-w-4xl text-balance text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl">
+          <h1 className="mx-auto max-w-4xl text-balance text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
             开发者如何用 DoOps 重构
             <span className="text-gradient">日常运维与交付</span>
           </h1>
@@ -191,22 +192,26 @@ export function CasesPage() {
           </p>
           <div className="mt-7 flex flex-col items-center justify-center gap-2.5 sm:flex-row">
             {DEMO_ENABLED && (
-              <Link href="/console?demo=1" className="btn btn-primary btn-md w-full px-5 sm:w-auto">
-                <Sparkles className="size-4" aria-hidden="true" />
-                体验在线交互演示
-              </Link>
+              <Button asChild variant="primary" size="md" className="w-full sm:w-auto">
+                <Link href="/console?demo=1">
+                  <Sparkles className="size-4" aria-hidden="true" />
+                  体验在线交互演示
+                </Link>
+              </Button>
             )}
-            <Link href="/docs" className="btn btn-md w-full bg-card/85 px-5 sm:w-auto">
-              <BookOpen className="size-4 text-accent" aria-hidden="true" />
-              查阅配套文档
-            </Link>
+            <Button asChild size="md" className="w-full bg-card/85 sm:w-auto">
+              <Link href="/docs">
+                <BookOpen className="size-4 text-accent" aria-hidden="true" />
+                查阅配套文档
+              </Link>
+            </Button>
           </div>
-        </div>
+        </PortalContainer>
       </section>
 
-      {/* Scenarios with Clean Domain Filter (Zero duplicate stat strip, zero box-in-box clutter!) */}
+      {/* Scenarios with Clean Domain Filter */}
       <section className="py-16 sm:py-20">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <PortalContainer>
           <div className="mb-10 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
             <div>
               <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
@@ -216,23 +221,13 @@ export function CasesPage() {
                 按领域筛选查看痛点拆解、真实工作流与对应 CLI 入口。
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/65 bg-card/55 p-1">
-              {FILTERS.map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => setFilter(f.id)}
-                  aria-pressed={filter === f.id}
-                  className={
-                    filter === f.id
-                      ? "cursor-pointer rounded-lg bg-primary/16 px-3 py-1.5 text-xs font-medium text-foreground ring-1 ring-inset ring-primary/30"
-                      : "cursor-pointer rounded-lg px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                  }
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl
+              ariaLabel="按领域筛选使用案例"
+              value={filter}
+              onChange={setFilter}
+              options={FILTERS.map((f) => ({ value: f.id, label: f.label }))}
+              className="flex-wrap"
+            />
           </div>
 
           <div className="flex flex-col gap-6">
@@ -297,12 +292,12 @@ export function CasesPage() {
               )
             })}
           </div>
-        </div>
+        </PortalContainer>
       </section>
 
       {/* Capability Tags */}
       <section className="border-t border-border/45 py-16">
-        <div className="mx-auto max-w-4xl px-4 text-center sm:px-6">
+        <PortalContainer className="text-center">
           <span className="eyebrow justify-center">
             <span className="h-px w-6 bg-border" />
             Shared Foundation
@@ -329,30 +324,38 @@ export function CasesPage() {
               )
             })}
           </div>
-        </div>
+        </PortalContainer>
       </section>
 
       {/* Bottom CTA */}
-      <section className="relative overflow-hidden border-t border-border/45 py-20">
-        <div aria-hidden="true" className="hero-ambient pointer-events-none absolute inset-0 opacity-75" />
-        <div className="relative mx-auto max-w-3xl px-4 text-center sm:px-6">
-          <h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-            把第一个场景接入 DoOps
-          </h2>
-          <p className="mx-auto mt-3 max-w-xl text-pretty text-sm text-muted-foreground sm:text-base">
-            先打开在线演示体验控制台全貌，或按文档中心 5 分钟接入你的第一台测试节点。
-          </p>
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Link href="/console" className="btn btn-primary btn-lg w-full sm:w-auto">
-              <Rocket className="size-4" aria-hidden="true" />
-              进入控制台
-            </Link>
-            <Link href="/docs/cluster-install" className="btn btn-lg w-full bg-card/80 sm:w-auto">
-              <BookOpen className="size-4 text-accent" aria-hidden="true" />
-              客户端与集群接入指南
-            </Link>
+      <section className="border-t border-border/45 py-20">
+        <PortalContainer>
+          <div className="portal-frame relative overflow-hidden px-6 py-14 text-center sm:px-12">
+            <div aria-hidden="true" className="hero-ambient pointer-events-none absolute inset-0 opacity-75" />
+            <div className="relative mx-auto max-w-3xl">
+              <h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+                把第一个场景接入 DoOps
+              </h2>
+              <p className="mx-auto mt-3 max-w-xl text-pretty text-sm text-muted-foreground sm:text-base">
+                先打开在线演示体验控制台全貌，或按文档中心 5 分钟接入你的第一台测试节点。
+              </p>
+              <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                <Button asChild variant="primary" size="lg" className="w-full sm:w-auto">
+                  <Link href="/console">
+                    <Rocket className="size-4" aria-hidden="true" />
+                    进入控制台
+                  </Link>
+                </Button>
+                <Button asChild size="lg" className="w-full bg-card/80 sm:w-auto">
+                  <Link href="/docs/cluster-install">
+                    <BookOpen className="size-4 text-accent" aria-hidden="true" />
+                    客户端与集群接入指南
+                  </Link>
+                </Button>
+              </div>
+            </div>
           </div>
-        </div>
+        </PortalContainer>
       </section>
 
       <SiteFooter />

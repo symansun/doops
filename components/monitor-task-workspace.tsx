@@ -44,6 +44,7 @@ import {
   Checkbox,
   Inline,
   Input,
+  SegmentedControl,
   Select,
   Stack,
   StatusBanner,
@@ -523,7 +524,7 @@ export function MonitorTaskWorkspace({
           const detailSnippet = r.summary || ""
           return (
             <TableRow key={r.id}>
-              <TableCell className="max-w-[300px]">
+              <TableCell className="max-w-72">
                 <button
                   type="button"
                   onClick={() => openRun(r.id)}
@@ -535,7 +536,7 @@ export function MonitorTaskWorkspace({
                   <span className="font-mono">#{r.id}</span>
                   <span>· {r.total_targets} 目标 / {r.total_assets} 产物</span>
                   {detailSnippet && (
-                    <span className="max-w-[200px] truncate" title={detailSnippet}>
+                    <span className="max-w-48 truncate" title={detailSnippet}>
                       · {detailSnippet}
                     </span>
                   )}
@@ -596,7 +597,7 @@ export function MonitorTaskWorkspace({
           const hasSchedule = Boolean((r.schedule_id || "").trim())
           return (
             <TableRow key={r.id}>
-              <TableCell className="max-w-[340px]">
+              <TableCell className="max-w-80">
                 <button
                   type="button"
                   onClick={() => openRun(r.id)}
@@ -658,32 +659,15 @@ export function MonitorTaskWorkspace({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           {selectedTarget ? (
-            <div className="flex items-center gap-1.5" role="group" aria-label="目标范围筛选">
-              <button
-                type="button"
-                aria-pressed={!showAllScope}
-                onClick={() => setShowAllScope(false)}
-                className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
-                  !showAllScope
-                    ? "border-primary/60 bg-primary/15 font-medium text-primary"
-                    : "border-border bg-card text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                }`}
-              >
-                {activeTab === "runs" ? "当前目标相关" : "当前目标"}
-              </button>
-              <button
-                type="button"
-                aria-pressed={showAllScope}
-                onClick={() => setShowAllScope(true)}
-                className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
-                  showAllScope
-                    ? "border-primary/60 bg-primary/15 font-medium text-primary"
-                    : "border-border bg-card text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                }`}
-              >
-                {activeTab === "runs" ? "全部记录" : "全部目标"}
-              </button>
-            </div>
+            <SegmentedControl
+              value={showAllScope ? "all" : "current"}
+              onChange={(next) => setShowAllScope(next === "all")}
+              ariaLabel="目标范围筛选"
+              options={[
+                { value: "current", label: activeTab === "runs" ? "当前目标相关" : "当前目标" },
+                { value: "all", label: activeTab === "runs" ? "全部记录" : "全部目标" },
+              ]}
+            />
           ) : (
             <Inline gap={2}>
               <HistoryIcon width={15} height={15} className="text-muted-foreground" />
@@ -819,24 +803,34 @@ export function MonitorTaskWorkspace({
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span>选择关联 Skill（即时执行支持系统与本人自定义 Skill）：</span>
                     <Inline gap={2}>
-                      <button
+                      <Button
                         type="button"
-                        className="text-primary hover:underline"
+                        size="sm"
+                        variant="link"
+                        className="h-auto p-0 text-xs"
                         onClick={() => setQuickSkills(enabledSkills.map((s) => s.slug))}
                       >
                         全选 ({enabledSkills.length})
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        className="text-muted-foreground hover:underline"
+                        size="sm"
+                        variant="link"
+                        className="h-auto p-0 text-xs text-muted-foreground"
                         onClick={() => setQuickSkills([])}
                       >
                         清空
-                      </button>
+                      </Button>
                       {onOpenSkills && (
-                        <button type="button" className="text-primary hover:underline" onClick={onOpenSkills}>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="link"
+                          className="h-auto p-0 text-xs"
+                          onClick={onOpenSkills}
+                        >
                           管理 Skill 能力包 →
-                        </button>
+                        </Button>
                       )}
                     </Inline>
                   </div>

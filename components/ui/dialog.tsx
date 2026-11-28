@@ -3,6 +3,7 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { forwardRef, type ComponentPropsWithoutRef, type ElementRef, type HTMLAttributes, type ReactNode } from "react"
 import { cn } from "@/lib/cn"
+import { Button } from "./button"
 
 export const Dialog = DialogPrimitive.Root
 export const DialogTrigger = DialogPrimitive.Trigger
@@ -178,9 +179,9 @@ export function Modal({
             <div className="flex shrink-0 items-center gap-2">
               {headerExtra}
               {!hideCloseButton && (
-                <button type="button" onClick={onClose} className="btn btn-ghost btn-sm">
+                <Button type="button" variant="ghost" size="sm" onClick={onClose}>
                   关闭
-                </button>
+                </Button>
               )}
             </div>
           )}

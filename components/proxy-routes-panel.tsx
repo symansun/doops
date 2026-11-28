@@ -344,16 +344,16 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
           )}
 
           <div className="p-4">
-            <Table className="min-w-[900px]">
+            <Table className="min-w-full">
               <TableHeader>
-                <tr>
+                <TableRow className="hover:bg-transparent">
                   <TableHead>域名</TableHead>
                   <TableHead>目标</TableHead>
                   <TableHead>上游</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>更新时间</TableHead>
                   <TableHead className="text-right">操作</TableHead>
-                </tr>
+                </TableRow>
               </TableHeader>
               <TableBody>
                 {listState === "rows" &&
@@ -412,13 +412,13 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                     )
                   })}
                 {listState !== "rows" && (
-                  <tr>
+                  <TableRow className="hover:bg-transparent">
                     <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
                       {listState === "loading" && "加载中…"}
                       {listState === "empty" && "暂无代理路由"}
                       {listState === "error" && "未能加载代理路由，请点击刷新重试"}
                     </TableCell>
-                  </tr>
+                  </TableRow>
                 )}
               </TableBody>
             </Table>

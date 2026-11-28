@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import type { TerminalInlineContextResult } from "@/lib/terminal-ai-context"
 import type { TerminalAiDispatchMode } from "@/lib/terminal-intent"
-import { Button, Textarea } from "./ui"
+import { Button, Checkbox, Textarea } from "./ui"
 import { SendIcon, SparkIcon } from "./icons"
 
 export interface TerminalSingleShotCommand {
@@ -117,25 +117,27 @@ export function TerminalAiInline({
   }
 
   return (
-    <div className="shrink-0 space-y-1.5 border-t border-white/10 bg-[#0d1424] px-3 py-2 text-xs text-slate-200">
+    <div className="shrink-0 space-y-1.5 border-t border-white/10 bg-card px-3 py-2 text-xs text-foreground/95">
       {aiState.status === "loading" && (
         <div
           data-testid="terminal-ai-loading"
           className="flex items-center justify-between gap-2 px-1 py-0.5"
         >
-          <div className="flex min-w-0 items-center gap-2 text-sky-300">
+          <div className="flex min-w-0 items-center gap-2 text-primary">
             <SparkIcon width={12} height={12} aria-hidden="true" className="shrink-0 animate-pulse" />
             <span className="shrink-0">生成命令中…</span>
-            <span className="truncate text-slate-400">{aiState.question}</span>
+            <span className="truncate text-muted-foreground">{aiState.question}</span>
           </div>
-          <button
+          <Button
             type="button"
+            size="sm"
+            variant="ghost"
             data-testid="terminal-ai-cancel-btn"
             onClick={onCancelRequest}
-            className="shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[11px] text-slate-400 hover:bg-white/10 hover:text-slate-200"
+            className="h-6 shrink-0 px-2 text-2xs text-muted-foreground"
           >
             取消
-          </button>
+          </Button>
         </div>
       )}
 
@@ -143,79 +145,90 @@ export function TerminalAiInline({
         <div
           data-testid="terminal-ai-error"
           role="alert"
-          className="flex items-center justify-between gap-2 rounded border border-rose-500/30 bg-rose-950/30 px-2.5 py-1.5"
+          className="flex items-center justify-between gap-2 rounded border border-destructive/30 bg-destructive/15 px-2.5 py-1.5"
         >
           <div className="min-w-0">
-            <span className="text-rose-200">{aiState.message}</span>
-            {aiState.nextAction && <span className="ml-2 text-[11px] text-rose-300/80">{aiState.nextAction}</span>}
+            <span className="text-destructive">{aiState.message}</span>
+            {aiState.nextAction && <span className="ml-2 text-2xs text-destructive/80">{aiState.nextAction}</span>}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="secondary"
               onClick={() => onRetry(aiState.question)}
-              className="whitespace-nowrap rounded bg-white/10 px-2 py-0.5 text-[11px] text-slate-100 hover:bg-white/15"
+              className="h-6 px-2 text-2xs"
             >
               重试
-            </button>
+            </Button>
             {onEscalateToAssistant && (
-              <button
+              <Button
                 type="button"
+                size="sm"
+                variant="ghost"
                 onClick={() => {
                   onDismissResult()
                   onEscalateToAssistant(aiState.question)
                 }}
-                className="whitespace-nowrap rounded bg-sky-500/20 px-2 py-0.5 text-[11px] text-sky-200 hover:bg-sky-500/30"
+                className="h-6 bg-primary/15 px-2 text-2xs text-primary hover:bg-primary/25 hover:text-primary"
               >
                 派给 AI
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="关闭错误提示"
               onClick={onDismissResult}
-              className="whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] text-slate-400 hover:bg-white/10 hover:text-slate-200"
+              className="text-muted-foreground"
             >
               ×
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {aiState.status === "ready" && (
         <div data-testid="terminal-ai-suggestions" className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2 text-[11px]">
-            <div className="flex min-w-0 items-center gap-1.5 text-sky-300" title={targetLabel}>
+          <div className="flex items-center justify-between gap-2 text-2xs">
+            <div className="flex min-w-0 items-center gap-1.5 text-primary" title={targetLabel}>
               <SparkIcon width={12} height={12} aria-hidden="true" className="shrink-0" />
               <span className="shrink-0 font-medium">建议</span>
               {aiState.explanation && (
-                <span data-testid="terminal-ai-explanation" className="truncate text-slate-300">
+                <span data-testid="terminal-ai-explanation" className="truncate text-foreground/85">
                   {aiState.explanation}
                 </span>
               )}
             </div>
             <div className="flex shrink-0 items-center gap-1">
               {onEscalateToAssistant && (
-                <button
+                <Button
                   type="button"
+                  size="sm"
+                  variant="ghost"
                   data-testid="terminal-ai-escalate-btn"
                   onClick={() => {
                     onDismissResult()
                     onEscalateToAssistant(aiState.question)
                   }}
-                  className="whitespace-nowrap rounded px-1.5 py-0.5 text-slate-400 hover:bg-white/10 hover:text-sky-200"
+                  className="h-6 px-2 text-2xs text-muted-foreground hover:text-primary"
                   title="交给 AI 助手自主多步排查"
                 >
                   派给 AI →
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 type="button"
+                size="icon-xs"
+                variant="ghost"
                 data-testid="terminal-ai-dismiss-btn"
                 aria-label="收起建议"
                 onClick={onDismissResult}
-                className="whitespace-nowrap rounded px-1.5 py-0.5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                className="text-muted-foreground"
               >
                 ×
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -234,12 +247,12 @@ export function TerminalAiInline({
                     className="flex flex-wrap items-center justify-between gap-2 rounded bg-black/35 px-2.5 py-1.5"
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-slate-100">
-                        <span className="select-none text-sky-400">$ </span>
+                      <div className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-foreground">
+                        <span className="select-none text-primary">$ </span>
                         {sug.command}
                       </div>
                       {sug.risk && (
-                        <div className="mt-0.5 text-[11px] text-rose-300">
+                        <div className="mt-0.5 text-2xs text-destructive">
                           ⚠ 高风险：{sug.risk}（仅插入）
                         </div>
                       )}
@@ -290,7 +303,7 @@ export function TerminalAiInline({
             </div>
           )}
           {insertDisabledReason && aiState.commands.length > 0 && (
-            <div className="text-[11px] text-amber-300">{insertDisabledReason}</div>
+            <div className="text-2xs text-warning">{insertDisabledReason}</div>
           )}
         </div>
       )}
@@ -307,51 +320,55 @@ export function TerminalAiInline({
           }}
           className="space-y-1.5"
         >
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-2xs text-muted-foreground">
             <div className="flex flex-wrap items-center gap-2">
               {contextPreview && (
                 <span className="inline-flex items-center gap-1.5">
                   <span>{contextPreview.summaryLabel}</span>
-                  <button
+                  <Button
                     type="button"
+                    size="sm"
+                    variant="link"
                     onClick={() => setShowPreview((v) => !v)}
-                    className="text-sky-300 hover:underline"
+                    className="h-auto p-0 text-2xs"
                   >
                     {showPreview ? "隐藏" : "预览"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    size="sm"
+                    variant="ghost"
                     onClick={onToggleHistory}
-                    className="hover:text-slate-200"
+                    className="h-5 px-1.5 text-2xs text-muted-foreground"
                   >
                     {includeHistory ? "不带历史" : "带历史"}
-                  </button>
+                  </Button>
                 </span>
               )}
               <label
-                className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap"
+                className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap"
                 title="开启后，在终端提示符直接输入中文自然语言并回车即可触发 AI"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={autoDetect}
                   onChange={(e) => onToggleAutoDetect(e.target.checked)}
-                  className="accent-sky-400"
                 />
                 <span>自然语言识别</span>
               </label>
             </div>
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="ghost"
               onClick={onClose}
-              className="whitespace-nowrap rounded px-1.5 py-0.5 hover:bg-white/10 hover:text-slate-200"
+              className="h-5 px-1.5 text-2xs text-muted-foreground"
             >
               Esc
-            </button>
+            </Button>
           </div>
 
           {showPreview && contextPreview && (
-            <pre className="max-h-32 overflow-auto rounded border border-white/10 bg-black/40 p-2 font-mono text-[11px] text-slate-300 whitespace-pre-wrap break-all">
+            <pre className="max-h-32 overflow-auto rounded border border-white/10 bg-black/40 p-2 font-mono text-2xs text-foreground/85 whitespace-pre-wrap break-all">
               {contextPreview.prompt}
             </pre>
           )}
@@ -385,7 +402,7 @@ export function TerminalAiInline({
                     ? "输入排查任务（Enter 派给 AI 执行 · ⌘↵ 仅提示命令）"
                     : "输入问题（Enter 提示命令 · ⌘↵ 派给 AI 执行）"
               }
-              className="min-h-8 flex-1 resize-none border-white/15 bg-black/40 text-xs text-slate-100 placeholder:text-slate-500"
+              className="min-h-8 flex-1 resize-none border-white/15 bg-black/40 text-xs text-foreground placeholder:text-muted-foreground/80"
             />
             <Button
               type="button"

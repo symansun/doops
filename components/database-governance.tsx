@@ -22,7 +22,7 @@ import {
   type VersionsReport,
 } from "@/lib/database-governance"
 import type { DatabaseCandidate } from "./database-inventory"
-import { Badge, Button, Input, SegmentedControl, Select, StatusBanner } from "./ui"
+import { Badge, Button, Input, SegmentedControl, Select, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
 
 type GovernanceTab = "schema" | "versions" | "history" | "status"
 
@@ -286,30 +286,28 @@ export function DatabaseGovernance({
 
                   <div>
                     <h5 className="mb-1.5 text-xs font-medium text-muted-foreground">列定义（{selectedTable.columns.length}）</h5>
-                    <div className="max-h-60 overflow-auto rounded border border-border/50">
-                      <table className="w-full text-left font-mono text-xs">
-                        <thead className="bg-muted/40 text-2xs text-muted-foreground">
-                          <tr>
-                            <th scope="col" className="px-2.5 py-1.5">列名</th>
-                            <th scope="col" className="px-2.5 py-1.5">类型</th>
-                            <th scope="col" className="px-2.5 py-1.5">空值</th>
-                            <th scope="col" className="px-2.5 py-1.5">默认值</th>
-                            <th scope="col" className="px-2.5 py-1.5">附加</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border/40">
-                          {selectedTable.columns.map((col) => (
-                            <tr key={col.name}>
-                              <td className="px-2.5 py-1.5 font-medium">{col.name}</td>
-                              <td className="px-2.5 py-1.5 text-muted-foreground">{col.type}</td>
-                              <td className="px-2.5 py-1.5">{col.nullable ? "NULL" : "NOT NULL"}</td>
-                              <td className="px-2.5 py-1.5 text-muted-foreground">{col.default ?? "—"}</td>
-                              <td className="px-2.5 py-1.5 text-muted-foreground">{col.extra || col.comment || "—"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <Table wrapperClassName="max-h-60 overflow-auto rounded border border-border/50" className="font-mono text-xs">
+                      <TableHeader className="bg-muted/40 text-2xs">
+                        <TableRow className="hover:bg-transparent">
+                          <TableHead className="px-2.5 py-1.5">列名</TableHead>
+                          <TableHead className="px-2.5 py-1.5">类型</TableHead>
+                          <TableHead className="px-2.5 py-1.5">空值</TableHead>
+                          <TableHead className="px-2.5 py-1.5">默认值</TableHead>
+                          <TableHead className="px-2.5 py-1.5">附加</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedTable.columns.map((col) => (
+                          <TableRow key={col.name}>
+                            <TableCell className="px-2.5 py-1.5 font-medium">{col.name}</TableCell>
+                            <TableCell className="px-2.5 py-1.5 text-muted-foreground">{col.type}</TableCell>
+                            <TableCell className="px-2.5 py-1.5">{col.nullable ? "NULL" : "NOT NULL"}</TableCell>
+                            <TableCell className="px-2.5 py-1.5 text-muted-foreground">{col.default ?? "—"}</TableCell>
+                            <TableCell className="px-2.5 py-1.5 text-muted-foreground">{col.extra || col.comment || "—"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
 
                   {selectedTable.indexes.length > 0 && (
@@ -415,39 +413,37 @@ export function DatabaseGovernance({
           {versionsReport.versions.length === 0 ? (
             <p role="status" className="py-5 text-center text-sm text-muted-foreground">当前库尚无 DoSql 变更版本记录</p>
           ) : (
-            <div className="overflow-auto rounded-lg border border-border/60">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-muted/40 text-muted-foreground">
-                  <tr>
-                    <th scope="col" className="px-3 py-2">版本</th>
-                    <th scope="col" className="px-3 py-2">操作 ID</th>
-                    <th scope="col" className="px-3 py-2">状态</th>
-                    <th scope="col" className="px-3 py-2">提交态</th>
-                    <th scope="col" className="px-3 py-2">隐式提交</th>
-                    <th scope="col" className="px-3 py-2">Schema 快照</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/50">
-                  {versionsReport.versions.map((ver) => {
-                    const hasSnap = versionsReport.snapshots.includes(ver.version)
-                    return (
-                      <tr key={`${ver.version}-${ver.operation_id}`}>
-                        <td className="px-3 py-2 font-mono font-semibold">v{ver.version}</td>
-                        <td className="px-3 py-2 font-mono text-muted-foreground">{ver.operation_id}</td>
-                        <td className="px-3 py-2">
-                          <Badge variant={ver.status === "verified" ? "success" : ver.status === "unfinished" ? "warning" : "danger"}>{ver.status}</Badge>
-                        </td>
-                        <td className="px-3 py-2">{ver.committed ? "已提交" : "未提交"}</td>
-                        <td className="px-3 py-2 font-mono">{ver.implicit_commits}</td>
-                        <td className="px-3 py-2">
-                          {hasSnap ? <Badge variant="primary">已保存</Badge> : <span className="text-muted-foreground">无</span>}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <Table wrapperClassName="overflow-auto rounded-lg border border-border/60" className="text-xs">
+              <TableHeader className="bg-muted/40">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>版本</TableHead>
+                  <TableHead>操作 ID</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>提交态</TableHead>
+                  <TableHead>隐式提交</TableHead>
+                  <TableHead>Schema 快照</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {versionsReport.versions.map((ver) => {
+                  const hasSnap = versionsReport.snapshots.includes(ver.version)
+                  return (
+                    <TableRow key={`${ver.version}-${ver.operation_id}`}>
+                      <TableCell className="font-mono font-semibold">v{ver.version}</TableCell>
+                      <TableCell className="font-mono text-muted-foreground">{ver.operation_id}</TableCell>
+                      <TableCell>
+                        <Badge variant={ver.status === "verified" ? "success" : ver.status === "unfinished" ? "warning" : "danger"}>{ver.status}</Badge>
+                      </TableCell>
+                      <TableCell>{ver.committed ? "已提交" : "未提交"}</TableCell>
+                      <TableCell className="font-mono">{ver.implicit_commits}</TableCell>
+                      <TableCell>
+                        {hasSnap ? <Badge variant="primary">已保存</Badge> : <span className="text-muted-foreground">无</span>}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
           )}
         </div>
       ) : tab === "history" && historyReport ? (
@@ -482,49 +478,47 @@ export function DatabaseGovernance({
           {visibleHistory.length === 0 ? (
             <p role="status" className="py-5 text-center text-sm text-muted-foreground">暂无匹配的 SQL 变更流水记录</p>
           ) : (
-            <div className="max-h-96 overflow-auto rounded-lg border border-border/60">
-              <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-card text-muted-foreground">
-                  <tr>
-                    <th scope="col" className="px-3 py-2">#</th>
-                    <th scope="col" className="px-3 py-2">模式 / 类型</th>
-                    <th scope="col" className="px-3 py-2">状态</th>
-                    <th scope="col" className="px-3 py-2">语句</th>
-                    <th scope="col" className="px-3 py-2">影响 / 耗时</th>
-                    <th scope="col" className="px-3 py-2">操作 ID / 时间</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/50">
-                  {visibleHistory.slice(0, 200).map((rec) => (
-                    <tr key={`${rec.seq}-${rec.operation_id}-${rec.stmt_hash}`}>
-                      <td className="whitespace-nowrap px-3 py-2 font-mono text-muted-foreground">
-                        {rec.seq}{rec.version ? ` (v${rec.version})` : ""}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2">
-                        <div className="flex flex-wrap gap-1">
-                          <Badge variant={rec.mode === "apply" || rec.mode === "migrate" ? "primary" : "default"}>{rec.mode}</Badge>
-                          <Badge variant="outline">{rec.kind}</Badge>
-                        </div>
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2">
-                        <Badge variant={rec.status === "succeeded" ? "success" : "danger"}>{rec.status}</Badge>
-                      </td>
-                      <td className="max-w-md px-3 py-2 font-mono">
-                        <div className="line-clamp-2 break-all" title={rec.statement}>{rec.statement}</div>
-                        {rec.error && <p className="mt-1 break-all text-2xs text-destructive">{rec.error}</p>}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 font-mono text-muted-foreground">
-                        {rec.affected_rows ?? 0} 行 · {rec.duration_ms}ms
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 font-mono text-2xs text-muted-foreground">
-                        <div>{rec.operation_id}{rec.release_tag ? ` · ${rec.release_tag}` : ""}</div>
-                        <div>{rec.timestamp}</div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Table wrapperClassName="max-h-96 overflow-auto rounded-lg border border-border/60" className="text-xs">
+              <TableHeader className="sticky top-0 bg-card">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>#</TableHead>
+                  <TableHead>模式 / 类型</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>语句</TableHead>
+                  <TableHead>影响 / 耗时</TableHead>
+                  <TableHead>操作 ID / 时间</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visibleHistory.slice(0, 200).map((rec) => (
+                  <TableRow key={`${rec.seq}-${rec.operation_id}-${rec.stmt_hash}`}>
+                    <TableCell className="whitespace-nowrap font-mono text-muted-foreground">
+                      {rec.seq}{rec.version ? ` (v${rec.version})` : ""}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant={rec.mode === "apply" || rec.mode === "migrate" ? "primary" : "default"}>{rec.mode}</Badge>
+                        <Badge variant="outline">{rec.kind}</Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <Badge variant={rec.status === "succeeded" ? "success" : "danger"}>{rec.status}</Badge>
+                    </TableCell>
+                    <TableCell className="max-w-md font-mono">
+                      <div className="line-clamp-2 break-all" title={rec.statement}>{rec.statement}</div>
+                      {rec.error && <p className="mt-1 break-all text-2xs text-destructive">{rec.error}</p>}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-muted-foreground">
+                      {rec.affected_rows ?? 0} 行 · {rec.duration_ms}ms
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-2xs text-muted-foreground">
+                      <div>{rec.operation_id}{rec.release_tag ? ` · ${rec.release_tag}` : ""}</div>
+                      <div>{rec.timestamp}</div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </div>
       ) : tab === "status" && statusReport ? (
@@ -542,42 +536,40 @@ export function DatabaseGovernance({
           {statusReport.status.applied.length === 0 ? (
             <p role="status" className="py-5 text-center text-sm text-muted-foreground">当前库尚未启用 <code>_dosql_schema_history</code> 迁移台账</p>
           ) : (
-            <div className="overflow-auto rounded-lg border border-border/60">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-muted/40 text-muted-foreground">
-                  <tr>
-                    <th scope="col" className="px-3 py-2">版本</th>
-                    <th scope="col" className="px-3 py-2">描述</th>
-                    <th scope="col" className="px-3 py-2">类型</th>
-                    <th scope="col" className="px-3 py-2">状态</th>
-                    <th scope="col" className="px-3 py-2">语句进度</th>
-                    <th scope="col" className="px-3 py-2">发布标签</th>
-                    <th scope="col" className="px-3 py-2">耗时 / 时间</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/50">
-                  {statusReport.status.applied.map((rev) => (
-                    <tr key={rev.version}>
-                      <td className="px-3 py-2 font-mono font-semibold">V{String(rev.version).padStart(3, "0")}</td>
-                      <td className="px-3 py-2">
-                        <div>{rev.description}</div>
-                        <div className="font-mono text-2xs text-muted-foreground">{rev.checksum}</div>
-                      </td>
-                      <td className="px-3 py-2"><Badge variant="outline">{rev.type}</Badge></td>
-                      <td className="px-3 py-2">
-                        <Badge variant={rev.status === "succeeded" ? "success" : rev.status === "running" ? "warning" : "danger"}>{rev.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2 font-mono">{rev.applied}/{rev.total}</td>
-                      <td className="px-3 py-2 font-mono text-muted-foreground">{rev.release_tag || "—"}</td>
-                      <td className="whitespace-nowrap px-3 py-2 font-mono text-2xs text-muted-foreground">
-                        <div>{rev.duration_ms}ms</div>
-                        <div>{rev.applied_at}</div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Table wrapperClassName="overflow-auto rounded-lg border border-border/60" className="text-xs">
+              <TableHeader className="bg-muted/40">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>版本</TableHead>
+                  <TableHead>描述</TableHead>
+                  <TableHead>类型</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>语句进度</TableHead>
+                  <TableHead>发布标签</TableHead>
+                  <TableHead>耗时 / 时间</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {statusReport.status.applied.map((rev) => (
+                  <TableRow key={rev.version}>
+                    <TableCell className="font-mono font-semibold">V{String(rev.version).padStart(3, "0")}</TableCell>
+                    <TableCell>
+                      <div>{rev.description}</div>
+                      <div className="font-mono text-2xs text-muted-foreground">{rev.checksum}</div>
+                    </TableCell>
+                    <TableCell><Badge variant="outline">{rev.type}</Badge></TableCell>
+                    <TableCell>
+                      <Badge variant={rev.status === "succeeded" ? "success" : rev.status === "running" ? "warning" : "danger"}>{rev.status}</Badge>
+                    </TableCell>
+                    <TableCell className="font-mono">{rev.applied}/{rev.total}</TableCell>
+                    <TableCell className="font-mono text-muted-foreground">{rev.release_tag || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-2xs text-muted-foreground">
+                      <div>{rev.duration_ms}ms</div>
+                      <div>{rev.applied_at}</div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </div>
       ) : null}

@@ -11,6 +11,7 @@ import {
   Shield,
   Terminal,
 } from "lucide-react"
+import { Button } from "@/components/ui"
 import {
   DOC_CATEGORIES,
   DOC_STATUS_META,
@@ -94,20 +95,24 @@ export default function DocsIndexPage() {
             确保网页阅读与 CLI 随包安装的文档始终一致、零漂移。
           </p>
           <div className="mt-6 flex flex-wrap gap-2.5">
-            <Link href="/docs/cluster-install" className="btn btn-primary btn-sm">
-              从接入指南开始
-              <ArrowRight className="size-3.5" aria-hidden="true" />
-            </Link>
-            <Link href="/docs/usage-guide" className="btn btn-sm bg-background/80">
-              CLI 命令手册
-            </Link>
-            <Link href="/docs/deploy" className="btn btn-sm bg-background/80">
-              Agent 部署指引
-            </Link>
-            <Link href="/blog" className="btn btn-ghost btn-sm">
-              <Code2 className="size-3.5 text-accent" aria-hidden="true" />
-              深度架构长文
-            </Link>
+            <Button asChild variant="primary" size="sm">
+              <Link href="/docs/cluster-install">
+                从接入指南开始
+                <ArrowRight className="size-3.5" aria-hidden="true" />
+              </Link>
+            </Button>
+            <Button asChild size="sm" className="bg-background/80">
+              <Link href="/docs/usage-guide">CLI 命令手册</Link>
+            </Button>
+            <Button asChild size="sm" className="bg-background/80">
+              <Link href="/docs/deploy">Agent 部署指引</Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/blog">
+                <Code2 className="size-3.5 text-accent" aria-hidden="true" />
+                深度架构长文
+              </Link>
+            </Button>
           </div>
         </div>
       </section>
@@ -124,7 +129,7 @@ export default function DocsIndexPage() {
           {READING_PATHS.map((path) => {
             const Icon = path.icon
             return (
-              <div key={path.role} className="card-surface flex flex-col justify-between p-5">
+              <div key={path.role} className="card-surface flex min-w-0 flex-col justify-between p-5">
                 <div>
                   <div className="flex items-center gap-2 text-xs font-medium text-accent">
                     <Icon className="size-4" aria-hidden="true" />
@@ -173,7 +178,7 @@ export default function DocsIndexPage() {
           <code className="font-mono text-foreground">doagent</code>：工具读写隔离、凭据 0 密文进入 Prompt、所有调用强制审计并返回结构化回执。
         </p>
         <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-xl border border-border/65 bg-background/80 p-4">
+          <div className="min-w-0 rounded-xl border border-border/65 bg-background/80 p-4">
             <div className="flex items-center gap-1.5 font-mono text-2xs font-medium text-accent">
               <Code2 className="size-3.5" aria-hidden="true" />
               IDE Agent Skill + CLI
@@ -189,7 +194,7 @@ export default function DocsIndexPage() {
               安装与接入 →
             </Link>
           </div>
-          <div className="rounded-xl border border-border/65 bg-background/80 p-4">
+          <div className="min-w-0 rounded-xl border border-border/65 bg-background/80 p-4">
             <div className="flex items-center gap-1.5 font-mono text-2xs font-medium text-primary">
               <Plug className="size-3.5" aria-hidden="true" />
               读写隔离 MCP 矩阵
@@ -207,7 +212,7 @@ export default function DocsIndexPage() {
               变更与回执契约 →
             </Link>
           </div>
-          <div className="rounded-xl border border-border/65 bg-background/80 p-4">
+          <div className="min-w-0 rounded-xl border border-border/65 bg-background/80 p-4">
             <div className="flex items-center gap-1.5 font-mono text-2xs font-medium text-success">
               <Terminal className="size-3.5" aria-hidden="true" />
               Gateway JSON-RPC 原语
@@ -239,9 +244,9 @@ export default function DocsIndexPage() {
         </div>
         <div className="grid gap-2.5 md:grid-cols-2">
           {CHEAT_SHEET.map((item) => (
-            <div key={item.label} className="rounded-lg border border-border/65 bg-background/80 p-3">
+            <div key={item.label} className="min-w-0 rounded-lg border border-border/65 bg-background/80 p-3">
               <div className="text-2xs font-medium text-muted-foreground">{item.label}</div>
-              <pre className="mt-1.5 overflow-x-auto font-mono text-2xs text-foreground">
+              <pre className="docs-scroll mt-1.5 overflow-x-auto font-mono text-2xs text-foreground">
                 <code>{item.cmd}</code>
               </pre>
             </div>
@@ -266,7 +271,7 @@ export default function DocsIndexPage() {
                     <Link
                       key={doc.slug}
                       href={docHref(doc.slug)}
-                      className="card-surface card-interactive group flex flex-col justify-between p-4"
+                      className="card-surface card-interactive group flex min-w-0 flex-col justify-between p-4"
                     >
                       <div>
                         <div className="flex items-start justify-between gap-2">
@@ -274,7 +279,7 @@ export default function DocsIndexPage() {
                             {doc.title}
                           </h3>
                           <span
-                            className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] ${statusMeta.className}`}
+                            className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-2xs ${statusMeta.className}`}
                           >
                             {statusMeta.label}
                           </span>
@@ -283,7 +288,7 @@ export default function DocsIndexPage() {
                           {doc.description}
                         </p>
                       </div>
-                      <div className="mt-3.5 flex items-center justify-between pt-2 font-mono text-[11px] text-muted-foreground/80">
+                      <div className="mt-3.5 flex items-center justify-between pt-2 font-mono text-2xs text-muted-foreground/80">
                         <span className="truncate">
                           {doc.sourcePath ? `backend/docs/${doc.sourcePath}` : "/docs/deploy"}
                         </span>

@@ -80,7 +80,7 @@ import { ConsoleNav } from "./console-nav"
 import { SessionInput } from "./session-input"
 import { OnboardingGuide } from "./onboarding-guide"
 import { WhatsNewDialog, type WhatsNewMode } from "./whats-new-dialog"
-import { Button, StatusBanner } from "./ui"
+import { Button, SplitResizeHandle, StatusBanner } from "./ui"
 import {
   SparkIcon,
   HistoryIcon,
@@ -95,7 +95,7 @@ const AgentUiPanel = dynamic(() => import("./agent-ui-panel").then((module) => m
 })
 
 const pluginPanelLoading = (label: string) => () => (
-  <div role="status" className="flex min-h-[12rem] items-center justify-center p-6 text-sm text-muted-foreground">
+  <div role="status" className="flex min-h-48 items-center justify-center p-6 text-sm text-muted-foreground">
     正在加载{label}…
   </div>
 )
@@ -200,28 +200,9 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     setAskTerminalOpen(true)
     setAskTerminalTab("log")
   }, [])
-  const startSplitResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const container = splitContainerRef.current
-    if (!container) return
-    event.preventDefault()
-    const targetEl = event.currentTarget
-    targetEl.setPointerCapture?.(event.pointerId)
-    const onMove = (moveEvent: PointerEvent) => {
-      const rect = container.getBoundingClientRect()
-      if (rect.width <= 0) return
-      const rightPct = ((rect.right - moveEvent.clientX) / rect.width) * 100
-      const clamped = Math.round(Math.min(68, Math.max(28, rightPct)))
-      setSplitRightPct(clamped)
-      writeLocal(SPLIT_RATIO_KEY, String(clamped))
-    }
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove)
-      window.removeEventListener("pointerup", onUp)
-      window.removeEventListener("pointercancel", onUp)
-    }
-    window.addEventListener("pointermove", onMove)
-    window.addEventListener("pointerup", onUp)
-    window.addEventListener("pointercancel", onUp)
+  const handleSplitRightPctChange = useCallback((nextPct: number) => {
+    setSplitRightPct(nextPct)
+    writeLocal(SPLIT_RATIO_KEY, String(nextPct))
   }, [])
   useEffect(() => {
     const saved = Number(readLocal(SPLIT_RATIO_KEY))
@@ -1203,15 +1184,26 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   const pluginDisabledInPage = Boolean(currentOwningPlugin) && pluginsReady && !currentPluginEnabled && activeMountedPluginRef.current === currentOwningPlugin.id
 
   return (
-    <div className="console-shell flex h-dvh w-full flex-col">
-      <header className="relative z-30 flex shrink-0 flex-wrap items-center gap-2 border-b border-border/50 bg-card/80 px-4 py-2.5 backdrop-blur">
-        <button type="button" className="console-menu-toggle md:hidden" aria-label="打开主菜单"
-          aria-haspopup="dialog" aria-expanded={mobileNavOpen} aria-controls={mobileNavOpen ? "console-nav-drawer" : undefined}
-          onClick={() => setMobileNavOpen(true)}><Menu size={20} aria-hidden="true" />菜单</button>
+    <div className="flex h-dvh w-full flex-col overflow-hidden bg-background">
+      <header className="relative z-30 flex shrink-0 items-center gap-2 border-b border-border/50 bg-card/85 px-3 py-2 backdrop-blur sm:px-4">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="md:hidden"
+          aria-label="打开主菜单"
+          aria-haspopup="dialog"
+          aria-expanded={mobileNavOpen}
+          aria-controls={mobileNavOpen ? "console-nav-drawer" : undefined}
+          onClick={() => setMobileNavOpen(true)}
+        >
+          <Menu className="size-4" aria-hidden="true" />
+          <span className="hidden sm:inline">菜单</span>
+        </Button>
         <Link href="/" aria-label="DoOps 首页" className="shrink-0 transition-opacity hover:opacity-90">
-          <BrandLockup height={34} />
+          <BrandLockup height={30} />
         </Link>
-        <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
+        <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
           <TargetSwitcher
             targets={directory}
             selected={selected}
@@ -1227,18 +1219,19 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
             isAdmin={isAdmin}
             needsTarget={needsTarget}
           />
-          <span className="hidden text-xs text-muted-foreground sm:inline">{displayUserName(session)}</span>
-          <Link
-            href="/blog"
-            onClick={(event) => {
-              if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && blockTerminalSwitch()) event.preventDefault()
-            }}
-            title="博客"
-            className="btn btn-sm"
-          >
-            <SparkIcon width={14} height={14} />
-            <span className="hidden sm:inline">博客</span>
-          </Link>
+          <span className="hidden text-xs text-muted-foreground lg:inline">{displayUserName(session)}</span>
+          <Button asChild size="sm" className="hidden md:inline-flex">
+            <Link
+              href="/blog"
+              onClick={(event) => {
+                if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && blockTerminalSwitch()) event.preventDefault()
+              }}
+              title="博客"
+            >
+              <SparkIcon width={14} height={14} />
+              <span className="hidden lg:inline">博客</span>
+            </Link>
+          </Button>
           <Button
             onClick={() => openWhatsNew("manual")}
             disabled={!releaseVersion}
@@ -1248,13 +1241,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
             className="relative"
           >
             <HistoryIcon width={14} height={14} />
-            <span className="hidden sm:inline">更新内容</span>
+            <span className="hidden lg:inline">更新内容</span>
             {whatsNewUnread && releaseVersion && (
               <>
                 <span className="sr-only">有新版本</span>
                 <span
                   aria-hidden="true"
-                  className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-primary ring-2 ring-card"
+                  className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-primary ring-2 ring-card"
                 />
               </>
             )}
@@ -1263,8 +1256,9 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
             onClick={() => setShowGuide(true)}
             title="新手引导"
             size="sm"
+            className="hidden sm:inline-flex"
           >
-            <HelpIcon width={14} height={14} /> <span className="hidden sm:inline">帮助</span>
+            <HelpIcon width={14} height={14} /> <span className="hidden lg:inline">帮助</span>
           </Button>
           <Button
             onClick={logout}
@@ -1876,12 +1870,11 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       </div>
       )}
       {terminalSplitAi && (
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整终端与 AI 协同分栏宽度"
-          onPointerDown={startSplitResize}
-          className="hidden w-1 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-primary/60 lg:block"
+        <SplitResizeHandle
+          containerRef={splitContainerRef}
+          valuePct={splitRightPct}
+          onChangePct={handleSplitRightPctChange}
+          label="调整终端与 AI 协同分栏宽度"
         />
       )}
       {selected && codeWorkspace && agentRuntime && openedAgentRuntime === agentRuntime && (
@@ -1890,7 +1883,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           data-testid="agent-workspace-pane"
           className={
             terminalSplitAi
-              ? "flex h-[52%] min-h-0 w-full shrink-0 flex-col border-t bg-card lg:h-full lg:w-[var(--split-right-w)] lg:min-w-[22rem] lg:border-l-0 lg:border-t-0"
+              ? "flex h-1/2 min-h-0 w-full shrink-0 flex-col border-t bg-card lg:h-full lg:w-[var(--split-right-w)] lg:min-w-88 lg:border-l-0 lg:border-t-0"
               : "flex min-h-0 min-w-0 flex-1 flex-col"
           }
         >
@@ -1957,14 +1950,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       )}
       {askSplitTerminal && selected && (
         <>
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整 AI 对话与右侧终端分栏宽度"
-            onPointerDown={startSplitResize}
-            className="hidden w-1 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-primary/60 lg:block"
+          <SplitResizeHandle
+            containerRef={splitContainerRef}
+            valuePct={splitRightPct}
+            onChangePct={handleSplitRightPctChange}
+            label="调整 AI 对话与右侧终端分栏宽度"
           />
-          <div className="flex h-[48%] min-h-0 w-full shrink-0 flex-col border-t lg:h-full lg:w-[var(--split-right-w)] lg:min-w-[22rem] lg:border-t-0">
+          <div className="flex h-1/2 min-h-0 w-full shrink-0 flex-col border-t lg:h-full lg:w-[var(--split-right-w)] lg:min-w-88 lg:border-t-0">
             <AgentTerminalPane
               session={session}
               target={selected}

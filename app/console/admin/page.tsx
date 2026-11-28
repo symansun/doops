@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import { AdminConsole } from "@/components/admin-console"
+import { Button, PageHeader } from "@/components/ui"
 import { restoreServerSession, type Session } from "@/lib/client"
 
 export default function PlatformAdminPage() {
@@ -17,8 +18,18 @@ export default function PlatformAdminPage() {
     }).catch(() => { if (active) setNotice("无法核对管理员身份，请重新连接 Gateway。") })
     return () => { active = false }
   }, [])
-  return <main className="console-shell flex h-dvh flex-col overflow-hidden">
-    <header className="flex items-center justify-between border-b bg-card px-4 py-3"><h1 className="text-xl font-semibold">平台管理</h1><Link className="btn" href="/console">返回控制台</Link></header>
-    {admin ? <AdminConsole session={admin} /> : <p role="status" className="p-4">{notice}</p>}
-  </main>
+  return (
+    <main className="flex h-dvh flex-col overflow-hidden bg-background">
+      <PageHeader
+        title="平台管理"
+        className="items-center border-b bg-card px-4 py-3"
+        actions={
+          <Button asChild size="sm">
+            <Link href="/console">返回控制台</Link>
+          </Button>
+        }
+      />
+      {admin ? <AdminConsole session={admin} /> : <p role="status" className="p-4 text-sm text-muted-foreground">{notice}</p>}
+    </main>
+  )
 }

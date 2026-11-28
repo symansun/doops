@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { assetRequest } from "@/lib/assets"
 import { formatDateTime } from "@/lib/format"
-import { Button, Select } from "./ui"
+import { Button, Select, StatusBanner } from "./ui"
 
 const labels = {
   planned: "应检",
@@ -96,11 +96,7 @@ function WeeklyScope({ clusterId, onOpen }: Props) {
           刷新周检
         </Button>
       </header>
-      {error && (
-        <p role="alert" className="status-error">
-          {error}
-        </p>
-      )}
+      {error && <StatusBanner tone="error">{error}</StatusBanner>}
       {!summary && !error && <p role="status">正在读取本周巡检…</p>}
       {summary && (
         <>

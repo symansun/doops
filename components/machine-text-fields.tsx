@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import type { MachineKind, MachineTextPlan } from "@/lib/machine-text-import"
-import { Checkbox, Select, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Textarea } from "./ui"
+import { Checkbox, Select, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Textarea } from "./ui"
 
 type Props = {
   source: string; onSource: (text: string) => void; plan: MachineTextPlan; busy: boolean
@@ -27,9 +27,9 @@ export function MachineTextFields({ source, onSource, plan, busy, kind, onKind, 
     </section>
     <section aria-label="字段映射预览" className="min-w-0 space-y-3 rounded-lg border bg-background/50 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">字段映射预览</h4><span role="status" className="text-sm">已识别 {plan.rows.length} 行</span></div>
-      {plan.issues.length > 0 && <ul role="alert" className="status-error max-h-40 overflow-auto">{plan.issues.map((issue,i)=><li key={i}>{issue.line > 0 && ('第 ' + issue.line + ' 行：')}{issue.message}</li>)}</ul>}
+      {plan.issues.length > 0 && <StatusBanner tone="error" className="max-h-40 overflow-auto"><ul>{plan.issues.map((issue,i)=><li key={i}>{issue.line > 0 && ('第 ' + issue.line + ' 行：')}{issue.message}</li>)}</ul></StatusBanner>}
       {plan.rows.length ? <Table wrapperClassName="max-h-96 overflow-auto rounded-md border">
-        <TableHeader className="sticky top-0 bg-card"><tr>{["源行", "显示名称 / 资产编号", "管理 IP", "内网 IP", "SSH 端口", "账号"].map(label=><TableHead key={label} className="whitespace-nowrap">{label}</TableHead>)}</tr></TableHeader>
+        <TableHeader className="sticky top-0 bg-card"><TableRow className="hover:bg-transparent">{["源行", "显示名称 / 资产编号", "管理 IP", "内网 IP", "SSH 端口", "账号"].map(label=><TableHead key={label} className="whitespace-nowrap">{label}</TableHead>)}</TableRow></TableHeader>
         <TableBody>{plan.rows.map(row=><TableRow key={row.line}>
           <TableCell>{row.line}</TableCell><TableCell className="min-w-40">{row.name}<small className="block font-mono text-muted-foreground">{row.existing ? '已登记' : '新增'} · {row.id}</small></TableCell>
           {[row.address, row.internal || '—', row.port, row.username || '—'].map((value,i)=><TableCell key={i} className="whitespace-nowrap font-mono">{value}</TableCell>)}</TableRow>)}</TableBody></Table>

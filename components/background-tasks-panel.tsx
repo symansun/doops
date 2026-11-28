@@ -428,7 +428,7 @@ export function BackgroundTasksPanel({
         </div>
 
         <Inline gap={2} className="flex-1 justify-end sm:flex-initial">
-          <div className="relative min-w-[180px] flex-1 sm:w-56 sm:flex-initial">
+          <div className="relative min-w-44 flex-1 sm:w-56 sm:flex-initial">
             <Search
               width={13}
               height={13}
@@ -714,7 +714,7 @@ export function BackgroundTasksPanel({
                           <span
                             key={ev.key}
                             title={ev.hint ? `${ev.key}=${ev.displayValue}（${ev.hint}）` : `${ev.key}=${ev.displayValue}`}
-                            className="max-w-[220px] truncate rounded border border-border/80 bg-background/60 px-1.5 py-0.5 font-mono text-2xs text-foreground"
+                            className="max-w-56 truncate rounded border border-border/80 bg-background/60 px-1.5 py-0.5 font-mono text-2xs text-foreground"
                           >
                             <span className="text-muted-foreground">{ev.key}=</span>
                             {ev.displayValue}
@@ -1024,7 +1024,7 @@ export function BackgroundTasksPanel({
                   </div>
                   <pre
                     ref={outputRef}
-                    className={`max-h-[400px] overflow-auto rounded-md border bg-background/80 p-3 font-mono text-xs leading-relaxed text-foreground ${
+                    className={`max-h-96 overflow-auto rounded-md border bg-background/80 p-3 font-mono text-xs leading-relaxed text-foreground ${
                       wrapOutput ? "whitespace-pre-wrap break-all" : "whitespace-pre"
                     }`}
                   >

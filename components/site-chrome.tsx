@@ -3,8 +3,20 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BookOpen, Menu, Sparkles, Terminal, X, ArrowUpRight } from "lucide-react"
+import { ArrowUpRight, BookOpen, Menu, Sparkles, Terminal } from "lucide-react"
 import { BrandLockup, BrandMark } from "./brand"
+import {
+  Badge,
+  Button,
+  PortalContainer,
+  Separator,
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "./ui"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { GITHUB_REPO_URL } from "@/lib/docs-catalog"
 
@@ -41,41 +53,34 @@ export function SiteHeader({
     setMobileOpen(false)
   }, [pathname])
 
-  useEffect(() => {
-    if (!mobileOpen) return
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setMobileOpen(false)
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [mobileOpen])
-
   function isActive(match: string | null) {
     if (!match || !pathname) return false
     return pathname === match || pathname.startsWith(`${match}/`)
   }
 
+  const hasRightSlot = Boolean(rightSlot)
+
   return (
     <header className="site-header">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
-        <div className="flex items-center gap-3">
+      <PortalContainer className="flex h-16 items-center justify-between gap-3">
+        <div className="flex shrink-0 items-center gap-2.5">
           <Link
             href="/"
             aria-label="DoOps 首页"
-            className="flex items-center transition-opacity hover:opacity-90"
+            className="flex shrink-0 items-center transition-opacity hover:opacity-90"
           >
             <BrandLockup height={28} />
           </Link>
           {sectionBadge ? (
-            <span className="hidden items-center rounded-md border border-border/70 bg-card/70 px-2 py-0.5 font-mono text-2xs font-medium text-muted-foreground sm:inline-flex">
+            <Badge variant="outline" className="hidden bg-card/70 font-mono sm:inline-flex">
               {sectionBadge}
-            </span>
+            </Badge>
           ) : null}
         </div>
 
         <nav
           aria-label="主导航"
-          className="hidden items-center gap-0.5 rounded-full border border-border/65 bg-card/55 p-1 text-xs text-muted-foreground backdrop-blur lg:flex"
+          className={`hidden shrink-0 items-center gap-0.5 rounded-full border border-border/65 bg-card/55 p-1 text-xs text-muted-foreground backdrop-blur ${hasRightSlot ? "xl:flex" : "lg:flex"}`}
         >
           {PORTAL_NAV.map((item) => {
             const active = isActive(item.match)
@@ -86,8 +91,8 @@ export function SiteHeader({
                 aria-current={active ? "page" : undefined}
                 className={
                   active
-                    ? "rounded-full bg-primary/15 px-3.5 py-1.5 font-medium text-foreground ring-1 ring-inset ring-primary/30"
-                    : "rounded-full px-3.5 py-1.5 transition-colors hover:bg-foreground/5 hover:text-foreground"
+                    ? "whitespace-nowrap rounded-full bg-primary/15 px-3 py-1.5 font-medium text-foreground ring-1 ring-inset ring-primary/30"
+                    : "whitespace-nowrap rounded-full px-3 py-1.5 transition-colors hover:bg-foreground/5 hover:text-foreground"
                 }
               >
                 {item.label}
@@ -96,86 +101,98 @@ export function SiteHeader({
           })}
         </nav>
 
-        <div className="flex items-center gap-2">
-          {rightSlot}
-          <a
-            href={GITHUB_REPO_URL}
-            target="_blank"
-            rel="noreferrer"
-            aria-label="GitHub 仓库"
-            title="GitHub 开源仓库"
-            className="btn btn-ghost btn-sm hidden h-8 gap-1.5 px-2.5 text-muted-foreground hover:text-foreground md:inline-flex"
+        <div className="flex shrink-0 items-center gap-2">
+          {rightSlot ? <div className="hidden shrink-0 sm:flex">{rightSlot}</div> : null}
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="hidden gap-1.5 px-2 text-muted-foreground hover:text-foreground md:inline-flex xl:px-2.5"
           >
-            <GitHubGlyph className="size-4" />
-            <span className="font-mono text-2xs">GitHub</span>
-          </a>
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer" aria-label="GitHub 仓库" title="GitHub 开源仓库">
+              <GitHubGlyph className="size-4" />
+              <span className="hidden font-mono text-2xs xl:inline">GitHub</span>
+            </a>
+          </Button>
           {DEMO_ENABLED && (
-            <Link href="/console?demo=1" className="btn btn-ghost btn-sm hidden sm:inline-flex">
-              <Sparkles className="size-3.5 text-accent" aria-hidden="true" />
-              在线演示
-            </Link>
+            <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
+              <Link href="/console?demo=1">
+                <Sparkles className="size-3.5 text-accent" aria-hidden="true" />
+                在线演示
+              </Link>
+            </Button>
           )}
-          <Link href="/console" className="btn btn-primary btn-sm">
-            进入控制台
-          </Link>
-          <button
-            type="button"
-            onClick={() => setMobileOpen((prev) => !prev)}
-            aria-label={mobileOpen ? "关闭导航菜单" : "打开导航菜单"}
-            aria-expanded={mobileOpen}
-            className="btn btn-ghost btn-sm btn-icon lg:hidden"
-          >
-            {mobileOpen ? <X className="size-4" /> : <Menu className="size-4" />}
-          </button>
-        </div>
-      </div>
+          <Button asChild variant="primary" size="sm">
+            <Link href="/console">进入控制台</Link>
+          </Button>
 
-      {mobileOpen && (
-        <div className="border-t border-border/60 bg-background/95 px-4 pb-5 pt-3 backdrop-blur lg:hidden">
-          <nav aria-label="移动端导航" className="flex flex-col gap-1">
-            {PORTAL_NAV.map((item) => {
-              const active = isActive(item.match)
-              return (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  onClick={() => setMobileOpen(false)}
-                  aria-current={active ? "page" : undefined}
-                  className={
-                    active
-                      ? "flex min-h-11 items-center justify-between rounded-lg bg-primary/15 px-3 text-sm font-medium text-foreground ring-1 ring-inset ring-primary/30"
-                      : "flex min-h-11 items-center justify-between rounded-lg px-3 text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                  }
-                >
-                  {item.label}
-                </Link>
-              )
-            })}
-            <div className="mt-2 grid grid-cols-2 gap-2 border-t border-border/50 pt-3">
-              {DEMO_ENABLED && (
-                <Link
-                  href="/console?demo=1"
-                  onClick={() => setMobileOpen(false)}
-                  className="btn btn-sm justify-center"
-                >
-                  <Sparkles className="size-3.5 text-accent" aria-hidden="true" />
-                  在线演示
-                </Link>
-              )}
-              <a
-                href={GITHUB_REPO_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="btn btn-sm justify-center"
+          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+            <SheetTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                icon
+                aria-label="打开导航菜单"
+                className={hasRightSlot ? "xl:hidden" : "lg:hidden"}
               >
-                <GitHubGlyph className="size-3.5" />
-                GitHub
-                <ArrowUpRight className="size-3 text-muted-foreground" aria-hidden="true" />
-              </a>
-            </div>
-          </nav>
+                <Menu className="size-4" aria-hidden="true" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-4/5 max-w-xs">
+              <SheetHeader>
+                <SheetTitle>导航菜单</SheetTitle>
+              </SheetHeader>
+              <SheetBody className="flex flex-col gap-1.5">
+                {rightSlot ? (
+                  <div className="mb-2 flex items-center justify-between border-b border-border/50 pb-3 sm:hidden">
+                    <span className="text-xs text-muted-foreground">语言切换</span>
+                    {rightSlot}
+                  </div>
+                ) : null}
+                <nav aria-label="移动端导航" className="flex flex-col gap-1">
+                  {PORTAL_NAV.map((item) => {
+                    const active = isActive(item.match)
+                    return (
+                      <Link
+                        key={item.label}
+                        href={item.href}
+                        onClick={() => setMobileOpen(false)}
+                        aria-current={active ? "page" : undefined}
+                        className={
+                          active
+                            ? "flex min-h-11 items-center justify-between rounded-lg bg-primary/15 px-3 text-sm font-medium text-foreground ring-1 ring-inset ring-primary/30"
+                            : "flex min-h-11 items-center justify-between rounded-lg px-3 text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                        }
+                      >
+                        {item.label}
+                      </Link>
+                    )
+                  })}
+                </nav>
+                <Separator className="my-3" />
+                <div className="grid grid-cols-2 gap-2">
+                  {DEMO_ENABLED && (
+                    <Button asChild size="sm" className="justify-center">
+                      <Link href="/console?demo=1" onClick={() => setMobileOpen(false)}>
+                        <Sparkles className="size-3.5 text-accent" aria-hidden="true" />
+                        在线演示
+                      </Link>
+                    </Button>
+                  )}
+                  <Button asChild size="sm" className="justify-center">
+                    <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
+                      <GitHubGlyph className="size-3.5" />
+                      GitHub
+                      <ArrowUpRight className="size-3 text-muted-foreground" aria-hidden="true" />
+                    </a>
+                  </Button>
+                </div>
+              </SheetBody>
+            </SheetContent>
+          </Sheet>
         </div>
-      )}
+      </PortalContainer>
     </header>
   )
 }
@@ -226,7 +243,7 @@ const FOOTER_COLUMNS = [
 export function SiteFooter() {
   return (
     <footer className="border-t border-border/50 bg-card/20">
-      <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6">
+      <PortalContainer className="py-14">
         <div className="grid gap-10 lg:grid-cols-12">
           <div className="lg:col-span-4">
             <div className="flex items-center gap-3">
@@ -241,19 +258,18 @@ export function SiteFooter() {
               API，让每一次操作可授权、可审计、可验证。
             </p>
             <div className="mt-5 flex flex-wrap items-center gap-2">
-              <Link href="/docs" className="btn btn-sm">
-                <BookOpen className="size-3.5 text-primary" aria-hidden="true" />
-                文档中心
-              </Link>
-              <a
-                href={GITHUB_REPO_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="btn btn-ghost btn-sm"
-              >
-                <GitHubGlyph className="size-3.5" />
-                Star on GitHub
-              </a>
+              <Button asChild size="sm">
+                <Link href="/docs">
+                  <BookOpen className="size-3.5 text-primary" aria-hidden="true" />
+                  文档中心
+                </Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm">
+                <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
+                  <GitHubGlyph className="size-3.5" />
+                  Star on GitHub
+                </a>
+              </Button>
             </div>
           </div>
 
@@ -287,7 +303,8 @@ export function SiteFooter() {
           </div>
         </div>
 
-        <div className="mt-12 flex flex-col gap-3 border-t border-border/45 pt-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <Separator className="my-10 opacity-45" />
+        <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>© 2026 DoOps · MIT License</span>
             <span aria-hidden="true" className="text-border">·</span>
@@ -300,7 +317,7 @@ export function SiteFooter() {
             核心贡献者：孙勇、高家祺、宋晨宇
           </span>
         </div>
-      </div>
+      </PortalContainer>
     </footer>
   )
 }

@@ -41,6 +41,7 @@ import {
   Checkbox,
   Inline,
   Input,
+  PageHeader,
   PageTabs,
   Select,
   Stack,
@@ -197,9 +198,9 @@ function SituationalTrendChart({ overview }: { overview: MonitorOverviewData }) 
             </g>
           )
         })}
-        {diskPath && <path d={diskPath} fill="none" stroke="var(--color-success, #16a34a)" strokeWidth="1.8" strokeDasharray="4 3" />}
-        {memPath && <path d={memPath} fill="none" stroke="var(--color-warning, #d97706)" strokeWidth="2.2" />}
-        {cpuPath && <path d={cpuPath} fill="none" stroke="var(--color-primary, #2563eb)" strokeWidth="2.4" />}
+        {diskPath && <path d={diskPath} fill="none" stroke="var(--success)" strokeWidth="1.8" strokeDasharray="4 3" />}
+        {memPath && <path d={memPath} fill="none" stroke="var(--warning)" strokeWidth="2.2" />}
+        {cpuPath && <path d={cpuPath} fill="none" stroke="var(--primary)" strokeWidth="2.4" />}
         <text x={padL} y={H - 6} fontSize="10" fill="currentColor" opacity={0.55}>
           {fmtClock(buckets[0].start_ms)}
         </text>
@@ -784,47 +785,46 @@ export function SituationalDashboardPanel({
 
   return (
     <section aria-label="态势感知" className="space-y-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-foreground">态势感知</h1>
+      <PageHeader
+        title="态势感知"
+        badge={
+          <>
             <Badge variant="primary">业务 → 集群 → 机器整体视角</Badge>
             {inspectRounds > 0 && <Badge variant="primary">本会话已采集 {inspectRounds} 轮</Badge>}
-          </div>
-          <p className="text-sm text-muted-foreground">
-            自上而下打通业务系统、应用与数据库、Kubernetes 集群到物理机/GPU/虚机/SSH 机器资源的全局立体架构与实时运行态势。
-          </p>
-        </div>
-
-        <Inline gap={2} className="flex-wrap">
-          <Button size="sm" variant="primary" disabled={inspecting} onClick={() => void triggerGlobalInspection()}>
-            <RocketIcon width={14} height={14} />
-            {inspecting ? "正在采集巡检…" : "立即发起全网巡检"}
-          </Button>
-          <Button size="sm" onClick={() => setReportOpen((v) => !v)}>
-            {reportOpen ? "收起安全报表" : "多维度安全报表"}
-          </Button>
-          {onOpenResourceMonitor && (
-            <Button size="sm" variant="ghost" onClick={() => onOpenResourceMonitor()}>
-              资源监控 ({resources.length})
+          </>
+        }
+        description="自上而下打通业务系统、应用与数据库、Kubernetes 集群到物理机/GPU/虚机/SSH 机器资源的全局立体架构与实时运行态势。"
+        actions={
+          <>
+            <Button size="sm" variant="primary" disabled={inspecting} onClick={() => void triggerGlobalInspection()}>
+              <RocketIcon width={14} height={14} />
+              {inspecting ? "正在采集巡检…" : "立即发起全网巡检"}
             </Button>
-          )}
-          {onOpenInspection && (
-            <Button size="sm" variant="ghost" onClick={() => onOpenInspection()}>
-              前往智能巡检
+            <Button size="sm" onClick={() => setReportOpen((v) => !v)}>
+              {reportOpen ? "收起安全报表" : "多维度安全报表"}
             </Button>
-          )}
-          {onOpenPlatformMonitor && (
-            <Button size="sm" variant="ghost" onClick={onOpenPlatformMonitor}>
-              Agent 运行监控
+            {onOpenResourceMonitor && (
+              <Button size="sm" variant="ghost" onClick={() => onOpenResourceMonitor()}>
+                资源监控 ({resources.length})
+              </Button>
+            )}
+            {onOpenInspection && (
+              <Button size="sm" variant="ghost" onClick={() => onOpenInspection()}>
+                前往智能巡检
+              </Button>
+            )}
+            {onOpenPlatformMonitor && (
+              <Button size="sm" variant="ghost" onClick={onOpenPlatformMonitor}>
+                Agent 运行监控
+              </Button>
+            )}
+            <Button size="sm" disabled={loading} onClick={reload}>
+              <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} />
+              刷新
             </Button>
-          )}
-          <Button size="sm" disabled={loading} onClick={reload}>
-            <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} />
-            刷新
-          </Button>
-        </Inline>
-      </header>
+          </>
+        }
+      />
 
       <PageTabs
         ariaLabel="态势感知视图"
@@ -954,13 +954,13 @@ export function SituationalDashboardPanel({
 
                   {/* 4-Tier Business -> App/DB -> Cluster -> Machine Truthful Pipeline Counters */}
                   <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                    <TiltCard3D glowTone="primary" className="rounded-lg border border-cyan-400/25 bg-background/70 p-3">
+                    <TiltCard3D glowTone="primary" className="rounded-lg border border-accent/25 bg-background/70 p-3">
                       <button
                         type="button"
                         onClick={() => onOpenArea?.("systems")}
                         className="w-full text-left"
                       >
-                        <div className="text-2xs text-cyan-300/90">L4 · 业务系统</div>
+                        <div className="text-2xs text-accent/90">L4 · 业务系统</div>
                         <div className="mt-1 font-mono text-xl font-semibold text-foreground tabular-nums">
                           {activeSystemsCount} <span className="text-xs font-normal text-muted-foreground">套</span>
                         </div>
@@ -970,13 +970,13 @@ export function SituationalDashboardPanel({
                       </button>
                     </TiltCard3D>
 
-                    <TiltCard3D glowTone="primary" className="rounded-lg border border-blue-400/25 bg-background/70 p-3">
+                    <TiltCard3D glowTone="primary" className="rounded-lg border border-primary/25 bg-background/70 p-3">
                       <button
                         type="button"
                         onClick={() => onOpenResourceMonitor?.()}
                         className="w-full text-left"
                       >
-                        <div className="text-2xs text-blue-300/90">L3 · 应用 / 库 / 容器</div>
+                        <div className="text-2xs text-primary/90">L3 · 应用 / 库 / 容器</div>
                         <div className="mt-1 font-mono text-xl font-semibold text-foreground tabular-nums">
                           {appLayerCount} <span className="text-xs font-normal text-muted-foreground">个</span>
                         </div>
@@ -990,13 +990,13 @@ export function SituationalDashboardPanel({
                       </button>
                     </TiltCard3D>
 
-                    <TiltCard3D glowTone="primary" className="rounded-lg border border-indigo-400/25 bg-background/70 p-3">
+                    <TiltCard3D glowTone="primary" className="rounded-lg border border-primary/30 bg-background/70 p-3">
                       <button
                         type="button"
                         onClick={() => onOpenArea?.("clusters")}
                         className="w-full text-left"
                       >
-                        <div className="text-2xs text-indigo-300/90">L2 · Kubernetes 集群</div>
+                        <div className="text-2xs text-primary/90">L2 · Kubernetes 集群</div>
                         <div className="mt-1 font-mono text-xl font-semibold text-foreground tabular-nums">
                           {clusterLayerCount} <span className="text-xs font-normal text-muted-foreground">个</span>
                         </div>
@@ -1008,14 +1008,14 @@ export function SituationalDashboardPanel({
 
                     <TiltCard3D
                       glowTone={sampledMachineCount > 0 ? "success" : "warning"}
-                      className="rounded-lg border border-emerald-400/25 bg-background/70 p-3"
+                      className="rounded-lg border border-success/25 bg-background/70 p-3"
                     >
                       <button
                         type="button"
                         onClick={() => onOpenArea?.("machines")}
                         className="w-full text-left"
                       >
-                        <div className="text-2xs text-emerald-300/90">L1 · 机器资源</div>
+                        <div className="text-2xs text-success/90">L1 · 机器资源</div>
                         <div className="mt-1 font-mono text-xl font-semibold text-foreground tabular-nums">
                           {machineLayerCount} <span className="text-xs font-normal text-muted-foreground">台</span>
                         </div>
@@ -1170,31 +1170,35 @@ export function SituationalDashboardPanel({
                     <div className="flex flex-wrap gap-4 border-t border-border/50 pt-2">
                       {selectedChain.upstream.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="font-medium text-amber-300">上游受影响 ({selectedChain.upstream.length})：</span>
+                          <span className="font-medium text-warning">上游受影响 ({selectedChain.upstream.length})：</span>
                           {selectedChain.upstream.map((u) => (
-                            <button
+                            <Button
                               key={u.id}
                               type="button"
+                              size="sm"
+                              variant="outline"
                               onClick={() => setSelectedNodeId(u.id)}
-                              className="rounded border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 text-2xs text-foreground hover:border-amber-300"
+                              className="h-6 border-warning/40 bg-warning/10 px-2 text-2xs hover:border-warning hover:bg-warning/15"
                             >
                               {u.title}
-                            </button>
+                            </Button>
                           ))}
                         </div>
                       )}
                       {selectedChain.downstream.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="font-medium text-cyan-300">下游承载 ({selectedChain.downstream.length})：</span>
+                          <span className="font-medium text-accent">下游承载 ({selectedChain.downstream.length})：</span>
                           {selectedChain.downstream.map((d) => (
-                            <button
+                            <Button
                               key={d.id}
                               type="button"
+                              size="sm"
+                              variant="outline"
                               onClick={() => setSelectedNodeId(d.id)}
-                              className="rounded border border-cyan-400/40 bg-cyan-500/10 px-2 py-0.5 text-2xs text-foreground hover:border-cyan-300"
+                              className="h-6 border-accent/40 bg-accent/10 px-2 text-2xs hover:border-accent hover:bg-accent/15"
                             >
                               {d.title}
-                            </button>
+                            </Button>
                           ))}
                         </div>
                       )}
@@ -1335,7 +1339,7 @@ export function SituationalDashboardPanel({
                   </div>
 
                   {ai.findings.length > 0 ? (
-                    <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                    <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
                       {ai.findings.slice(0, 6).map((f, idx) => (
                         <div key={`${f.priority}-${idx}`} className="space-y-1.5 rounded-lg border bg-background/60 p-3 text-xs">
                           <div className="flex flex-wrap items-center justify-between gap-1.5">

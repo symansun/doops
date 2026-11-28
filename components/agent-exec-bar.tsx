@@ -180,7 +180,7 @@ export function AgentExecBar({
   }
 
   return (
-    <div className="mx-4 mt-2 flex max-h-[45%] shrink-0 flex-col gap-2 overflow-y-auto rounded-md border border-border bg-muted/30 p-2 text-xs">
+    <div className="mx-4 mt-2 flex max-h-64 shrink-0 flex-col gap-2 overflow-y-auto rounded-md border border-border bg-muted/30 p-2 text-xs">
       {blocks.length > 0 && (
         <div className="flex flex-col gap-1">
           <div className="text-muted-foreground">助手建议的命令 · {where}</div>

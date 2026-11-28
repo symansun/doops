@@ -1,6 +1,6 @@
 "use client"
 
-import { Badge, Button, Checkbox, Input, PageTabs, Select, StatusBanner } from "./ui"
+import { Badge, Button, Checkbox, Input, PageTabs, Select, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
 import { formatDateTime } from "@/lib/format"
@@ -300,44 +300,44 @@ function InstancesView({ session }: { session: Session }) {
           {notice}
         </div>
       )}
-      <div className="overflow-x-auto p-4">
-        <table className="w-full min-w-[760px] border-collapse text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">状态</th>
-              <th className="px-3 py-2 font-medium">集群</th>
-              <th className="px-3 py-2 font-medium">实例</th>
-              <th className="px-3 py-2 font-medium">远端地址</th>
-              <th className="px-3 py-2 font-medium">活动/排队</th>
-              <th className="px-3 py-2 font-medium">最后心跳</th>
-              <th className="px-3 py-2 text-right font-medium">操作</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div className="p-4">
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>状态</TableHead>
+              <TableHead>集群</TableHead>
+              <TableHead>实例</TableHead>
+              <TableHead>远端地址</TableHead>
+              <TableHead>活动/排队</TableHead>
+              <TableHead>最后心跳</TableHead>
+              <TableHead className="text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((r) => (
-              <tr
+              <TableRow
                 key={`${r.cluster}/${r.instance}`}
-                className={`border-b border-border/50 ${historyKeys.has(`${r.cluster}/${r.instance}`) ? "opacity-60" : ""} ${archivedKeys.has(`${r.cluster}/${r.instance}`) ? "bg-muted/40 opacity-60" : ""}`}
+                className={`${historyKeys.has(`${r.cluster}/${r.instance}`) ? "opacity-60" : ""} ${archivedKeys.has(`${r.cluster}/${r.instance}`) ? "bg-muted/40 opacity-60" : ""}`}
               >
-                <td className="px-3 py-2.5">
+                <TableCell>
                   <span className="flex items-center gap-2">
                     <StatusDot status={r.status} />
                     <span className="whitespace-nowrap text-xs text-muted-foreground">
                       {r.archived ? "已归档" : r.status === "online" ? (r.busy ? "忙碌" : "在线") : offlineLabel(r, now)}
                     </span>
                   </span>
-                </td>
-                <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{r.cluster}</td>
-                <td className="px-3 py-2.5 font-medium text-foreground">{r.instance}</td>
-                <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                </TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">{r.cluster}</TableCell>
+                <TableCell className="font-medium text-foreground">{r.instance}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">
                   {r.remote || "—"}
-                </td>
-                <td className="px-3 py-2.5 text-xs">
+                </TableCell>
+                <TableCell className="text-xs">
                   <span className="text-primary">{r.active_ops}</span>
                   <span className="text-muted-foreground"> / {r.queued_ops}</span>
-                </td>
-                <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(r.last_seen)}</td>
-                <td className="px-3 py-2.5 text-right">
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">{fmtTime(r.last_seen)}</TableCell>
+                <TableCell className="text-right">
                   {r.status !== "online" && (
                     <div className="flex items-center justify-end gap-1.5">
                       <Button
@@ -359,22 +359,22 @@ function InstancesView({ session }: { session: Session }) {
                       </Button>
                     </div>
                   )}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
             {!rows.length && !loading && (
-              <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
                   {groups.history.length || groups.archived.length
                     ? `没有在线或 ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线的实例；历史和已归档实例默认折叠`
                     : cluster
                       ? "该集群暂无注册实例"
                       : "暂无注册实例"}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
         <div className="mt-2 flex flex-wrap gap-1">
           {groups.history.length > 0 && (
             <Button
@@ -539,37 +539,37 @@ function UsersView({ session }: { session: Session }) {
         </div>
       )}
 
-      <div className="overflow-x-auto p-4">
-        <table className="w-full min-w-[620px] border-collapse text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">用户名</th>
-              <th className="px-3 py-2 font-medium">角色</th>
-              <th className="px-3 py-2 font-medium">授权数</th>
-              <th className="px-3 py-2 font-medium">状态</th>
-              <th className="px-3 py-2 font-medium">创建时间</th>
-              <th className="px-3 py-2 font-medium text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div className="p-4">
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>用户名</TableHead>
+              <TableHead>角色</TableHead>
+              <TableHead>授权数</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>创建时间</TableHead>
+              <TableHead className="text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {displayRows.map((u) => (
-              <tr key={u.id} className={`border-b border-border/50 ${u.disabled ? "opacity-50" : ""}`}>
-                <td className="px-3 py-2.5 font-medium text-foreground">{u.name}</td>
-                <td className="px-3 py-2.5">
+              <TableRow key={u.id} className={u.disabled ? "opacity-50" : ""}>
+                <TableCell className="font-medium text-foreground">{u.name}</TableCell>
+                <TableCell>
                   {u.is_admin ? (
                     <Badge variant="primary">admin</Badge>
                   ) : (
                     <span className="text-xs text-muted-foreground">user</span>
                   )}
-                </td>
-                <td className="px-3 py-2.5 text-xs text-muted-foreground">{u.grant_count}</td>
-                <td className="px-3 py-2.5">
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">{u.grant_count}</TableCell>
+                <TableCell>
                   <Badge variant={u.disabled ? "danger" : "success"}>
                     {u.disabled ? "已停用" : "正常"}
                   </Badge>
-                </td>
-                <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(u.created_at)}</td>
-                <td className="px-3 py-2.5">
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">{fmtTime(u.created_at)}</TableCell>
+                <TableCell>
                   <div className="flex items-center justify-end gap-1.5">
                     <Button
                       onClick={() => resetPassword(u)}
@@ -594,18 +594,18 @@ function UsersView({ session }: { session: Session }) {
                       )}
                     </Button>
                   </div>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
             {!rows.length && !loading && (
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
                   暂无用户
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
       {dialog}
     </div>
@@ -797,44 +797,45 @@ function GrantsView({ session }: { session: Session }) {
         </div>
       )}
 
-      <div className="overflow-x-auto p-4">
-        <table className="w-full min-w-[680px] border-collapse text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">用户</th>
-              <th className="px-3 py-2 font-medium">集群</th>
-              <th className="px-3 py-2 font-medium">实例</th>
-              <th className="px-3 py-2 font-medium text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div className="p-4">
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>用户</TableHead>
+              <TableHead>集群</TableHead>
+              <TableHead>实例</TableHead>
+              <TableHead className="text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {grants.map((g) => (
-              <tr key={g.id} className="border-b border-border/50">
-                <td className="px-3 py-2.5 font-medium text-foreground">{g.user_name || g.user_id}</td>
-                <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{g.cluster}</td>
-                <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{g.instance}</td>
-                <td className="px-3 py-2.5">
+              <TableRow key={g.id}>
+                <TableCell className="font-medium text-foreground">{g.user_name || g.user_id}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">{g.cluster}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">{g.instance}</TableCell>
+                <TableCell>
                   <div className="flex justify-end">
                     <Button
                       onClick={() => remove(g.id)}
                       disabled={busy}
-                      size="sm" className="text-destructive"
+                      size="sm"
+                      variant="danger-outline"
                     >
                       <TrashIcon width={12} height={12} /> 删除
                     </Button>
                   </div>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
             {!grants.length && !loading && (
-              <tr>
-                <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
                   暂无授权
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   )
@@ -993,24 +994,24 @@ function TokensView({ session }: { session: Session }) {
         </div>
       )}
 
-      <div className="overflow-x-auto p-4">
-        <table className="w-full min-w-[900px] border-collapse text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">备注名</th>
-              <th className="px-3 py-2 font-medium">前缀</th>
-              <th className="px-3 py-2 font-medium">状态</th>
-              <th className="px-3 py-2 font-medium">创建时间</th>
-              <th className="px-3 py-2 font-medium">过期时间</th>
-              <th className="px-3 py-2 font-medium text-right">操作</th>
-            </tr>
-          </thead>
+      <div className="p-4">
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>备注名</TableHead>
+              <TableHead>前缀</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>创建时间</TableHead>
+              <TableHead>过期时间</TableHead>
+              <TableHead className="text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
           {groups.map((group) => {
             const collapsed = isTokenGroupCollapsed(group, toggled)
             return (
-              <tbody key={group.key || "unknown"}>
-                <tr className={`border-b bg-muted/40 ${group.userDisabled ? "opacity-60" : ""}`}>
-                  <td colSpan={6} className="px-3 py-2">
+              <TableBody key={group.key || "unknown"}>
+                <TableRow className={`bg-muted/40 ${group.userDisabled ? "opacity-60" : ""}`}>
+                  <TableCell colSpan={6} className="py-2">
                     <button
                       type="button"
                       aria-expanded={!collapsed}
@@ -1025,53 +1026,54 @@ function TokensView({ session }: { session: Session }) {
                         {group.revoked > 0 ? ` · 已撤销 ${group.revoked}` : ""}
                       </span>
                     </button>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
                 {!collapsed &&
                   group.rows.map(({ token: t, state }) => (
-                    <tr key={t.id} className={`border-b border-border/50 ${state === "active" ? "" : "opacity-70"}`}>
-                      <td className="px-3 py-2.5 pl-8 text-xs text-foreground">
+                    <TableRow key={t.id} className={state === "active" ? "" : "opacity-70"}>
+                      <TableCell className="pl-8 text-xs text-foreground">
                         {t.name || "—"}
                         {t.id === session.tokenId && <span className="ml-2 text-primary">当前登录</span>}
-                      </td>
-                      <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{t.prefix}…</td>
-                      <td className="px-3 py-2.5">
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{t.prefix}…</TableCell>
+                      <TableCell>
                         <span className={`whitespace-nowrap text-xs ${TOKEN_STATE_TONE[state]}`}>
                           {TOKEN_STATE_LABELS[state]}
                         </span>
-                      </td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(t.created_at)}</td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{fmtTime(t.created_at)}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
                         {gatewayTime(t.expires_at) === null ? "不过期" : fmtTime(t.expires_at)}
-                      </td>
-                      <td className="px-3 py-2.5">
+                      </TableCell>
+                      <TableCell>
                         <div className="flex justify-end">
                           {!t.revoked && (
                             <Button
                               onClick={() => revoke(t.id)}
                               disabled={busy}
-                              size="sm" className="text-destructive"
+                              size="sm"
+                              variant="danger-outline"
                             >
                               <BanIcon width={12} height={12} /> 撤销
                             </Button>
                           )}
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-              </tbody>
+              </TableBody>
             )
           })}
           {!groups.length && !loading && (
-            <tbody>
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
+            <TableBody>
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
                   {rows.length ? "没有未撤销的令牌，已撤销令牌已隐藏" : "暂无令牌"}
-                </td>
-              </tr>
-            </tbody>
+                </TableCell>
+              </TableRow>
+            </TableBody>
           )}
-        </table>
+        </Table>
       </div>
     </div>
   )

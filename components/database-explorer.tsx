@@ -8,7 +8,7 @@ import { CATALOG_PAGE_SIZE, databaseListSql, queryDatabase, tableListSql, tableP
 import type { DatabaseCandidate } from "./database-inventory"
 import { DatabaseGovernance } from "./database-governance"
 import { DatabaseRows, DatabaseSql } from "./database-sql"
-import { Button, SegmentedControl, Select } from "./ui"
+import { Button, SegmentedControl, Select, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
 
 type Connection = Pick<CredentialResource, "id" | "name">
 type Statement = Awaited<ReturnType<typeof queryDatabase>>["result"]["statements"][number]
@@ -89,10 +89,10 @@ export function DatabaseExplorer({ session, target, sessionId, asset, busy, onRu
   return (
     <section className="card-surface min-w-0 p-4" aria-label="数据库浏览器">
       <nav aria-label="数据库路径" className="mb-4 flex flex-wrap items-center gap-1 text-sm">
-        <button type="button" disabled={busy} onClick={onBack} className="text-primary hover:underline">实例列表</button>
-        <ChevronRight size={14} /><button type="button" disabled={busy || !database} onClick={() => navigate({ database: "" })} className="break-all text-primary hover:underline disabled:text-muted-foreground">{asset.service}</button>
-        {database && <><ChevronRight size={14} /><button type="button" disabled={busy || (!table && !editor && !governance)} onClick={() => navigate({ database })} className="break-all text-primary hover:underline disabled:text-muted-foreground">{database}</button></>}
-        {table && !governance && <><ChevronRight size={14} /><button type="button" disabled={busy || !editor} onClick={() => navigate({ database, table })} className="break-all text-primary disabled:text-muted-foreground">{table.schema}.{table.name}</button></>}
+        <Button type="button" variant="link" size="sm" disabled={busy} onClick={onBack} className="h-auto p-0">实例列表</Button>
+        <ChevronRight size={14} /><Button type="button" variant="link" size="sm" disabled={busy || !database} onClick={() => navigate({ database: "" })} className="h-auto p-0 break-all disabled:text-muted-foreground">{asset.service}</Button>
+        {database && <><ChevronRight size={14} /><Button type="button" variant="link" size="sm" disabled={busy || (!table && !editor && !governance)} onClick={() => navigate({ database })} className="h-auto p-0 break-all disabled:text-muted-foreground">{database}</Button></>}
+        {table && !governance && <><ChevronRight size={14} /><Button type="button" variant="link" size="sm" disabled={busy || !editor} onClick={() => navigate({ database, table })} className="h-auto p-0 break-all disabled:text-muted-foreground">{table.schema}.{table.name}</Button></>}
         {editor && <><ChevronRight size={14} /><span>SQL</span></>}
         {governance && <><ChevronRight size={14} /><span>结构治理</span></>}
       </nav>
@@ -131,11 +131,11 @@ export function DatabaseExplorer({ session, target, sessionId, asset, busy, onRu
           disabled={busy} onRunningChange={onRunningChange} /> : <>
           <div className="mb-2 flex items-center justify-between gap-2"><h3 className="text-sm font-medium">{subject}</h3><Button size="sm" onClick={() => navigate(page, offset)} disabled={busy || (!statement && !error)}>刷新</Button></div>
           {error ? <p role="alert" className="break-words rounded-md bg-warning/10 p-3 text-sm text-warning">{error.startsWith("dosql_database_not_bound") ? `当前凭据未绑定数据库 ${database}。请选择该库的凭据。` : error}</p> : !statement ? <p role="status" className="py-6 text-sm text-muted-foreground">正在读取{subject}…</p> : <>
-            {table ? <DatabaseRows statement={{ ...statement, rows: visible, truncated: false }} /> : visible.length === 0 ? <p role="status" className="py-5 text-sm text-muted-foreground">{database ? "当前库中没有可见的表" : "当前实例没有可见的数据库"}</p> : <div className="overflow-auto rounded-lg border border-border/60"><table className="w-full text-left text-sm"><thead className="bg-muted/40 text-xs text-muted-foreground"><tr><th scope="col" className="px-3 py-2">{database ? "表名" : "数据库名"}</th>{database && <th scope="col" className="px-3 py-2">Schema</th>}</tr></thead><tbody className="divide-y divide-border/50">{visible.map((row) => {
+            {table ? <DatabaseRows statement={{ ...statement, rows: visible, truncated: false }} /> : visible.length === 0 ? <p role="status" className="py-5 text-sm text-muted-foreground">{database ? "当前库中没有可见的表" : "当前实例没有可见的数据库"}</p> : <Table wrapperClassName="overflow-auto rounded-lg border border-border/60"><TableHeader className="bg-muted/40"><TableRow className="hover:bg-transparent"><TableHead>{database ? "表名" : "数据库名"}</TableHead>{database && <TableHead>Schema</TableHead>}</TableRow></TableHeader><TableBody>{visible.map((row) => {
               const Icon = database ? Table2 : Database
               const label = database ? row[1] : row[0]
-              return <tr key={JSON.stringify(row)} className="hover:bg-muted/30"><td className="px-3 py-2"><button type="button" disabled={busy} onClick={() => navigate(database ? { database, table: { schema: row[0], name: row[1] } } : { database: row[0] })} className="inline-flex items-center gap-2 break-all text-left font-mono text-primary hover:underline"><Icon size={14} aria-hidden="true" />{label}</button></td>{database && <td className="px-3 py-2 text-muted-foreground">{row[0]}</td>}</tr>
-            })}</tbody></table></div>}
+              return <TableRow key={JSON.stringify(row)}><TableCell><Button type="button" variant="link" size="sm" disabled={busy} onClick={() => navigate(database ? { database, table: { schema: row[0], name: row[1] } } : { database: row[0] })} className="h-auto gap-2 p-0 break-all text-left font-mono"><Icon size={14} aria-hidden="true" />{label}</Button></TableCell>{database && <TableCell className="text-muted-foreground">{row[0]}</TableCell>}</TableRow>
+            })}</TableBody></Table>}
             {(offset > 0 || rows.length > pageSize) && <div className="mt-3 flex items-center justify-end gap-2 text-xs"><span>{visible.length ? `${offset + 1}–${offset + visible.length}` : "0 项"}</span><Button size="sm" disabled={busy || offset === 0} onClick={() => navigate(page, Math.max(0, offset - pageSize))}>上一页</Button><Button size="sm" disabled={busy || rows.length <= pageSize} onClick={() => navigate(page, offset + pageSize)}>下一页</Button></div>}
           </>}
         </>)}

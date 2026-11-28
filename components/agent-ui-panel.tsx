@@ -187,33 +187,37 @@ export function AgentUiPanel({
               {cmd && (
                 <div className="flex items-start justify-between gap-2 rounded bg-background/70 px-2.5 py-1.5 font-mono">
                   <span className="min-w-0 flex-1 whitespace-pre-wrap break-all text-foreground">
-                    <span className="select-none text-emerald-400">$ </span>
+                    <span className="select-none text-success">$ </span>
                     {cmd}
                   </span>
                   <div className="flex shrink-0 items-center gap-1 font-sans">
                     {onFocusToolInTerminal && (
-                      <button
+                      <Button
                         type="button"
+                        size="sm"
+                        variant="ghost"
                         onClick={() => onFocusToolInTerminal(item.id)}
-                        className="whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] text-primary hover:bg-primary/10"
+                        className="h-5 px-1.5 text-2xs text-primary hover:bg-primary/10 hover:text-primary"
                       >
                         在终端查看
-                      </button>
+                      </Button>
                     )}
                     {onRunInTerminal && (
-                      <button
+                      <Button
                         type="button"
+                        size="sm"
+                        variant="ghost"
                         onClick={() => onRunInTerminal(cmd, { run: false })}
-                        className="whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                        className="h-5 px-1.5 text-2xs text-muted-foreground"
                       >
                         → 终端
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
               )}
               {output && (
-                <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[11.5px] leading-5 text-muted-foreground">
+                <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-2xs leading-5 text-muted-foreground">
                   {output}
                 </pre>
               )}
@@ -418,15 +422,17 @@ export function AgentUiPanel({
       headerActions={
         <div className="flex shrink-0 items-center gap-1">
           {workspaceError && (
-            <button
+            <Button
               type="button"
               role="alert"
-              className="max-w-40 truncate text-xs text-destructive underline-offset-2 hover:underline"
+              size="sm"
+              variant="link"
+              className="h-auto max-w-40 truncate p-0 text-xs text-destructive"
               title={`${workspaceError}（点击重试）`}
               onClick={() => setWorkspaceReloadTick((tick) => tick + 1)}
             >
               成果读取失败
-            </button>
+            </Button>
           )}
           <Button
             aria-label="重新检查连接"
@@ -489,7 +495,7 @@ export function AgentUiPanel({
                           <div key={item.id} className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5 text-xs">
                             <div className="min-w-0">
                               <div className="truncate font-medium text-foreground">{item.name}</div>
-                              <div className="truncate text-[11px] text-muted-foreground">
+                              <div className="truncate text-2xs text-muted-foreground">
                                 {CREDENTIAL_TYPE_LABELS[item.type]}
                                 {binding?.scope.use ? ` · ${CREDENTIAL_USE_LABELS[binding.scope.use]}` : ""}
                                 {binding?.scope.namespace && binding.scope.use !== "modelProvider" ? ` · ns:${binding.scope.namespace}` : ""}
@@ -577,12 +583,12 @@ export function AgentUiPanel({
                         <span className="min-w-0 truncate text-xs font-medium text-foreground" title={item.title}>
                           {item.title}
                         </span>
-                        <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span className="flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground">
                           {item.id === sessionId && <Badge variant="primary">当前</Badge>}
                           <span>{relativeTime(item.latest)}</span>
                         </span>
                       </div>
-                      <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                      <div className="flex items-center justify-between gap-2 text-2xs text-muted-foreground">
                         <span className="min-w-0 truncate font-mono">{item.id}</span>
                         <span className="shrink-0">
                           {item.turnCount && item.turnCount > 0 ? `${item.turnCount} 轮` : `${item.count} 条`}

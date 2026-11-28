@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect } from "react"
 import {
   type AssetArea,
   type CatalogKind,
@@ -13,6 +13,20 @@ import { resolveConsoleNavItems } from "@/lib/plugins/resolver"
 import type { PluginStateResponse } from "@/lib/plugins/types"
 import { ActivityIcon } from "./icons"
 import { CONSOLE_NAV_ICONS, isPluginCenterArea } from "./plugins/registry"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  Skeleton,
+} from "./ui"
 
 const groups = [
   ["home", "导航"],
@@ -62,18 +76,18 @@ export function ConsoleNav({
     pluginState,
     pluginsReady,
   })
-  const drawer = useRef<HTMLDialogElement>(null)
+
+  // Auto-dismiss mobile drawer if viewport expands past md breakpoint.
   useEffect(() => {
-    const dialog = drawer.current
-    if (!mobileOpen || !dialog) return
+    if (!mobileOpen || typeof window === "undefined") return
     const desktop = window.matchMedia("(min-width: 768px)")
-    function handleWidth() { if (desktop.matches) dialog?.close() }
-    dialog.showModal()
-    dialog.querySelector<HTMLElement>('[aria-current="page"]')?.focus()
+    const handleWidth = () => {
+      if (desktop.matches) onDismiss()
+    }
     handleWidth()
     desktop.addEventListener("change", handleWidth)
     return () => desktop.removeEventListener("change", handleWidth)
-  }, [mobileOpen])
+  }, [mobileOpen, onDismiss])
 
   function isActive(entry: ConsoleNavEntry) {
     const { destination } = entry
@@ -120,76 +134,71 @@ export function ConsoleNav({
 
   function menu(mobile: boolean) {
     return (
-      <nav aria-label="主导航" className="console-nav-list">
+      <SidebarContent aria-label="主导航">
         {groups.map(([id, label]) => {
           const items = resolvedItems.filter((item) => groupOf(item.entry) === id)
           if (!items.length) return null
           return (
-            <div role="group" aria-label={label} key={id} className="console-nav-group">
-              <div aria-hidden="true" className="console-nav-label">{label}</div>
-              {items.map(({ entry, icon, disabled, disabledReason }) => {
-                const Icon = (icon && CONSOLE_NAV_ICONS[icon]) || CONSOLE_NAV_ICONS[entry.id] || ActivityIcon
-                const title = disabled
-                  ? disabledReason
-                  : entry.id === "terminal"
-                    ? "高级：直接执行 shell 命令"
-                    : undefined
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className="console-nav-item"
-                    disabled={disabled}
-                    aria-current={isActive(entry) ? "page" : undefined}
-                    title={title}
-                    onClick={() => {
-                      if (mobile) drawer.current?.close()
-                      onNavigate(entry)
-                    }}
-                  >
-                    <Icon width={17} height={17} aria-hidden="true" />
-                    {entry.label}
-                  </button>
-                )
-              })}
-            </div>
+            <SidebarGroup aria-label={label} key={id}>
+              <SidebarGroupLabel>{label}</SidebarGroupLabel>
+              <SidebarMenu>
+                {items.map(({ entry, icon, disabled, disabledReason }) => {
+                  const Icon = (icon && CONSOLE_NAV_ICONS[icon]) || CONSOLE_NAV_ICONS[entry.id] || ActivityIcon
+                  const title = disabled
+                    ? disabledReason
+                    : entry.id === "terminal"
+                      ? "高级：直接执行 shell 命令"
+                      : undefined
+                  return (
+                    <SidebarMenuItem key={entry.id}>
+                      <SidebarMenuButton
+                        size={mobile ? "touch" : "default"}
+                        disabled={disabled}
+                        isActive={isActive(entry)}
+                        title={title}
+                        onClick={() => {
+                          if (mobile) onDismiss()
+                          onNavigate(entry)
+                        }}
+                      >
+                        <Icon width={16} height={16} aria-hidden="true" className="shrink-0" />
+                        <span className="truncate">{entry.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  )
+                })}
+              </SidebarMenu>
+            </SidebarGroup>
           )
         })}
         {!pluginsReady && (
-          <div role="status" aria-label="正在加载功能插件导航" className="console-nav-group space-y-1.5 px-2 py-2">
-            <div className="h-3 w-16 animate-pulse rounded bg-muted" />
-            <div className="h-7 w-full animate-pulse rounded bg-muted/70" />
-            <div className="h-7 w-5/6 animate-pulse rounded bg-muted/70" />
-            <div className="h-7 w-4/5 animate-pulse rounded bg-muted/70" />
-          </div>
+          <SidebarGroup role="status" aria-label="正在加载功能插件导航" className="space-y-1.5 px-2 py-2">
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-7 w-full" />
+            <Skeleton className="h-7 w-5/6" />
+            <Skeleton className="h-7 w-4/5" />
+          </SidebarGroup>
         )}
-      </nav>
+      </SidebarContent>
     )
   }
 
   return (
     <>
-      <aside className="console-sidebar hidden md:flex">{menu(false)}</aside>
-      {mobileOpen && (
-        <dialog
-          ref={drawer}
-          aria-label="控制台菜单"
+      <Sidebar>{menu(false)}</Sidebar>
+      <Sheet open={mobileOpen} onOpenChange={(open) => { if (!open) onDismiss() }}>
+        <SheetContent
+          side="left"
           id="console-nav-drawer"
-          className="console-nav-drawer"
-          onClose={onDismiss}
-          onClick={(event) => {
-            if (event.target === event.currentTarget && event.clientX >= event.currentTarget.getBoundingClientRect().right) {
-              drawer.current?.close()
-            }
-          }}
+          aria-label="控制台菜单"
+          className="border-sidebar-border bg-sidebar p-0 text-sidebar-foreground"
         >
-          <div className="console-drawer-heading">
-            <strong>功能菜单</strong>
-            <button type="button" onClick={() => drawer.current?.close()}>关闭</button>
-          </div>
+          <SheetHeader className="border-sidebar-border">
+            <SheetTitle className="text-sidebar-foreground">功能菜单</SheetTitle>
+          </SheetHeader>
           {menu(true)}
-        </dialog>
-      )}
+        </SheetContent>
+      </Sheet>
     </>
   )
 }

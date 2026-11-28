@@ -208,7 +208,7 @@ export function MachineTagSyncCard({
                   disabled={already || saving}
                   onClick={() => toggleTag(item.tag)}
                   title={`${item.evidence || item.source}（置信度：${item.confidence}）`}
-                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-[11px] transition-colors ${
+                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-2xs transition-colors ${
                     already
                       ? "border-border bg-muted/40 text-muted-foreground"
                       : checked
@@ -225,7 +225,7 @@ export function MachineTagSyncCard({
                     />
                   )}
                   <span>{item.tag}</span>
-                  {already && <span className="font-sans text-[10px]">(已有)</span>}
+                  {already && <span className="font-sans text-2xs">(已有)</span>}
                 </button>
               )
             })}

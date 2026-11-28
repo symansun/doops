@@ -78,7 +78,7 @@ const DOCS_COMPONENTS: Components = {
   ),
   table: ({ children }) => (
     <div className="docs-scroll my-5 w-full max-w-full overflow-x-auto rounded-xl border border-border/70 bg-card/45">
-      <table className="w-full table-fixed border-collapse text-left text-xs">{children}</table>
+      <table className="min-w-full table-auto border-collapse text-left text-xs">{children}</table>
     </div>
   ),
   thead: ({ children }) => (

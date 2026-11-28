@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { assetRequest } from "@/lib/assets"
 import { formatDateTime, formatMiB } from "@/lib/format"
-import { Button, Input, Select } from "./ui"
+import { Button, Input, Select, StatusBanner, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui"
 
 type App = { system_id: string; namespace: string; application: string }
 type Process = { pid: number; start_ticks: number; name: string; rss_bytes: number; deployment?: App }
@@ -27,9 +27,9 @@ function ResourceComparison({ sample, comparison }: { sample: Sample; comparison
     <h4 className="text-sm font-medium">宿主 CPU 与内存</h4>
     <p className="text-sm">{comparison.cpu_percent !== undefined ? `区间 CPU 使用率 ${comparison.cpu_percent.toFixed(1)}%` : description[comparison.status]}</p>
     {Date.now() - sample.at_ms > 300_000 && <p className="text-xs text-muted-foreground">最近样本距今超过 5 分钟，当前读数未知。</p>}
-    <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th>宿主采集时间</th><th>CPU 忙碌 / 总计（ticks）</th><th>内存已用 / 总量（MiB）</th></tr></thead><tbody>
-      {(comparison.previous ? [comparison.previous, sample] : [sample]).map(r => <tr key={r.at_ms}><td>{stamp(r.at_ms)}</td><td>{r.cpu_total_ticks == null || r.cpu_idle_ticks == null ? "未知" : `${r.cpu_total_ticks - r.cpu_idle_ticks} / ${r.cpu_total_ticks}`}</td><td>{r.memory_used_bytes == null || r.memory_total_bytes == null ? "未知" : `${mib(r.memory_used_bytes)} / ${mib(r.memory_total_bytes)}`}</td></tr>)}
-    </tbody></table></div>
+    <Table className="text-xs"><TableHeader><TableRow className="hover:bg-transparent"><TableHead>宿主采集时间</TableHead><TableHead>CPU 忙碌 / 总计（ticks）</TableHead><TableHead>内存已用 / 总量（MiB）</TableHead></TableRow></TableHeader><TableBody>
+      {(comparison.previous ? [comparison.previous, sample] : [sample]).map(r => <TableRow key={r.at_ms}><TableCell className="py-1.5">{stamp(r.at_ms)}</TableCell><TableCell className="py-1.5 font-mono">{r.cpu_total_ticks == null || r.cpu_idle_ticks == null ? "未知" : `${r.cpu_total_ticks - r.cpu_idle_ticks} / ${r.cpu_total_ticks}`}</TableCell><TableCell className="py-1.5 font-mono">{r.memory_used_bytes == null || r.memory_total_bytes == null ? "未知" : `${mib(r.memory_used_bytes)} / ${mib(r.memory_total_bytes)}`}</TableCell></TableRow>)}
+    </TableBody></Table>
   </section>
 }
 
@@ -80,8 +80,8 @@ export function MachineDiagnosticPanel({ assetId, cluster, instance, isAdmin }: 
     <header className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">{focus ? "所属应用诊断" : "宿主系统与进程"}</h4>
       {cluster && instance && <div className="flex flex-wrap items-center gap-2"><label className="text-xs">时间范围 <Select aria-label="诊断时间范围" value={range} onChange={ev => restart(ev.target.value)}>{["1h", "6h", "24h", "7d"].map(r => <option key={r}>{r}</option>)}</Select></label>
         {focus ? <Button size="sm" onClick={() => setFocus(undefined)}>返回进程列表</Button> : <Button size="sm" onClick={() => restart(range)}>重读记录</Button>}</div>}</header>
-    {notice && <p role={notice.failed ? "alert" : "status"} className={notice.failed ? "status-error" : "text-sm"}>{notice.text}</p>}
-    {!cluster || !instance ? <p className="text-sm text-muted-foreground">机器尚未绑定 Agent 目标。</p> : result?.error ? <p role="alert" className="status-error">{result.error}</p> : !report ? <p role="status" className="text-sm">正在读取诊断…</p> : <>
+    {notice && (notice.failed ? <StatusBanner tone="error">{notice.text}</StatusBanner> : <p role="status" className="text-sm">{notice.text}</p>)}
+    {!cluster || !instance ? <p className="text-sm text-muted-foreground">机器尚未绑定 Agent 目标。</p> : result?.error ? <StatusBanner tone="error">{result.error}</StatusBanner> : !report ? <p role="status" className="text-sm">正在读取诊断…</p> : <>
       <p className="break-all text-xs text-muted-foreground">{cluster}/{instance} · {assetId} · {stamp(report.from_ms)} 至 {stamp(report.to_ms)}</p>
       {!focus && report.evidence_mode === "tunnel" && (report.gap === "binding_missing" ? isAdmin && <form className="space-y-2" onSubmit={ev => { ev.preventDefault(); void collect("bind") }}>
         <label className="block text-sm">已知宿主指纹（SHA-256）<Input value={fingerprint} autoComplete="off" spellCheck={false} maxLength={64} onChange={ev => setFingerprint(ev.target.value.trim().toLowerCase())} /></label>
@@ -97,7 +97,7 @@ export function MachineDiagnosticPanel({ assetId, cluster, instance, isAdmin }: 
           <dl className="grid gap-3 text-sm sm:grid-cols-2">{[["操作系统", `${s.os} ${s.version}`], ["运行内核", s.kernel], ["最近启动", stamp(s.boot_at * 1000)], ["OOM 杀进程累计（本次启动）", s.oom_kills ?? "内核未提供计数"]].map(([label, value]) => <div key={label}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
           <div className="flex flex-wrap items-center justify-between gap-2"><h5 className="text-sm font-semibold">进程 · {rows.length} 项</h5><Select aria-label="进程排序" value={sort} onChange={ev => setSort(ev.target.value)}><option value="memory">常驻内存从高到低</option><option value="pid">PID 从小到大</option></Select></div>
           {s.exited > 0 && <small>采样期间另有 {s.exited} 个 PID 退出或被复用。</small>}
-          <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{["PID", "进程", "RSS (MiB)", "所属应用"].map(v => <th key={v} scope="col" className="p-1">{v}</th>)}</tr></thead><tbody className="divide-y">{rows.slice(0, limit).map(p => <tr key={p.pid}><td className="p-1">{p.pid}</td><td className="break-all p-1">{p.name}</td><td className="p-1">{mib(p.rss_bytes)}</td><td className="p-1">{p.deployment ? <button type="button" className="break-all text-left text-primary underline" onClick={() => { setEnd(report.to_ms); setFocus({ pid: p.pid, start_ticks: p.start_ticks, at_ms: s.at_ms }) }}>{p.deployment.application}</button> : "未核验"}</td></tr>)}</tbody></table></div>
+          <Table><TableHeader><TableRow className="hover:bg-transparent">{["PID", "进程", "RSS (MiB)", "所属应用"].map(v => <TableHead key={v} className="px-2 py-1.5">{v}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.slice(0, limit).map(p => <TableRow key={p.pid}><TableCell className="px-2 py-1.5 font-mono">{p.pid}</TableCell><TableCell className="break-all px-2 py-1.5">{p.name}</TableCell><TableCell className="px-2 py-1.5 font-mono">{mib(p.rss_bytes)}</TableCell><TableCell className="px-2 py-1.5">{p.deployment ? <button type="button" className="break-all text-left text-primary underline" onClick={() => { setEnd(report.to_ms); setFocus({ pid: p.pid, start_ticks: p.start_ticks, at_ms: s.at_ms }) }}>{p.deployment.application}</button> : "未核验"}</TableCell></TableRow>)}</TableBody></Table>
           {rows.length > limit && <Button size="sm" onClick={() => setLimit(v => v + 50)}>显示更多进程</Button>}</>}
       </>}
     </>}

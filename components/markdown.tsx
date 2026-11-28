@@ -152,7 +152,7 @@ export function MarkdownBlockquote({
       <aside
         role="note"
         className={cn(
-          "rounded-lg border border-l-[3px] px-3.5 py-2.5 first:mt-0 last:mb-0",
+          "rounded-lg border border-l-4 px-3.5 py-2.5 first:mt-0 last:mb-0",
           spacing === "article" ? "my-6 px-4 py-3.5" : "my-3",
           meta.containerClass,
         )}

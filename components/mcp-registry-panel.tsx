@@ -24,7 +24,7 @@ import {
   type MCPSyncTargetResult,
   type PlatformMCPServerRecord,
 } from "@/lib/mcp-registry"
-import { Badge, Button, Card, CardContent, Inline, Input, Select, Stack, StatusBanner, Textarea } from "./ui"
+import { Badge, Button, Card, CardContent, EmptyState, FilterBar, Inline, Input, PageHeader, Select, Skeleton, Stack, StatusBanner, Switch, Textarea } from "./ui"
 
 function fmtStamp(ms?: number): string {
   if (!ms || !Number.isFinite(ms)) return "尚未探测"
@@ -290,86 +290,84 @@ export function MCPRegistryPanel({
 
   return (
     <section aria-label="MCP 管理" className="space-y-4">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0 space-y-0.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-foreground">MCP 管理</h1>
+      <PageHeader
+        title="MCP 管理"
+        badge={
+          <>
             <Badge variant="outline">内置 {systemCount}</Badge>
             <Badge variant="outline">自定义 {customCount}</Badge>
             {totalTools > 0 && <Badge variant="primary">已探测工具 {totalTools}</Badge>}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            管理 Agent 真实挂载的 MCP Server（stdio / HTTP / SSE），执行真实 JSON-RPC tools/list 探测并同步至目标 settings.json，供 AI 助手与智能巡检统一调用。
-          </p>
-        </div>
-        <Inline gap={2} className="flex-wrap">
-          {onOpenSkills && (
-            <Button size="sm" variant="ghost" onClick={onOpenSkills}>
-              Skill 管理
-            </Button>
-          )}
-          {onOpenInspection && (
-            <Button size="sm" variant="ghost" onClick={onOpenInspection}>
-              智能巡检
-            </Button>
-          )}
-          {isAdmin && (
-            <Button size="sm" variant="primary" onClick={() => (formOpen ? setFormOpen(false) : openNewForm())}>
-              <Plus width={14} height={14} />
-              {formOpen ? "收起表单" : "接入 MCP"}
-            </Button>
-          )}
-        </Inline>
-      </header>
-
-      {/* Action Toolbar */}
-      <Card>
-        <CardContent className="flex flex-wrap items-center justify-between gap-2 p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">探测目标：</span>
-            <Select
-              scale="sm"
-              aria-label="选择探测目标"
-              className="w-52"
-              value={selectedTarget}
-              onChange={(e) => setSelectedTarget(e.target.value)}
-            >
-              {onlineTargets.length === 0 ? (
-                <option value="">无在线 Agent</option>
-              ) : (
-                onlineTargets.map((t) => (
-                  <option key={t.key} value={t.key}>
-                    {t.cluster}/{t.instance}
-                  </option>
-                ))
-              )}
-            </Select>
-            <Button
-              size="sm"
-              disabled={busy || Boolean(probingSlug) || onlineTargets.length === 0}
-              onClick={() => void handleProbe()}
-            >
-              <Wrench width={14} height={14} />
-              {probingSlug === "__all__" ? "探测中…" : "探测全部工具 (tools/list)"}
-            </Button>
-          </div>
-          <Inline gap={2}>
-            {isAdmin && (
-              <Button
-                size="sm"
-                disabled={busy || onlineTargets.length === 0}
-                onClick={() => void handleSync()}
-              >
-                <Send width={14} height={14} />
-                同步到在线 Agent ({onlineTargets.length})
+          </>
+        }
+        description="管理 Agent 真实挂载的 MCP Server（stdio / HTTP / SSE），执行真实 JSON-RPC tools/list 探测并同步至目标 settings.json，供 AI 助手与智能巡检统一调用。"
+        actions={
+          <>
+            {onOpenSkills && (
+              <Button size="sm" variant="ghost" onClick={onOpenSkills}>
+                Skill 管理
               </Button>
             )}
-            <Button size="sm" variant="ghost" disabled={loading} onClick={reload}>
-              <RefreshCw width={14} height={14} className={loading ? "animate-spin" : ""} />
+            {onOpenInspection && (
+              <Button size="sm" variant="ghost" onClick={onOpenInspection}>
+                智能巡检
+              </Button>
+            )}
+            {isAdmin && (
+              <Button size="sm" variant="primary" onClick={() => (formOpen ? setFormOpen(false) : openNewForm())}>
+                <Plus width={14} height={14} />
+                {formOpen ? "收起表单" : "接入 MCP"}
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      {/* Action Toolbar */}
+      <FilterBar className="justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">探测目标：</span>
+          <Select
+            scale="sm"
+            aria-label="选择探测目标"
+            className="w-52"
+            value={selectedTarget}
+            onChange={(e) => setSelectedTarget(e.target.value)}
+          >
+            {onlineTargets.length === 0 ? (
+              <option value="">无在线 Agent</option>
+            ) : (
+              onlineTargets.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.cluster}/{t.instance}
+                </option>
+              ))
+            )}
+          </Select>
+          <Button
+            size="sm"
+            disabled={busy || Boolean(probingSlug) || onlineTargets.length === 0}
+            onClick={() => void handleProbe()}
+          >
+            <Wrench width={14} height={14} />
+            {probingSlug === "__all__" ? "探测中…" : "探测全部工具 (tools/list)"}
+          </Button>
+        </div>
+        <Inline gap={2}>
+          {isAdmin && (
+            <Button
+              size="sm"
+              disabled={busy || onlineTargets.length === 0}
+              onClick={() => void handleSync()}
+            >
+              <Send width={14} height={14} />
+              同步到在线 Agent ({onlineTargets.length})
             </Button>
-          </Inline>
-        </CardContent>
-      </Card>
+          )}
+          <Button size="sm" variant="ghost" disabled={loading} onClick={reload}>
+            <RefreshCw width={14} height={14} className={loading ? "animate-spin" : ""} />
+          </Button>
+        </Inline>
+      </FilterBar>
 
       {error && <StatusBanner tone="error">{error}</StatusBanner>}
       {notice && <StatusBanner tone="info">{notice}</StatusBanner>}
@@ -546,9 +544,25 @@ export function MCPRegistryPanel({
 
       {/* Real MCP Server List */}
       {loading && servers.length === 0 ? (
-        <p role="status" className="py-8 text-center text-xs text-muted-foreground">
-          正在加载 MCP Server 注册表…
-        </p>
+        <div role="status" className="space-y-3">
+          <span className="sr-only">正在加载 MCP Server 注册表…</span>
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-28 w-full" />
+        </div>
+      ) : servers.length === 0 ? (
+        <EmptyState
+          icon={<Plug className="size-6" aria-hidden="true" />}
+          title="尚未接入 MCP Server"
+          description="点击右上角「接入 MCP」配置 stdio / HTTP / SSE 工具服务，并同步至在线 Agent。"
+          action={
+            isAdmin ? (
+              <Button size="sm" variant="primary" onClick={openNewForm}>
+                <Plus width={14} height={14} />
+                接入 MCP
+              </Button>
+            ) : undefined
+          }
+        />
       ) : (
         <Stack gap={3}>
           {servers.map((srv) => {
@@ -642,9 +656,12 @@ export function MCPRegistryPanel({
                           <Button size="sm" variant="ghost" disabled={busy} onClick={() => openEditForm(srv)}>
                             编辑
                           </Button>
-                          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void handleToggle(srv)}>
-                            {srv.enabled ? "停用" : "启用"}
-                          </Button>
+                          <Switch
+                            checked={srv.enabled}
+                            disabled={busy}
+                            aria-label={`${srv.enabled ? "停用" : "启用"} ${srv.name}`}
+                            onCheckedChange={() => void handleToggle(srv)}
+                          />
                         </>
                       )}
                       {srv.can_delete && (

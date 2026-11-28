@@ -519,7 +519,7 @@ function ConfigEditor({
           </Row>
           <Row label="文件内容">
             <Textarea
-              className="min-h-[14rem] w-full resize-y font-mono text-xs leading-relaxed"
+              className="min-h-56 w-full resize-y font-mono text-xs leading-relaxed"
               value={cfg.content ?? ""}
               onChange={(e) => set({ content: e.target.value })}
               spellCheck={false}

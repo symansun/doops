@@ -13,7 +13,7 @@ import {
   TerminalIcon,
   RocketIcon,
 } from "./icons"
-import { Button, Input, SegmentedControl } from "./ui"
+import { Badge, Button, Input, PageHeader, SegmentedControl } from "./ui"
 
 // 可复制的代码块
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
@@ -179,16 +179,17 @@ jobs:
   return (
     <div className="px-4 py-10">
       {/* 标题 */}
-      <div className="mb-8">
-        <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground">
-          <GitIcon width={13} height={13} />
-          CI/CD 接入
-        </div>
-        <h1 className="text-2xl font-semibold text-balance">将 DoOps 接入 CI/CD</h1>
-        <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-          流水线通过明确的自然语言任务调用 DoOps。任务至少说明 target、release、namespace 和 Chart；镜像、原因和验收按任务需要补充。
-        </p>
-      </div>
+      <PageHeader
+        className="mb-8"
+        title="将 DoOps 接入 CI/CD"
+        badge={
+          <Badge variant="outline" className="gap-1">
+            <GitIcon width={12} height={12} />
+            CI/CD 接入
+          </Badge>
+        }
+        description="流水线通过明确的自然语言任务调用 DoOps。任务至少说明 target、release、namespace 和 Chart；镜像、原因和验收按任务需要补充。"
+      />
 
       {/* 1. 配置 API Key */}
       <section className="mb-8">

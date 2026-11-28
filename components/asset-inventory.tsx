@@ -16,7 +16,7 @@ import { Button } from "./ui"
 import { PluginCenterPanel } from "./plugins/plugin-center-panel"
 
 const assetPluginLoading = (label: string) => () => (
-  <div role="status" className="flex min-h-[12rem] items-center justify-center p-6 text-sm text-muted-foreground">
+  <div role="status" className="flex min-h-48 items-center justify-center p-6 text-sm text-muted-foreground">
     正在加载{label}…
   </div>
 )
