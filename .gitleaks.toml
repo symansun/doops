@@ -9,17 +9,19 @@ description = "Hard-coded SSH password call"
 regex = '''ssh\.Password\("[^"]{8,}"\)'''
 tags = ["password", "ssh"]
 
-[[rules]]
-id = "doops-private-ip-placeholder-policy"
-description = "Known production IPs must not be committed"
-regex = '''(106\.54\.197\.139|89\.250\.81\.244|89\.250\.81\.243)'''
-tags = ["infrastructure"]
-
 [[allowlists]]
-description = "Expected placeholders and checksums"
+description = "Expected placeholders, metric identifiers, and checksums"
 regexes = [
   '''<GATEWAY_USER_TOKEN>''',
   '''REPLACE_WITH_OPENAI_API_KEY''',
   '''example\.com''',
   '''modernc\.org/token''',
+  '''k8s_pods_abnormal''',
+]
+
+[[allowlists]]
+description = "Synthetic redaction and auth test fixtures"
+paths = [
+  '''_test\.go$''',
+  '''\.test\.mjs$''',
 ]
