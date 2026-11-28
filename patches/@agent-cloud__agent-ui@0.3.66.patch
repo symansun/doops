@@ -1,0 +1,197 @@
+diff --git a/chunks/AgentWorkspace-B4jDJmal.js b/chunks/AgentWorkspace-B4jDJmal.js
+index 2e37e0f..a01bf9b 100644
+--- a/chunks/AgentWorkspace-B4jDJmal.js
++++ b/chunks/AgentWorkspace-B4jDJmal.js
+@@ -499,9 +499,11 @@ function ToolActivityCard({
+       expandable ? /* @__PURE__ */ jsx(ChevronRight, { "aria-hidden": "true", className: "size-3.5 text-muted-foreground transition-transform group-open/tool-item:rotate-90" }) : null
+     ] })
+   ] });
++  const progress = [cleanToolEvidence(item.progress?.stage), cleanToolEvidence(item.progress?.message)].filter(Boolean).join(" · ");
+   const summary = /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+     row,
+-    inlinePreview ? /* @__PURE__ */ jsx(ToolActivityPreviewLine, { preview: inlinePreview }) : null
++    inlinePreview ? /* @__PURE__ */ jsx(ToolActivityPreviewLine, { preview: inlinePreview }) : null,
++    progress ? /* @__PURE__ */ jsx("div", { className: "ml-6 break-words pb-1 text-xs text-muted-foreground", children: progress }) : null
+   ] });
+   if (!expandable) return /* @__PURE__ */ jsx("article", { children: summary });
+   return /* @__PURE__ */ jsxs("details", { className: "group/tool-item", children: [
+@@ -618,7 +620,13 @@ function ActivityTimelineRun({ active, items, reasoningElapsed, renderers, runti
+   const locale = useAgentWorkspaceLocale();
+   const text = useAgentWorkspaceText();
+   const bodyId = useId();
+-  const [open, setOpen] = useState(false);
++  // DoOps patch: once a run has started, keep it expanded until the user toggles it.
++  const [userOpen, setUserOpen] = useState(null);
++  const [started, setStarted] = useState(active);
++  useEffect(() => {
++    if (active && !started) setStarted(true);
++  }, [active, started]);
++  const open = userOpen ?? (active || started);
+   const summary = useMemo(() => turnProcessSummary(items, active, locale), [active, items, locale]);
+   const statuses = useMemo(() => new Set(items.map((item) => item.status)), [items]);
+   return /* @__PURE__ */ jsxs("section", { className: "min-w-0", "data-testid": "agent-activity-run", "data-expanded": open, "data-running": active, children: [
+@@ -628,7 +636,7 @@ function ActivityTimelineRun({ active, items, reasoningElapsed, renderers, runti
+         "aria-controls": bodyId,
+         "aria-expanded": open,
+         className: `${ACTIVITY_ROW_CLASS} w-[calc(100%_+_1rem)] justify-start font-normal text-left text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35`,
+-        onClick: () => setOpen((value) => !value),
++        onClick: () => setUserOpen(!open),
+         size: null,
+         type: "button",
+         variant: "bare",
+@@ -643,7 +651,7 @@ function ActivityTimelineRun({ active, items, reasoningElapsed, renderers, runti
+         ]
+       }
+     ),
+-    /* @__PURE__ */ jsx("div", { hidden: !open, id: bodyId, children: open ? /* @__PURE__ */ jsx("div", { className: "ml-[7px] mt-1 flex flex-col gap-1 border-l border-border/80 pl-4", children: items.map((item) => /* @__PURE__ */ jsx("div", { "data-run-step": item.id, children: item.kind === "tool" ? /* @__PURE__ */ jsx(ToolActivityCard, { item, renderers, runtime, sessionId }) : /* @__PURE__ */ jsx(ActivityTimelineActivityRow, { elapsedMs: item.kind === "reasoning" ? reasoningElapsed?.get(item.id) : void 0, item }) }, item.id)) }) : null })
++    /* @__PURE__ */ jsx("div", { hidden: !open, id: bodyId, children: /* @__PURE__ */ jsx("div", { className: "ml-[7px] mt-1 flex flex-col gap-1 border-l border-border/80 pl-4", children: items.map((item) => /* @__PURE__ */ jsx("div", { "data-run-step": item.id, children: item.kind === "tool" ? /* @__PURE__ */ jsx(ToolActivityCard, { item, renderers, runtime, sessionId }) : /* @__PURE__ */ jsx(ActivityTimelineActivityRow, { elapsedMs: item.kind === "reasoning" ? reasoningElapsed?.get(item.id) : void 0, item }) }, item.id)) }) })
+   ] });
+ }
+ const OPEN_MODEL_CONTROL_EVENT = "agent-ui:open-model-control";
+diff --git a/chunks/workspaceCodeMirrorRuntime-DIOsKQAZ.js b/chunks/workspaceCodeMirrorRuntime-DIOsKQAZ.js
+index 79f442ff..0ed96cb8 100644
+--- a/chunks/workspaceCodeMirrorRuntime-DIOsKQAZ.js
++++ b/chunks/workspaceCodeMirrorRuntime-DIOsKQAZ.js
+@@ -1,11 +1,40 @@
+ import { defaultKeymap } from "@codemirror/commands";
+-import { foldGutter, syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
++import { foldGutter, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from "@codemirror/language";
++const DARK_SYNTAX_COLORS = {
++  "#404740": "#94a3b8",
++  "#708": "#c084fc",
++  "#219": "#60a5fa",
++  "#164": "#fbbf24",
++  "#a11": "#86efac",
++  "#e40": "#fb923c",
++  "#00f": "#93c5fd",
++  "#30a": "#a5b4fc",
++  "#085": "#2dd4bf",
++  "#167": "#38bdf8",
++  "#256": "#67e8f9",
++  "#00c": "#7dd3fc",
++  "#940": "#94a3b8",
++  "#f00": "#f87171"
++};
++const darkHighlightStyle = HighlightStyle.define(
++  defaultHighlightStyle.specs.map((spec) => spec.color && DARK_SYNTAX_COLORS[spec.color] ? { ...spec, color: DARK_SYNTAX_COLORS[spec.color] } : spec)
++);
++function isDarkEditorSurface(parent) {
++  if (typeof document === "undefined") return false;
++  if (document.documentElement.classList.contains("dark")) return true;
++  if (typeof getComputedStyle === "function" && parent) {
++    return getComputedStyle(parent).colorScheme.includes("dark");
++  }
++  return false;
++}
++
+ import { highlightSelectionMatches, searchKeymap, openSearchPanel } from "@codemirror/search";
+ import { Compartment, EditorState, EditorSelection } from "@codemirror/state";
+ import { EditorView, lineNumbers, drawSelection, keymap } from "@codemirror/view";
+ import { l as languageExtension } from "./workspaceCodeLanguageLoad-CGoLytXV.js";
+ async function mountReadonlyEditor(input) {
+   const languageCompartment = new Compartment();
++  const dark = isDarkEditorSurface(input.parent);
+   const view = new EditorView({
+     parent: input.parent,
+     state: EditorState.create({
+@@ -17,12 +46,18 @@ async function mountReadonlyEditor(input) {
+         foldGutter(),
+         drawSelection(),
+         highlightSelectionMatches(),
+-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
++        syntaxHighlighting(dark ? darkHighlightStyle : defaultHighlightStyle, { fallback: true }),
+         keymap.of([...searchKeymap, ...defaultKeymap]),
+         EditorView.theme({
+-          "&": { height: "100%" },
+-          ".cm-scroller": { overflow: "auto" }
+-        }),
++          "&": { height: "100%", backgroundColor: "var(--background)", color: "var(--foreground)" },
++          ".cm-scroller": { overflow: "auto", fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)" },
++          ".cm-content": { caretColor: "var(--foreground)" },
++          ".cm-gutters": { backgroundColor: "var(--card)", color: "var(--muted-foreground)", borderRight: "1px solid var(--border)" },
++          ".cm-activeLineGutter": { backgroundColor: "var(--muted)", color: "var(--foreground)" },
++          ".cm-foldPlaceholder": { backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--muted-foreground)" },
++          ".cm-panels": { backgroundColor: "var(--card)", color: "var(--foreground)", borderColor: "var(--border)" },
++          ".cm-searchMatch": { backgroundColor: "color-mix(in oklch, var(--primary) 30%, transparent)" }
++        }, { dark }),
+         languageCompartment.of(
+           input.highlight ? await languageExtension(input.language) : []
+         )
+diff --git a/chunks/workspaceMergeRuntime-fU_NX1w5.js b/chunks/workspaceMergeRuntime-fU_NX1w5.js
+index ee407595..a7978e1a 100644
+--- a/chunks/workspaceMergeRuntime-fU_NX1w5.js
++++ b/chunks/workspaceMergeRuntime-fU_NX1w5.js
+@@ -1,12 +1,40 @@
+ import { defaultKeymap } from "@codemirror/commands";
+-import { foldGutter, syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
++import { foldGutter, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from "@codemirror/language";
++const DARK_SYNTAX_COLORS = {
++  "#404740": "#94a3b8",
++  "#708": "#c084fc",
++  "#219": "#60a5fa",
++  "#164": "#fbbf24",
++  "#a11": "#86efac",
++  "#e40": "#fb923c",
++  "#00f": "#93c5fd",
++  "#30a": "#a5b4fc",
++  "#085": "#2dd4bf",
++  "#167": "#38bdf8",
++  "#256": "#67e8f9",
++  "#00c": "#7dd3fc",
++  "#940": "#94a3b8",
++  "#f00": "#f87171"
++};
++const darkHighlightStyle = HighlightStyle.define(
++  defaultHighlightStyle.specs.map((spec) => spec.color && DARK_SYNTAX_COLORS[spec.color] ? { ...spec, color: DARK_SYNTAX_COLORS[spec.color] } : spec)
++);
++function isDarkEditorSurface(parent) {
++  if (typeof document === "undefined") return false;
++  if (document.documentElement.classList.contains("dark")) return true;
++  if (typeof getComputedStyle === "function" && parent) {
++    return getComputedStyle(parent).colorScheme.includes("dark");
++  }
++  return false;
++}
++
+ import { unifiedMergeView, MergeView } from "@codemirror/merge";
+ import { EditorState } from "@codemirror/state";
+ import { EditorView, lineNumbers, drawSelection, keymap } from "@codemirror/view";
+ import { l as languageExtension } from "./workspaceCodeLanguageLoad-CGoLytXV.js";
+ async function mountMergeDiff(input) {
+   const language = input.highlight ? await languageExtension(input.language) : [];
+-  const shared = readonlyExtensions(language);
++  const shared = readonlyExtensions(language, isDarkEditorSurface(input.parent));
+   if (input.unified) {
+     const view = new EditorView({
+       parent: input.parent,
+@@ -32,21 +60,24 @@ async function mountMergeDiff(input) {
+   });
+   return { destroy: () => merge.destroy() };
+ }
+-function readonlyExtensions(language) {
++function readonlyExtensions(language, dark) {
+   return [
+     EditorState.readOnly.of(true),
+     EditorView.editable.of(false),
+     lineNumbers(),
+     foldGutter(),
+     drawSelection(),
+-    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
++    syntaxHighlighting(dark ? darkHighlightStyle : defaultHighlightStyle, { fallback: true }),
+     keymap.of(defaultKeymap),
+     language,
+     EditorView.theme({
+-      "&": { height: "100%" },
+-      ".cm-scroller": { overflow: "auto" },
+-      ".cm-mergeView": { height: "100%", overflow: "auto" }
+-    })
++      "&": { height: "100%", backgroundColor: "var(--background)", color: "var(--foreground)" },
++      ".cm-scroller": { overflow: "auto", fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)" },
++      ".cm-mergeView": { height: "100%", overflow: "auto" },
++      ".cm-gutters": { backgroundColor: "var(--card)", color: "var(--muted-foreground)", borderRight: "1px solid var(--border)" },
++      ".cm-activeLineGutter": { backgroundColor: "var(--muted)", color: "var(--foreground)" },
++      ".cm-foldPlaceholder": { backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--muted-foreground)" }
++    }, { dark })
+   ];
+ }
+ export {

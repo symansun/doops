@@ -1,0 +1,119 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.inspect-database
+  name: 数据库健康巡检
+  description: 通过受管 DoSql MCP 与目标数据库资产目录只读核查数据库连通性、活跃连接、TPS 与锁等待，凭据不落地
+  category: data
+  icon: database
+  scenarios:
+    - app-delivery-web
+    - all-in-one
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - inspect-database
+  requires_mcp:
+    - dosql
+  catalog_inputs:
+    - database_refs
+  companion_agent_skill: dosql
+ui:
+  slots:
+    sidebar:
+      enabled: false
+      label: 数据库健康巡检
+      group: extensions
+      order: 45
+    target_tab:
+      enabled: true
+      label: 数据库巡检
+      order: 45
+    home_widget:
+      enabled: true
+      title: 数据库健康巡检
+      span: 1
+      metrics:
+        - key: active_connections
+          label: 活跃连接
+          unit: "个"
+          aggregate: max
+        - key: db_lock_waits
+          label: 锁等待
+          unit: "个"
+          aggregate: max
+    ask_presets:
+      - title: 排查数据库连接与锁等待
+        description: 通过只读 DoSql MCP 核查数据库版本、活跃会话、慢查询与锁等待
+        prompt: 请使用 inspect-database 与 dosql Skill 通过 mcp_dosql_read 只读检查当前目标已绑定数据库的连通性、活跃连接数、TPS、锁等待与慢查询，严禁执行写操作或输出连接串密码。
+  presets:
+    - id: db-readonly-health
+      title: 只读连通与指标体检
+      description: 通过受管 mcp_dosql_read 采集版本、活跃连接、TPS 与锁等待并写入时序指标
+      mode: agent
+      prompt: 请严格按照 inspect-database Skill 契约，通过 mcp_dosql_read 只读核查当前目标已绑定的受管数据库连通性、版本、活跃连接数、TPS 与锁等待概况；无已绑定库时如实报告缺口，并输出包含 checks/metrics/series_points 的标准 JSON 报告。
+    - id: db-slow-lock-triage
+      title: AI 慢查询与锁阻塞研判
+      description: 深度分析活跃会话、锁等待链与高频慢 SQL，输出索引与连接池优化建议
+      mode: agent
+      prompt: 请使用 inspect-database 与 dosql Skill 只读分析当前目标已绑定数据库的活跃会话、锁等待阻塞链与慢查询概况，按严重度输出根因归并结论与安全优化建议（严禁修改表结构或数据）。
+  actions:
+    - id: db-health-check
+      label: 只读核查库连接与锁状态
+      description: 调用 DoSql 只读通道检查数据库实例版本、活跃连接、复制状态与长事务
+      mode: check
+      skill: dosql
+      requires_mcp: dosql
+      credential_use: database
+      prompt_template: 请使用 dosql Skill 与 mcp_dosql_read 对所选数据库执行只读健康核查（实例版本、活跃连接、锁等待、长事务与错误日志概况），严禁执行任何写语句或暴露明文凭据。
+    - id: db-schema-plan
+      label: 生成结构治理与索引方案
+      description: 基于只读库表与慢查询证据生成带备份与回滚步骤的结构治理方案（不执行变更）
+      mode: plan
+      skill: dosql
+      requires_mcp: dosql
+      credential_use: database
+      prompt_template: 请使用 dosql Skill 对所选数据库的慢查询、锁等待或表结构问题做只读诊断，输出完整的索引优化或结构变更方案、风险评估与回滚预案，严禁直接执行 DDL/DML 变更。
+  views:
+    - type: kpi_grid
+      title: 数据库运行指标
+      items:
+        - key: active_connections
+          label: 活跃连接数
+          unit: "个"
+          warn_threshold: 100
+          crit_threshold: 300
+        - key: db_tps
+          label: 事务吞吐 (TPS)
+          unit: "tx/s"
+        - key: db_lock_waits
+          label: 锁等待
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 5
+        - key: response_time_ms
+          label: 查询响应延迟
+          unit: "ms"
+          warn_threshold: 200
+          crit_threshold: 1000
+    - type: findings_list
+      title: 风险与慢查询归因
+    - type: checks_table
+      title: 连通性与只读核查明细
+    - type: trend_series
+      title: 数据库指标趋势
+      metric_keys:
+        - active_connections
+        - db_tps
+        - db_lock_waits
+      range: 24h
+    - type: artifact_viewer
+      title: 完整数据库巡检报告
+schedule_template:
+  name: 数据库健康与锁等待定时巡检
+  description: 每 30 分钟通过受管 DoSql MCP 只读核查数据库连通性、连接数与锁等待
+  interval_seconds: 1800
+  scope_mode: all_online

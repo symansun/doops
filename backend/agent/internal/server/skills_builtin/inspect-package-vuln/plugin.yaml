@@ -1,0 +1,102 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.inspect-package-vuln
+  name: 软件包与补丁基线
+  description: 零 Token 盘点核心系统组件版本（openssl/openssh/curl/sudo/nginx 等）、本地待升级包与重启需求
+  category: security
+  icon: wrench
+  scenarios:
+    - host-security-ops
+    - all-in-one
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - inspect-package-vuln
+  companion_agent_skill: shell
+ui:
+  slots:
+    sidebar:
+      enabled: false
+      label: 软件包与补丁
+      group: extensions
+      order: 65
+    target_tab:
+      enabled: true
+      label: 补丁基线
+      order: 65
+    home_widget:
+      enabled: false
+      title: 软件包与补丁基线
+      span: 1
+    ask_presets:
+      - title: 核查关键软件包与待升级补丁
+        description: 盘点 openssl/openssh/sudo/nginx 等核心组件版本并评估补丁升级风险
+        prompt: 请使用 inspect-package-vuln Skill 盘点当前主机的核心系统组件版本、本地待升级包数及是否需要重启，结合安全风险优先级给出只读补丁评估建议。
+  presets:
+    - id: pkg-baseline-scan
+      title: 关键组件与待升级包盘点
+      description: 零 Token 采集 dpkg/rpm/apk 核心包版本、本地待升级包数量与重启标记
+      mode: script
+    - id: pkg-risk-triage
+      title: AI 补丁优先级评估
+      description: 结合组件版本与对外暴露服务评估升级顺序、兼容性影响与维护窗口
+      mode: agent
+      prompt: 请结合 inspect-package-vuln 巡检结果，只读分析当前主机已盘点核心组件与待升级软件包的风险优先级、服务重启影响与分批升级建议，严禁自动执行升级。
+  actions:
+    - id: pkg-audit-plan
+      label: 生成分批补丁升级计划
+      description: 针对选定核心组件制定带版本回退与服务验证的维护窗口升级方案（不执行变更）
+      mode: plan
+      skill: shell
+      prompt_template: 请针对所选软件包与主机待升级补丁清单，生成包含预检、维护窗口执行命令、服务重启顺序与回滚方案的补丁升级计划，严禁直接执行安装或重启。
+    - id: pkg-upgrade-apply
+      label: 受控执行补丁升级
+      description: 经人工确认后在审计通道内执行指定安全补丁升级并复核组件版本
+      mode: apply
+      skill: shell
+      prompt_template: 请在明确确认升级范围后，针对所选核心组件执行受控只含目标包的安全补丁升级，完成后立即重新核验包版本与关键服务运行状态，并保留完整回执。
+  views:
+    - type: kpi_grid
+      title: 软件包与补丁指标
+      items:
+        - key: key_packages_tracked
+          label: 已盘点核心组件
+          unit: "个"
+        - key: upgradable_packages
+          label: 本地待升级包
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 30
+    - type: resource_table
+      title: 核心组件版本清单
+      source_key: packages
+      row_action_id: pkg-audit-plan
+      columns:
+        - key: package
+          label: 软件包
+          kind: code
+        - key: version
+          label: 当前版本
+          kind: code
+        - key: manager
+          label: 包管理器
+          kind: badge
+    - type: checks_table
+      title: 包清单与重启检查
+    - type: trend_series
+      title: 待升级包趋势
+      metric_keys:
+        - upgradable_packages
+        - key_packages_tracked
+      range: 7d
+    - type: artifact_viewer
+      title: 完整补丁基线报告
+schedule_template:
+  name: 主机软件包与补丁基线定时巡检
+  description: 每日自动盘点核心组件版本、本地待升级包数及补丁重启标记
+  interval_seconds: 86400
+  scope_mode: all_online

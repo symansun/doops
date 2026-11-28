@@ -1,0 +1,22 @@
+Minimalist editorial technical illustration, flat vector line-art diagram for a professional magazine article. Pure white background (#FFFFFF). Thin uniform black strokes about 2px, geometric construction, no shading, no texture. Large containers filled with very light warm grey (#F2F3F2) and outlined in thin black. Exactly one accent color: deep teal-green #0E7C66, used sparingly for one highlighted element or for a few small arrows. Generous negative space, calm Swiss infographic aesthetic, flat straight-on front elevation view, wide horizontal composition, content centered with wide empty margins on all sides.
+
+A RADIAL CAPABILITY MAP, perfectly centered and symmetrical. In the middle stands one small gateway door in deep teal-green outline, with the single word "Gateway" underneath it.
+
+Around the gateway door, NINE small rounded-square icon tiles are arranged evenly on one invisible circle like a clock face, all the same size, each tile a thin black outline with a very light grey fill, and each tile holds exactly one simple line icon with one short word written underneath the tile:
+1 a terminal window with a chevron, word "CLI";
+2 a robot head, word "Agent";
+3 a folder, word "Files";
+4 a hexagon, word "K8s";
+5 a stacked package with a curved delivery arrow, word "Helm";
+6 a stack of three boxes, word "Registry";
+7 a small chip with two sparkles, word "AI";
+8 a database cylinder, word "DB";
+9 an open ledger book, word "Audit".
+
+Each tile is joined to the central gateway door by one thin straight black spoke, like a wheel. All nine spokes are the same length, forming a tidy ring. One tile only, the terminal tile, may use the deep teal-green accent outline.
+
+Everything is evenly spaced with generous white space between tiles, the ring floats free with no outer circle drawn.
+
+TEXT RULE: the only text allowed in the entire image is "Gateway", "CLI", "Agent", "Files", "K8s", "Helm", "Registry", "AI", "DB", "Audit", spelled exactly like that, rendered in a clean geometric sans-serif, small and neat, lots of space around it. Invent nothing else.
+
+no Chinese characters, no CJK glyphs, no Japanese, no Korean, no Arabic script, no gibberish letters, no fake text, no lorem ipsum, no misspellings, no small captions, no long sentences, no paragraphs, no legend, no annotations beyond the exact labels listed, no extra numerals, no watermarks, no logos, no signatures, no gradients, no drop shadows, no 3D, no isometric view, no photorealism, no neon, no glow, no dark background, no paper texture, no clutter, no dense detail, no emoji, no clip-art, no outer frame or border around the canvas.

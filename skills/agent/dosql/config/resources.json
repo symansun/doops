@@ -1,0 +1,26 @@
+{
+  "schema": "dosuite.skill-resources.v1",
+  "product": "DoSql",
+  "updatedAt": "2026-11-28T00:00:00.000Z",
+  "credentialPolicy": "No plaintext database credentials are stored here. Resolve logical endpoints through the selected DoOps Gateway target and managed credential scope before execution.",
+  "resources": [
+    {
+      "id": "db-example-mysql",
+      "name": "app-primary",
+      "kind": "MySQL",
+      "logicalEndpoint": "mysql://db.example.internal:3306/app",
+      "owner": "platform",
+      "status": "discovered",
+      "risk": "none",
+      "tags": [
+        "example",
+        "mysql"
+      ],
+      "note": "Placeholder metadata entry. Discover live target assets via DoOps Gateway before running queries or migrations."
+    }
+  ],
+  "quickPrompts": [
+    "Create a user-readable change plan for adding an external transaction id field. Do not ask me to approve raw SQL.",
+    "Run a read-only schema inspect and drift check against the target database."
+  ]
+}

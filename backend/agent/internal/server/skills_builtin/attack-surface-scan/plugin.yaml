@@ -1,0 +1,214 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.attack-surface-scan
+  name: 外部暴露面扫描
+  description: 低速只读检查已登记站点 OWASP 安全头、敏感路径暴露、公开登录面与覆盖缺口
+  category: security
+  icon: radar
+  scenarios:
+    - host-security-ops
+    - app-delivery-web
+    - all-in-one
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - attack-surface-scan
+  catalog_inputs:
+    - website_urls
+  companion_agent_skill: dosecurity
+ui:
+  slots:
+    sidebar:
+      enabled: true
+      label: 外部暴露面扫描
+      group: extensions
+      order: 40
+    target_tab:
+      enabled: true
+      label: 暴露面扫描
+      order: 40
+    home_widget:
+      enabled: true
+      title: 外部暴露面扫描
+      span: 1
+      metrics:
+        - key: surface_risk_total
+          label: 暴露面风险
+          unit: "项"
+          aggregate: max
+        - key: surface_exposed_paths
+          label: 敏感路径命中
+          unit: "处"
+          aggregate: max
+        - key: surface_missing_csp
+          label: 缺少 CSP 站点
+          unit: "个"
+          aggregate: max
+    ask_presets:
+      - title: 生成暴露面加固与 Nginx 安全头方案
+        description: 针对缺失 CSP/HSTS 或敏感路径暴露生成只读整改建议
+        prompt: 请使用 dosecurity 与 attack-surface-scan Skill 复核当前目标的外部暴露面扫描结果，按优先级整理安全响应头加固配置与敏感路径封禁建议（严禁自动修改生产配置）。
+  inputs:
+    - key: CHECK_SECURITY_HEADERS
+      label: 核查 OWASP 安全响应头
+      description: 检查 CSP、HSTS、X-Frame-Options、X-Content-Type-Options 等 6 项基线
+      type: boolean
+      default: true
+    - key: CHECK_SENSITIVE_PATHS
+      label: 探测常见敏感路径暴露
+      description: 低速只读核查 .git/.env/Swagger/OpenAPI/Actuator（命中绝不回显正文）
+      type: boolean
+      default: true
+    - key: DETECT_LOGIN_SURFACES
+      label: 识别公开登录与后台入口
+      description: 信息级标记公开登录页，提醒核查 MFA、验证码与限速策略
+      type: boolean
+      default: true
+    - key: REQUEST_DELAY_MS
+      label: 低速请求间隔
+      description: 相邻 HTTP 探针间的延时（毫秒），保护业务站点零压力
+      type: number
+      default: 400
+      min: 100
+      max: 3000
+      step: 100
+      unit: "ms"
+    - key: MAX_URLS
+      label: 单次最多扫描站点数
+      description: 从当前目标网站目录注入的站点中最多扫描的数量
+      type: number
+      default: 12
+      min: 1
+      max: 12
+      step: 1
+      unit: "个"
+    - key: RUN_OPTIONAL_NUCLEI
+      label: 检测可选 Nuclei 模板就绪态
+      description: 仅核验只读 allowlist 工具是否可用，未安装时记入覆盖缺口
+      type: boolean
+      default: false
+  presets:
+    - id: surface-standard
+      title: 低速标准暴露面体检
+      description: 全面核查安全响应头、敏感路径暴露与公开登录面（只读低速）
+      mode: script
+      inputs:
+        CHECK_SECURITY_HEADERS: true
+        CHECK_SENSITIVE_PATHS: true
+        DETECT_LOGIN_SURFACES: true
+        REQUEST_DELAY_MS: 400
+        MAX_URLS: 12
+        RUN_OPTIONAL_NUCLEI: false
+    - id: surface-headers-fast
+      title: 快速安全头基线核查
+      description: 仅扫描安全响应头与版本指纹，不发敏感路径探测请求
+      mode: script
+      inputs:
+        CHECK_SECURITY_HEADERS: true
+        CHECK_SENSITIVE_PATHS: false
+        DETECT_LOGIN_SURFACES: true
+        REQUEST_DELAY_MS: 200
+        MAX_URLS: 12
+        RUN_OPTIONAL_NUCLEI: false
+    - id: surface-ai-remediation
+      title: AI 安全加固与复核
+      description: 在 AI 助手中对全部暴露面发现生成 Nginx 安全头与访问控制加固方案
+      mode: agent
+      prompt: 请使用 dosecurity Skill 汇总本次外部暴露面扫描的高/中危发现，按 P1-P3 输出可直接审阅的 Nginx 安全头配置与敏感路径阻断方案（严禁执行爆破或直接改动生产服务）。
+  actions:
+    - id: surface-plan
+      label: 生成授权扫描计划
+      description: 基于当前目标站点生成低速、只读、受预算约束的扫描边界计划
+      mode: plan
+      skill: dosecurity
+      prompt_template: 请使用 dosecurity Skill 为所选站点生成低速只读安全评估计划（明确请求预算、RPS 上限、禁止能力清单与验证步骤），严禁执行破坏性操作。
+    - id: surface-harden-plan
+      label: 生成安全加固方案
+      description: 结合缺失安全头与敏感路径暴露输出 Nginx / Ingress 加固配置建议
+      mode: check
+      skill: dosecurity
+      prompt_template: 请结合所选站点的暴露面扫描证据，输出不破坏现有业务的 CSP、HSTS、X-Frame-Options、Referrer-Policy 及敏感路径拦截配置方案（仅输出方案，不修改线上文件）。
+  views:
+    - type: kpi_grid
+      title: 暴露面安全概览
+      items:
+        - key: surface_risk_total
+          label: 风险发现合计
+          unit: "项"
+          warn_threshold: 1
+          crit_threshold: 5
+        - key: surface_urls_scanned
+          label: 扫描站点数
+          unit: "个"
+        - key: surface_exposed_paths
+          label: 敏感路径命中
+          unit: "处"
+          warn_threshold: 1
+          crit_threshold: 1
+        - key: surface_missing_csp
+          label: 缺少 CSP 站点
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 3
+        - key: surface_missing_headers
+          label: 安全头缺失总数
+          unit: "项"
+          warn_threshold: 2
+          crit_threshold: 8
+        - key: surface_login_surfaces
+          label: 公开登录入口
+          unit: "个"
+    - type: findings_list
+      title: 风险发现、根因评分与覆盖缺口
+    - type: resource_table
+      title: 扫描站点暴露面矩阵
+      source_key: resources
+      row_action_id: surface-harden-plan
+      columns:
+        - key: url
+          label: 站点 URL
+          kind: code
+        - key: status_code
+          label: 状态码
+          kind: number
+        - key: missing_headers
+          label: 缺失安全头
+          kind: number
+        - key: exposed_paths
+          label: 敏感路径
+          kind: number
+        - key: server_banner
+          label: 指纹头
+          kind: code
+        - key: status
+          label: 评级
+          kind: badge
+    - type: charts
+      title: 暴露面风险分类分布
+    - type: checks_table
+      title: 逐站点基线检查明细
+    - type: trend_series
+      title: 暴露面风险历史趋势
+      metric_keys:
+        - surface_risk_total
+        - surface_exposed_paths
+        - surface_missing_csp
+      range: 7d
+    - type: artifact_viewer
+      title: 完整暴露面扫描产物
+schedule_template:
+  name: 外部暴露面安全基线定时巡检
+  description: 每小时低速只读核查目标已登记站点的 OWASP 安全响应头与常见敏感路径暴露
+  interval_seconds: 3600
+  scope_mode: all_online
+  inputs:
+    CHECK_SECURITY_HEADERS: true
+    CHECK_SENSITIVE_PATHS: true
+    DETECT_LOGIN_SURFACES: true
+    REQUEST_DELAY_MS: 400
+    MAX_URLS: 12
+    RUN_OPTIONAL_NUCLEI: false

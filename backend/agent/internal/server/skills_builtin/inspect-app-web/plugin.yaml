@@ -1,0 +1,109 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.inspect-app-web
+  name: Web 可用性与证书巡检
+  description: 自动联动目标网站目录探测 HTTP/HTTPS 可用性、响应延迟、TLS 证书剩余天数与本机 Nginx 语法
+  category: delivery
+  icon: activity
+  scenarios:
+    - app-delivery-web
+    - all-in-one
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - inspect-app-web
+  catalog_inputs:
+    - website_urls
+  companion_agent_skill: doweb
+ui:
+  slots:
+    sidebar:
+      enabled: false
+      label: Web 可用性巡检
+      group: extensions
+      order: 35
+    target_tab:
+      enabled: true
+      label: Web 巡检
+      order: 35
+    home_widget:
+      enabled: true
+      title: Web 可用性与证书巡检
+      span: 1
+      metrics:
+        - key: tcp_listen_ports
+          label: TCP 监听端口
+          unit: "个"
+          aggregate: max
+    ask_presets:
+      - title: 排查站点 5xx 与证书临期告警
+        description: 结合 Nginx 配置、监听端口与 TLS 证书链定位站点不可用根因
+        prompt: 请使用 inspect-app-web 与 doweb Skill 只读核查当前目标已登记站点的 HTTP 可用性、响应延迟、TLS 证书剩余天数与 Nginx 语法，给出排查证据与恢复建议。
+  presets:
+    - id: web-avail-probe
+      title: 站点可用性与证书体检
+      description: 零 Token 探活全部已登记网站目录 URL，核验 TLS 剩余天数与 nginx -t
+      mode: script
+    - id: web-ai-diagnose
+      title: AI 站点延迟与反代排障
+      description: 结合网站巡检与 DoWeb 站点配置定位慢响应、502/504 与证书问题
+      mode: agent
+      prompt: 请结合 inspect-app-web 巡检结果与 mcp_doops_web_read 只读分析目标站点的可用性、证书有效期及 Nginx 反代配置，输出按优先级排序的修复建议。
+  actions:
+    - id: web-avail-check
+      label: 核查站点与 Nginx 配置
+      description: 只读调用 doweb 检查所选站点的 SiteSpec、Nginx 语法与证书状态
+      mode: check
+      skill: doweb
+      prompt_template: 请使用 mcp_doops_web_read 与只读诊断核查所选站点的 Nginx 配置、TLS 证书有效期与上游健康状态，严禁执行变更。
+    - id: web-cert-plan
+      label: 规划证书续期与站点修复
+      description: 针对临期证书或探活异常站点生成受控修复计划（可衔接网站面板执行）
+      mode: plan
+      skill: doweb
+      prompt_template: 请针对所选站点的证书临期、HTTP 异常或反代超时问题，制定通过 DoWeb 执行的结构化修复与回滚计划，严禁直接修改线上配置。
+  views:
+    - type: kpi_grid
+      title: Web 运行态势
+      items:
+        - key: tcp_listen_ports
+          label: 本机 TCP 监听端口
+          unit: "个"
+    - type: resource_table
+      title: 网站目录 HTTP/TLS 探活明细
+      source_key: endpoints
+      row_action_id: web-avail-check
+      columns:
+        - key: url
+          label: 站点 URL
+          kind: code
+        - key: status_code
+          label: 状态码
+          kind: number
+        - key: latency_ms
+          label: 延迟(ms)
+          kind: number
+        - key: cert_days_left
+          label: 证书剩余(天)
+          kind: number
+        - key: status
+          label: 状态
+          kind: badge
+    - type: checks_table
+      title: 监听、Nginx 与站点检查明细
+    - type: trend_series
+      title: 站点与端口趋势
+      metric_keys:
+        - tcp_listen_ports
+      range: 24h
+    - type: artifact_viewer
+      title: 完整 Web 巡检报告
+schedule_template:
+  name: Web 站点可用性与证书定时巡检
+  description: 每 15 分钟自动探活目标资产目录登记的 HTTP/HTTPS 站点并监控证书临期
+  interval_seconds: 900
+  scope_mode: all_online

@@ -1,0 +1,12 @@
+import type { Metadata } from "next"
+import "./console.css"
+import { ConsoleFormAssist } from "@/components/form-assist"
+
+export const metadata: Metadata = {
+  title: "DoOps Console · 智能运维工作台",
+  description: "DoOps 统一运维工作台：连接目标、调用领域 skill，并通过 Gateway 完成认证、授权、执行与审计。",
+}
+
+export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
+  return <>{children}<ConsoleFormAssist /></>
+}

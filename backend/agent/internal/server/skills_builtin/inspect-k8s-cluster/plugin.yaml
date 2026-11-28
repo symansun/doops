@@ -1,0 +1,140 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.inspect-k8s-cluster
+  name: K8s 集群深度体检
+  description: 只读巡检 Node 健康压力、异常与高重启 Pod、控制器副本、PVC 绑定、Warning 事件及 Top40 Pod 资源用量
+  category: infrastructure
+  icon: layers
+  scenarios:
+    - ai-compute-cluster
+    - app-delivery-web
+    - all-in-one
+capabilities:
+  target_modes:
+    - kubernetes
+  requires_skills:
+    - inspect-k8s-cluster
+  requires_mcp:
+    - doops
+  companion_agent_skill: k8s
+ui:
+  slots:
+    sidebar:
+      enabled: false
+      label: K8s 集群体检
+      group: extensions
+      order: 15
+    target_tab:
+      enabled: true
+      label: 集群体检
+      order: 15
+    home_widget:
+      enabled: true
+      title: K8s 集群深度体检
+      span: 1
+      metrics:
+        - key: k8s_nodes_total
+          label: 集群节点数
+          unit: "个"
+          aggregate: max
+        - key: k8s_nodes_not_ready
+          label: 异常节点
+          unit: "个"
+          aggregate: max
+        - key: k8s_pods_abnormal
+          label: 异常 Pod
+          unit: "个"
+          aggregate: max
+        - key: k8s_warning_events
+          label: Warning 事件
+          unit: "条"
+          aggregate: max
+    ask_presets:
+      - title: 排查异常 Pod 与近期 Warning 事件
+        description: 结合 kubectl 状态与事件定位 CrashLoopBackOff / Pending 根因
+        prompt: 请使用 inspect-k8s-cluster Skill 与 mcp_doops_k8s_read 只读核查当前集群的异常节点、CrashLoopBackOff/OOMKilled/Pending Pod 及近期 Warning 事件，给出根因与修复建议。
+  presets:
+    - id: k8s-baseline-health
+      title: 集群全量基线体检
+      description: 采集 Node、Pod、控制器副本、PVC、事件与 Top40 Pod 实时用量
+      mode: script
+    - id: k8s-ai-triage
+      title: AI 异常工作负载根因研判
+      description: 结合集群体检结果深挖异常 Pod 日志与调度阻塞事件
+      mode: agent
+      prompt: 请结合 inspect-k8s-cluster 巡检结果与 mcp_doops_k8s_read，逐项排查异常 Pod 的容器日志、前一次崩溃原因与命名空间事件，输出按优先级排序的恢复建议。
+  actions:
+    - id: k8s-triage
+      label: 异常 Pod 根因排查
+      description: 只读调用 mcp_doops_k8s_read 拉取所选 Pod 日志、状态与事件
+      mode: check
+      skill: k8s
+      prompt_template: 请使用 mcp_doops_k8s_read 只读检查所选命名空间与 Pod 的状态、近期事件与容器日志（必要时查 previous 日志），定位异常根因，严禁执行写操作。
+    - id: k8s-remediate-plan
+      label: 规划扩缩容与资源调优
+      description: 针对高资源占用或副本异常工作负载生成 Helm/K8s 调优方案
+      mode: plan
+      skill: k8s
+      prompt_template: 请根据集群 Pod 用量与异常状态，为所选工作负载制定资源 requests/limits 调优、副本恢复或滚动重启方案与回滚步骤，严禁直接变更集群。
+  views:
+    - type: kpi_grid
+      title: 集群健康与资源态势
+      items:
+        - key: k8s_nodes_total
+          label: 节点总数
+          unit: "个"
+        - key: k8s_nodes_not_ready
+          label: 异常节点
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 1
+        - key: k8s_pods_total
+          label: Pod 总数
+          unit: "个"
+        - key: k8s_pods_abnormal
+          label: 异常 Pod
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 3
+        - key: k8s_warning_events
+          label: Warning 事件
+          unit: "条"
+          warn_threshold: 20
+          crit_threshold: 100
+        - key: k8s_pods_with_usage
+          label: 有用量 Pod
+          unit: "个"
+    - type: resource_table
+      title: Top 40 高负载 Pod 实时用量
+      source_key: pod_usage
+      row_action_id: k8s-triage
+      columns:
+        - key: namespace
+          label: 命名空间
+          kind: badge
+        - key: pod
+          label: Pod 名称
+          kind: code
+        - key: cpu_millicores
+          label: CPU(m)
+          kind: number
+        - key: memory_bytes
+          label: 内存(Bytes)
+          kind: number
+    - type: checks_table
+      title: 集群基线检查明细
+    - type: trend_series
+      title: 集群异常与事件趋势
+      metric_keys:
+        - k8s_pods_abnormal
+        - k8s_nodes_not_ready
+        - k8s_warning_events
+      range: 24h
+    - type: artifact_viewer
+      title: 完整 K8s 巡检产物
+schedule_template:
+  name: Kubernetes 集群定时体检
+  description: 每 15 分钟巡检全量在线 K8s 集群节点、Pod、PVC 与资源用量
+  interval_seconds: 900
+  scope_mode: all_online

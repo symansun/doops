@@ -1,0 +1,215 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.doemail
+  name: 邮件服务治理
+  description: 独立按需插件：核查邮件域 A/MX/SPF/DKIM/DMARC/rDNS、SMTP/IMAPS 与 K8s 邮件健康，并自带零明文密码独立 MCP
+  category: ops
+  icon: network
+  opt_in: true
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - doemail
+  requires_mcp:
+    - doemail
+  catalog_inputs:
+    - website_domains
+catalog_schemas:
+  - key: domain
+    label: 邮件域资产目录
+    description: 插件自声明资产目录（存储于 plugin:doemail:domain，零内核硬编码），按需登记后自动注入 DOOPS_PLUGIN_MAIL_DOMAINS。
+    env_var: DOOPS_PLUGIN_MAIL_DOMAINS
+    primary_field: domain
+    max_items: 24
+    fields:
+      - key: domain
+        label: 邮件主域
+        placeholder: example.org
+        type: domain
+      - key: mx_host
+        label: MX 主机名
+        placeholder: mail.example.org
+        type: host
+      - key: dkim_selector
+        label: DKIM 选择器
+        placeholder: default
+        type: label
+        default: default
+mcp_server:
+  slug: doemail
+  name: DoEmail 独立插件 MCP
+  description: 随 doemail 插件包同步至目标 Agent 的零依赖 Node.js stdio MCP Server（零明文密码、强制 passwordSecretRef URI 校验）
+  transport: stdio
+  command: node
+  args:
+    - "${SKILL_DIR}/mcp/server.mjs"
+  read_tools:
+    - dns_plan
+    - dns_evaluate
+    - integration_guide
+    - k8s_inspect_plan
+  apply_tools:
+    - account_create_plan
+    - listener_plan
+    - validate_manifest
+  tool_timeout_secs: 120
+ui:
+  slots:
+    sidebar:
+      enabled: true
+      label: 邮件服务治理
+      group: extensions
+      order: 50
+    target_tab:
+      enabled: true
+      label: 邮件治理
+      order: 50
+    home_widget:
+      enabled: false
+      title: 邮件服务治理
+      span: 1
+    ask_presets:
+      - title: 生成新邮件域接入 DNS 与客户端指南
+        description: 输出标准 A/MX/SPF/DKIM/DMARC/rDNS 清单及 Java/Python/Node 接入指引
+        prompt: 请使用 doemail 插件自带的 MCP 工具为目标邮件域生成完整 DNS 接入记录清单与 SMTP/IMAPS 开发者接入指南（严禁输出明文密码）。
+  inputs:
+    - key: CHECK_DNS_AUTH
+      label: 校验 SPF/DKIM/DMARC/MX
+      description: 通过纯 Python DNS 探针核验邮件域认证记录
+      type: boolean
+      default: true
+    - key: CHECK_SMTP_IMAPS
+      label: 探测 SMTP/IMAPS 与证书
+      description: 只读检查 25 / 587 / 993 端口连通性与 IMAPS TLS 证书剩余天数
+      type: boolean
+      default: true
+    - key: CHECK_K8S_RUNTIME
+      label: 巡检 K8s 邮件 Pod 与 PVC
+      description: 集群目标自动检查邮件命名空间工作负载与持久卷绑定状态
+      type: boolean
+      default: true
+    - key: CERT_WARN_DAYS
+      label: 证书临期告警天数
+      description: IMAPS TLS 证书剩余有效期少于该天数时触发 warning
+      type: number
+      default: 14
+      min: 3
+      max: 90
+      step: 1
+      unit: "天"
+  presets:
+    - id: mail-full-health
+      title: 全链路邮件体检
+      description: 完整检查 K8s 邮件运行时、SMTP/IMAPS 端口与 DNS 认证基线
+      mode: script
+      inputs:
+        CHECK_DNS_AUTH: true
+        CHECK_SMTP_IMAPS: true
+        CHECK_K8S_RUNTIME: true
+        CERT_WARN_DAYS: 14
+    - id: mail-dns-only
+      title: 邮件域 DNS 专项核验
+      description: 重点检查 MX、SPF、DMARC、DKIM 与反向解析合规性
+      mode: script
+      inputs:
+        CHECK_DNS_AUTH: true
+        CHECK_SMTP_IMAPS: false
+        CHECK_K8S_RUNTIME: false
+        CERT_WARN_DAYS: 14
+    - id: mail-ai-diagnose
+      title: AI 退信与投递链路诊断
+      description: 在 AI 助手中排查拒信、rDNS、DKIM 或 K8s 邮件队列异常
+      mode: agent
+      prompt: 请使用 doemail 插件自带 MCP 工具排查当前目标的邮件收发链路与 DNS 合规状态，输出根因与只读修复清单。
+  actions:
+    - id: mail-onboard-guide
+      label: 域名接入与开发指南
+      description: 调用 doemail 插件 MCP 生成 DNS 接入记录清单与开发者接入示例
+      mode: check
+      skill: doemail
+      requires_mcp: doemail
+      prompt_template: 请使用 doemail 插件自带的只读 MCP 工具（mcp_doemail_dns_plan / mcp_doemail_integration_guide）生成域名接入记录清单与开发者指南，不执行写操作。
+    - id: mail-account-plan
+      label: 规划账号与权限变更
+      description: 生成基于 passwordSecretRef 的账号/别名/配额结构化变更计划（零明文密码）
+      mode: plan
+      skill: doemail
+      requires_mcp: doemail
+      prompt_template: 请使用 doemail 插件生成基于 K8s Secret 引用（password_secret_ref）的结构化账号与权限变更计划，严禁出现明文密码。
+    - id: mail-listener-plan
+      label: 有界监听演练规划
+      description: 生成单次 run-once 邮箱事件监听与升级审批规则计划
+      mode: plan
+      skill: doemail
+      requires_mcp: doemail
+      prompt_template: 请使用 doemail 插件生成有界 run-once 邮箱事件监听计划，明确速率限制、审批边界与审计留痕要求。
+    - id: mail-apply
+      label: 受控执行邮件运维
+      description: 经 doemail 插件独立 MCP 执行账号规划、有界监听或工作区清单安全校验（强制 Secret 引用，零明文密码）
+      mode: apply
+      skill: doemail
+      requires_mcp: doemail
+      credential_use: opaqueSecret
+      prompt_template: 请使用 doemail 插件自带的 MCP 工具（mcp_doemail_account_create_plan / mcp_doemail_listener_plan / mcp_doemail_validate_manifest）执行受控邮件运维，强制使用 password_secret_ref 且严禁出现任何明文密码。
+  views:
+    - type: kpi_grid
+      title: 邮件服务态势
+      items:
+        - key: mail_risk_total
+          label: 邮件风险合计
+          unit: "项"
+          warn_threshold: 1
+          crit_threshold: 3
+        - key: mail_domains_checked
+          label: 核验邮件域
+          unit: "个"
+        - key: mail_dns_pass_pct
+          label: DNS 认证通过率
+          unit: "%"
+        - key: mail_endpoints_up
+          label: 存活邮件端口
+          unit: "个"
+        - key: mail_cert_min_days
+          label: 最短证书剩余
+          unit: "天"
+        - key: mail_k8s_unready
+          label: 异常 Pod/PVC
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 1
+    - type: findings_list
+      title: 邮件合规风险与覆盖缺口
+    - type: resource_table
+      title: 邮件域与运行时端点明细
+      source_key: resources
+      row_action_id: mail-onboard-guide
+      columns:
+        - key: name
+          label: 域名 / 端点
+          kind: code
+        - key: kind
+          label: 类型
+          kind: badge
+        - key: detail
+          label: 核验摘要
+          kind: text
+        - key: status
+          label: 状态
+          kind: badge
+    - type: checks_table
+      title: 邮件巡检检查明细
+    - type: charts
+      title: 邮件链路健康分布
+    - type: trend_series
+      title: 邮件服务历史趋势
+      metric_keys:
+        - mail_risk_total
+        - mail_dns_pass_pct
+        - mail_cert_min_days
+      range: 7d
+    - type: artifact_viewer
+      title: 完整邮件巡检产物

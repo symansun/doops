@@ -1,0 +1,258 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.dodns
+  name: DNS 基础设施治理
+  description: 独立插件：零 dig 依赖核查 BIND/Unbound 状态、Zone 语法、开放递归、AXFR 与解析延迟，并自带独立 MCP 执行带自动回滚的受控变更
+  category: infrastructure
+  icon: globe
+  opt_in: true
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - dodns
+  requires_mcp:
+    - dodns
+  catalog_inputs:
+    - website_domains
+catalog_schemas:
+  - key: zone
+    label: DNS Zone 资产目录
+    description: 插件自声明资产目录（存储于 plugin:dodns:zone，零内核硬编码），登记后自动注入 DOOPS_PLUGIN_DNS_ZONES。
+    env_var: DOOPS_PLUGIN_DNS_ZONES
+    primary_field: zone
+    max_items: 24
+    fields:
+      - key: zone
+        label: 域名 / Zone
+        placeholder: example.org
+        type: domain
+      - key: server
+        label: 探测/权威服务器
+        placeholder: 127.0.0.1 或 ns1.example.org
+        type: host
+        default: 127.0.0.1
+      - key: view
+        label: 视图标签
+        placeholder: default / internal / public
+        type: label
+        default: default
+mcp_server:
+  slug: dodns
+  name: DoDNS 独立插件 MCP
+  description: 随 dodns 插件包同步至目标 Agent 的零依赖 Python stdio MCP Server（支持纯 Python DNS 查询与带自动回滚的 Zone/AliDNS 变更）
+  transport: stdio
+  command: python3
+  args:
+    - "${SKILL_DIR}/mcp/server.py"
+  read_tools:
+    - query
+    - check_recursion
+    - zone_render
+    - zone_check
+  apply_tools:
+    - record_add
+    - record_replace
+    - record_delete
+    - alidns_ensure
+  tool_timeout_secs: 120
+ui:
+  slots:
+    sidebar:
+      enabled: true
+      label: DNS 基础设施治理
+      group: extensions
+      order: 30
+    target_tab:
+      enabled: true
+      label: DNS 治理
+      order: 30
+    home_widget:
+      enabled: true
+      title: DNS 基础设施治理
+      span: 1
+      metrics:
+        - key: dns_risk_total
+          label: DNS 风险项
+          unit: "项"
+          aggregate: max
+        - key: dns_zones_total
+          label: 核验域名/Zone
+          unit: "个"
+          aggregate: max
+        - key: dns_latency_max_ms
+          label: 最高解析延迟
+          unit: "ms"
+          aggregate: max
+    ask_presets:
+      - title: 排查权威与递归解析异常
+        description: 核查 BIND/Unbound 配置、区文件语法与解析链路
+        prompt: 请使用 dodns 插件自带的 MCP 工具（query / check_recursion / zone_check）只读核查当前目标的 BIND/Unbound 状态、区文件语法与域名解析一致性。
+  inputs:
+    - key: CHECK_OPEN_RECURSION
+      label: 探测开放递归风险
+      description: 向本机 53 端口发送只读 RD 查询，检查是否意外返回 RA=1 开放递归
+      type: boolean
+      default: true
+    - key: CHECK_AXFR
+      label: 探测 AXFR 区域传送
+      description: 对发现的 Zone 发送只读 TCP AXFR 探针，核查区域传送暴露风险
+      type: boolean
+      default: true
+    - key: LATENCY_WARN_MS
+      label: 解析延迟告警阈值
+      description: 域名解析耗时超过该毫秒数时标记为 warning
+      type: number
+      default: 200
+      min: 20
+      max: 5000
+      step: 10
+      unit: "ms"
+    - key: QUERY_SCOPE
+      label: 巡检对象范围
+      description: 选择检查本机 BIND Zone、插件资产目录域名或全部
+      type: select
+      default: local_and_catalog
+      options:
+        - value: local_and_catalog
+          label: 本机 Zone + 目录域名
+        - value: local_only
+          label: 仅本机 BIND/Unbound
+        - value: catalog_only
+          label: 仅已登记目录域名
+    - key: ALIDNS_CREDENTIAL
+      label: AliDNS 托管凭据（可选）
+      description: 仅传受管 opaqueSecret 凭据名，由 Gateway 经私有通道物化至一次性 0600 文件，不传明文
+      type: credential_ref
+      credential_use: opaqueSecret
+      required: false
+  presets:
+    - id: dns-standard-audit
+      title: 标准 DNS 体检
+      description: 核查服务状态、Zone 语法、开放递归、AXFR 与目录域名解析延迟
+      mode: script
+      inputs:
+        CHECK_OPEN_RECURSION: true
+        CHECK_AXFR: true
+        LATENCY_WARN_MS: 200
+        QUERY_SCOPE: local_and_catalog
+    - id: dns-security-strict
+      title: 严格安全与低延迟核查
+      description: 将解析延迟阈值收紧至 80 ms，重点核验开放递归与 AXFR 暴露
+      mode: script
+      inputs:
+        CHECK_OPEN_RECURSION: true
+        CHECK_AXFR: true
+        LATENCY_WARN_MS: 80
+        QUERY_SCOPE: local_and_catalog
+    - id: dns-ai-troubleshoot
+      title: AI 解析链路溯源
+      description: 在 AI 助手中结合插件 MCP 与区文件排查解析漂移
+      mode: agent
+      prompt: 请使用 dodns 插件自带的只读 MCP 工具排查当前目标的 DNS 服务配置、Zone SOA 序列号、开放递归/AXFR 暴露与解析异常，严禁自动修改文件。
+  actions:
+    - id: dns-check
+      label: 只读排查解析
+      description: 调用 dodns 插件 MCP 只读查询权威/递归解析结果、TTL 与 Zone 语法
+      mode: check
+      skill: dodns
+      requires_mcp: dodns
+      prompt_template: 请使用 dodns 插件自带的只读 MCP 工具（mcp_dodns_query / mcp_dodns_check_recursion / mcp_dodns_zone_check）核查所选域名或 Zone 状态，严禁修改任何文件。
+    - id: dns-plan
+      label: 规划记录变更
+      description: 生成带时间戳备份、SOA 递增、named-checkzone 校验与回滚步骤的演练方案
+      mode: plan
+      skill: dodns
+      requires_mcp: dodns
+      prompt_template: 请使用 dodns 插件生成结构化 DNS 变更计划（包含 dry_run 演练、SOA 序列号递增、校验、reload 与回滚步骤），严禁直接写入。
+    - id: dns-apply
+      label: 受控执行 DNS 变更
+      description: 经 dodns 插件独立 MCP 执行备份、SOA 递增、named-checkzone、rndc reload（失败自动回滚）或 AliDNS 同步
+      mode: apply
+      skill: dodns
+      requires_mcp: dodns
+      credential_use: opaqueSecret
+      prompt_template: 请使用 dodns 插件自带的变更 MCP 工具（mcp_dodns_record_add / mcp_dodns_record_replace / mcp_dodns_record_delete / mcp_dodns_alidns_ensure）执行受控 DNS 变更并回读解析验证；校验或重载失败须自动回滚，严禁输出任何密钥。
+  views:
+    - type: kpi_grid
+      title: DNS 运行态势
+      items:
+        - key: dns_risk_total
+          label: 风险项合计
+          unit: "项"
+          warn_threshold: 1
+          crit_threshold: 3
+        - key: dns_zones_total
+          label: 核验域名/Zone
+          unit: "个"
+        - key: dns_latency_max_ms
+          label: 最高解析延迟
+          unit: "ms"
+          warn_threshold: 200
+          crit_threshold: 1000
+        - key: dns_open_recursion
+          label: 开放递归告警
+          unit: "项"
+          warn_threshold: 1
+          crit_threshold: 1
+        - key: dns_axfr_exposed
+          label: AXFR 暴露数
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 1
+        - key: dns_query_failed
+          label: 解析失败数
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 2
+    - type: findings_list
+      title: DNS 风险发现与覆盖缺口
+    - type: resource_table
+      title: 域名与 Zone 资产明细
+      source_key: resources
+      row_action_id: dns-check
+      columns:
+        - key: name
+          label: 域名 / Zone
+          kind: code
+        - key: kind
+          label: 类型
+          kind: badge
+        - key: server
+          label: 探测节点
+          kind: code
+        - key: answer
+          label: 解析结果
+          kind: code
+        - key: latency_ms
+          label: 延迟(ms)
+          kind: number
+        - key: status
+          label: 状态
+          kind: badge
+    - type: checks_table
+      title: DNS 巡检检查项
+    - type: charts
+      title: DNS 风险与延迟分布
+    - type: trend_series
+      title: DNS 指标历史趋势
+      metric_keys:
+        - dns_risk_total
+        - dns_latency_max_ms
+        - dns_query_failed
+      range: 7d
+    - type: artifact_viewer
+      title: 完整 DNS 巡检产物
+schedule_template:
+  name: DNS 基础设施治理定时巡检
+  description: 每 30 分钟自动核查 BIND/Unbound 状态、开放递归、AXFR 暴露与目录域名解析延迟
+  interval_seconds: 1800
+  scope_mode: all_online
+  inputs:
+    CHECK_OPEN_RECURSION: true
+    CHECK_AXFR: true
+    LATENCY_WARN_MS: 200
+    QUERY_SCOPE: local_and_catalog

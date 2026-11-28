@@ -1,0 +1,752 @@
+[
+  {
+    "file": "agent_resource_execution.go",
+    "func": "pinExecutionManifest",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "INSERT..SELECT reports 1 only when the agent is online with a matching generation/connected_at; 0 means mismatch, not a lost row."
+  },
+  {
+    "file": "agent_resource_store.go",
+    "func": "saveAgentResourceApplied",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": true,
+    "mysql_reachable": true,
+    "mitigation": "existence-select",
+    "note": "INT-65: MySQL reports 0 when applied_revision already equals revision; the existence SELECT on the same predicate decides present vs offline."
+  },
+  {
+    "file": "asset_catalog.go",
+    "func": "HandleResourceCatalog",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "upsert(doNothing) conflict reports 0 as already-exists (409); MySQL and SQLite agree on 0/1."
+  },
+  {
+    "file": "asset_coverage.go",
+    "func": "coverageTransaction",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "upsert(doNothing) 0 means the baseline already exists (409), not that a row disappeared."
+  },
+  {
+    "file": "asset_coverage_register.go",
+    "func": "freezeClusterCoverage",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "upsert(doNothing) 0 means the frozen baseline already exists (409)."
+  },
+  {
+    "file": "asset_coverage_register.go",
+    "func": "saveCoverageRegister",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "0 means the register entry already exists (409); the other branch bumps revision."
+  },
+  {
+    "file": "asset_monitor_store.go",
+    "func": "closeMonitorAlert",
+    "occurrence": 1,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "UPDATE open->ended always changes state and ended_ms; 0 means another writer closed it first, and the caller then skips the resolved event."
+  },
+  {
+    "file": "asset_monitor_store.go",
+    "func": "deleteMonitorRule",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE from asset_monitor_rules reports 1 when an existing rule was removed and 0 when already absent; 0 skips incident close idempotently."
+  },
+  {
+    "file": "asset_monitor_store.go",
+    "func": "saveMonitorRule",
+    "occurrence": 1,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "CHANGED semantics: 0 means neither threshold nor duration changed; this site depends on CLIENT_FOUND_ROWS=false (D29)."
+  },
+  {
+    "file": "asset_monitor_store.go",
+    "func": "storeMonitorPoint",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "INSERT..SELECT with doNothing into asset_monitor_alerts: 1 means the alert was opened and the outbound event is emitted; 0 means the unique key already held it, in both dialects."
+  },
+  {
+    "file": "audit_purge.go",
+    "func": "execRowsAffected",
+    "occurrence": 1,
+    "category": "helper",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "helper-callers",
+    "note": "helper returns the DELETE count unchanged; callers must never read 0 as absence."
+  },
+  {
+    "file": "audit_purge.go",
+    "func": "fail",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": true,
+    "mysql_reachable": true,
+    "mitigation": "existence-select",
+    "note": "INT-58 (130fd3ea) already falls back to SELECT status when the UPDATE reports 0."
+  },
+  {
+    "file": "audit_purge.go",
+    "func": "writeAuditPurgeReceipt",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": true,
+    "mysql_reachable": true,
+    "mitigation": "existence-select",
+    "note": "INT-58 (130fd3ea) already falls back to SELECT 1 .. action='audit:purge' when the UPDATE reports 0."
+  },
+  {
+    "file": "audit_scrub.go",
+    "func": "auditScrubApply",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": true,
+    "mysql_reachable": true,
+    "mitigation": "existence-select",
+    "note": "a concurrent scrub can write the same value between the read and the UPDATE, so affected==0 falls back to SELECT <col> and accepts only an identical stored value."
+  },
+  {
+    "file": "audit_scrub.go",
+    "func": "auditScrubRollback",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": true,
+    "mysql_reachable": true,
+    "mitigation": "existence-select",
+    "note": "INT-83: rolling back the same pre-image twice restores the value already stored, so affected==0 falls back to SELECT <col> and accepts only an identical stored value."
+  },
+  {
+    "file": "audit_scrub.go",
+    "func": "auditScrubSucceedReceipt",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": true,
+    "mysql_reachable": true,
+    "mitigation": "existence-select",
+    "note": "affected==0 falls back to auditScrubConfirmReceiptStatus, which reads the receipt status instead of trusting the count."
+  },
+  {
+    "file": "business_inventory_store.go",
+    "func": "replaceBusinessDeployments",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "INSERT..SELECT 0 rows means the target is unregistered or archived."
+  },
+  {
+    "file": "credential_materialization_store.go",
+    "func": "CompleteCredentialMaterialization",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "updated_at=now() always changes the row, so 0 means the id or state is gone."
+  },
+  {
+    "file": "credential_store_grants.go",
+    "func": "BeginCredentialGrantRevocation",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "CAS active->revoking always changes state; 0 means the state does not match."
+  },
+  {
+    "file": "credential_store_grants.go",
+    "func": "FinalizeCredentialGrantRevocation",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "CAS revoking->revoked always changes state."
+  },
+  {
+    "file": "credential_store_grants.go",
+    "func": "ForceFinalizeOfflineCredentialGrantRevocation",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "CAS revoking->revoked always changes state."
+  },
+  {
+    "file": "dosql_direct_exec.go",
+    "func": "runDoSQLStatementOn",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "reports the user statement's affected count verbatim and makes no presence decision."
+  },
+  {
+    "file": "execution_audit.go",
+    "func": "FinalizeExecution",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "0 falls back to SELECT status to tell missing from already-terminal."
+  },
+  {
+    "file": "execution_audit.go",
+    "func": "MarkExecutionDispatched",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "CAS running->executing always changes status."
+  },
+  {
+    "file": "execution_audit.go",
+    "func": "MarkExecutionUncertain",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "CAS executing->outcome_unknown always changes status."
+  },
+  {
+    "file": "gateway_audit_export.go",
+    "func": "deleteAuditIDBatchTx",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE of exported audit_events ids selected in the same transaction; count is accumulated into the audit:purge receipt."
+  },
+  {
+    "file": "gateway_audit_export.go",
+    "func": "drainExportedAuditBatchTx",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE of completed agent:upgrade audit_events rows covered by the verified export; count is accumulated into the audit:purge receipt."
+  },
+  {
+    "file": "gateway_audit_export.go",
+    "func": "purgeExportedPlatformEvents",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE of terminal webhook_deliveries for exported platform_events selected in the same transaction; count is reported to the operator."
+  },
+  {
+    "file": "gateway_audit_export.go",
+    "func": "purgeExportedPlatformEvents",
+    "occurrence": 2,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE of exported terminal platform_events selected in the same transaction; count is reported to the operator."
+  },
+  {
+    "file": "gateway_mysql_copy.go",
+    "func": "copyToDestination",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": false,
+    "mitigation": "not-needed",
+    "note": "INT-108 offline copier batched INSERT checks exact batch row count; never runs while MySQL serves live traffic."
+  },
+  {
+    "file": "gateway_mysql_copy.go",
+    "func": "stream",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": false,
+    "mitigation": "not-needed",
+    "note": "offline copier bulk INSERT; never runs while MySQL serves traffic."
+  },
+  {
+    "file": "gateway_store_admin.go",
+    "func": "DeleteGrant",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "gateway_store_admin.go",
+    "func": "RevokeToken",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "the WHERE revoked_at='' guard guarantees a change."
+  },
+  {
+    "file": "gateway_store_admin.go",
+    "func": "SetUserDisabled",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": true,
+    "mysql_reachable": true,
+    "mitigation": "existence-select",
+    "note": "INT-65: MySQL reports 0 when disabled already equals the requested value; the existence SELECT on users decides."
+  },
+  {
+    "file": "gateway_store_agent_enroll.go",
+    "func": "RevokeAgentEnrollment",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "the WHERE revoked_at='' guard guarantees a change."
+  },
+  {
+    "file": "gateway_store_agents.go",
+    "func": "DeleteOfflineAgentStatus",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE WHERE status='offline' returns 0 if missing or concurrently reconnected; re-read inside the transaction separates 409 online from 404 not found."
+  },
+  {
+    "file": "gateway_store_agents.go",
+    "func": "MarkAgentOffline",
+    "occurrence": 1,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "CHANGED semantics: affected>0 gates the derived agent_connection_events write; timestamps always change (D29)."
+  },
+  {
+    "file": "gateway_store_agents.go",
+    "func": "UnarchiveAgentStatus",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": true,
+    "mysql_reachable": true,
+    "mitigation": "existence-select",
+    "note": "INT-65: MySQL reports 0 for an already-unarchived row; the existence SELECT on agent_status decides 404 vs success."
+  },
+  {
+    "file": "gateway_store_audit.go",
+    "func": "finishAuditWith",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "0 falls back to SELECT status to detect a conflict; terminal states always change."
+  },
+  {
+    "file": "gateway_store_edge.go",
+    "func": "DeleteEdgeRoute",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "gateway_store_edge.go",
+    "func": "RevokeEdgeEnrollment",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "the WHERE revoked_at='' guard guarantees a change."
+  },
+  {
+    "file": "gateway_store_grants.go",
+    "func": "SetUserAdmin",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": true,
+    "mysql_reachable": true,
+    "mitigation": "existence-select",
+    "note": "Any caller that sets is_admin true twice for the same user repeats the value (the admin flag is not compare-and-set); MySQL then reports 0 changed rows, and the existence SELECT keeps that a success instead of \"user not found\"."
+  },
+  {
+    "file": "gateway_store_tokens.go",
+    "func": "DeleteExpiredTokens",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "gateway_store_tokens.go",
+    "func": "upgradeEnrollmentHash",
+    "occurrence": 1,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "INT-64 enrollment fast path: same compare-and-set shape as upgradeTokenHash (hash = legacyHash predicate, callers discard the count); a zero means a concurrent request already upgraded the row or the legacy comparison failed, never that the row is gone."
+  },
+  {
+    "file": "gateway_store_tokens.go",
+    "func": "upgradeTokenHash",
+    "occurrence": 1,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "INT-64: best-effort lazy upgrade; a zero means a concurrent request already rewrote the hash (compare-and-set on hash = legacyHash, which also rules out a same-value write), and the caller discards the count, so zero is never read as absence."
+  },
+  {
+    "file": "gateway_store_users.go",
+    "func": "SetUserPassword",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": true,
+    "mysql_reachable": true,
+    "mitigation": "existence-select",
+    "note": "A repeated identical password repeats the hash value only if hashing becomes comparable (e.g. a deterministic hash); the existence re-read keeps sql.ErrNoRows for a missing or still-disabled user."
+  },
+  {
+    "file": "gateway_store_write.go",
+    "func": "gatewayExecExactlyOne",
+    "occurrence": 1,
+    "category": "helper",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "helper-callers",
+    "note": "maps 0->ErrNoRows and >1->error; each caller must pass an UPDATE that always changes the row."
+  },
+  {
+    "file": "instance_retention.go",
+    "func": "PruneOfflineAgentStatus",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "inventory_node_links.go",
+    "func": "applyNodeLink",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "0 means already linked (409) or absent (404), both reported as counts."
+  },
+  {
+    "file": "login_session.go",
+    "func": "RevokeExcessPasswordLoginTokens",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "the WHERE revoked_at='' guard guarantees a change."
+  },
+  {
+    "file": "machine_diagnostic_collect.go",
+    "func": "pullMachineDiagnostic",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "upsert(doNothing) 0 means the host is already bound (409)."
+  },
+  {
+    "file": "machine_inventory_csv.go",
+    "func": "runInventoryBatch",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "INSERT receipt count."
+  },
+  {
+    "file": "machine_inventory_store.go",
+    "func": "insertInventoryMachine",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "INSERT count."
+  },
+  {
+    "file": "machine_inventory_store.go",
+    "func": "saveInventoryMachine",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "revision+1 always changes the row."
+  },
+  {
+    "file": "machine_login_vault.go",
+    "func": "storeMachineLogin",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "INSERT..SELECT 0 rows means the asset is absent."
+  },
+  {
+    "file": "mcp_registry.go",
+    "func": "DeletePlatformMCPServer",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "mcp_registry.go",
+    "func": "TogglePlatformMCPServer",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "0 means the slug is missing; updated_at_ms always changes."
+  },
+  {
+    "file": "monitor_engine_store.go",
+    "func": "DeleteMonitorSchedule",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "monitor_engine_store.go",
+    "func": "SaveMonitorSchedule",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "0 means the id is missing; updated_at always changes."
+  },
+  {
+    "file": "monitor_retention.go",
+    "func": "pruneMonitorRetentionLocked",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "monitor_retention.go",
+    "func": "pruneMonitorRetentionLocked",
+    "occurrence": 2,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "monitor_retention.go",
+    "func": "pruneMonitorRetentionMetrics",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "personal_asset_records.go",
+    "func": "writePersonalAsset",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "0 means already exists (409) or the row is gone (409)."
+  },
+  {
+    "file": "proxy_route_store.go",
+    "func": "DeleteProxyRoute",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "secret_rotation.go",
+    "func": "rewriteSecretPayloadBatch",
+    "occurrence": 1,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "INT-62: compare-and-set on payload_ciphertext (a zero means another run already rewrote the row, so it is skipped and retried later); the count chooses rewritten vs skipped and is never read as absence."
+  },
+  {
+    "file": "skills_registry.go",
+    "func": "DeletePlatformSkill",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE count."
+  },
+  {
+    "file": "skills_registry.go",
+    "func": "TogglePlatformSkill",
+    "occurrence": 1,
+    "category": "exists",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "0 means the slug is missing; updated_at_ms always changes."
+  },
+  {
+    "file": "webhook_store.go",
+    "func": "ClaimDueWebhookDelivery",
+    "occurrence": 1,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "Lease claim always changes status to delivering, attempt and lease_token; 0 means another worker holds the lease, not that the row disappeared."
+  },
+  {
+    "file": "webhook_store.go",
+    "func": "CompleteWebhookDelivery",
+    "occurrence": 1,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "Completion clears lease_token and writes delivered; 0 means the lease was lost and endpoint last-success is intentionally not touched."
+  },
+  {
+    "file": "webhook_store.go",
+    "func": "DeleteWebhookEndpoint",
+    "occurrence": 1,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "Soft delete writes deleted_at and enabled=0 only when deleted_at is still empty; 0 means already deleted or absent, mapped to not-found."
+  },
+  {
+    "file": "webhook_store.go",
+    "func": "FailWebhookDelivery",
+    "occurrence": 1,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "Terminal failure clears lease_token and writes failed; 0 means the lease was lost and endpoint last-failure is intentionally not touched."
+  },
+  {
+    "file": "webhook_store.go",
+    "func": "FailWebhookDelivery",
+    "occurrence": 2,
+    "category": "changed",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "Retry clears lease_token from the non-empty claimed value, so the SET always changes; 0 means the lease was lost."
+  },
+  {
+    "file": "webhook_store.go",
+    "func": "PruneWebhookData",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE of terminal deliveries selected in the same transaction; the count is recorded as removed rows."
+  },
+  {
+    "file": "webhook_store.go",
+    "func": "PruneWebhookData",
+    "occurrence": 2,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "DELETE of pruned events in the same transaction; the count is recorded as removed rows."
+  },
+  {
+    "file": "webhook_store.go",
+    "func": "enqueuePlatformEventTx",
+    "occurrence": 1,
+    "category": "count",
+    "same_value_possible": false,
+    "mysql_reachable": true,
+    "mitigation": "not-needed",
+    "note": "INSERT with doNothing on dedupe_key: 1 inserts and fans out, 0 means the event already exists and is not fanned out again."
+  }
+]

@@ -1,0 +1,1302 @@
+package server
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/user/doops/agent/api"
+)
+
+func (s *GatewayStore) tableExists(ctx context.Context, name string) bool {
+	var ok bool
+	_ = s.db.QueryRowContext(ctx, gatewayTableExistsSQL(gatewayDialect()), name).Scan(&ok)
+	return ok
+}
+
+// ---------------- Schedules CRUD ----------------
+
+func (s *GatewayStore) ListMonitorSchedules(ctx context.Context) ([]monitorScheduleRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, enabled, scope_mode, targets_json, tags_json,
+		skills_json, prompt, command, inputs_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
+		created_by, created_at, updated_at
+		FROM monitor_schedules ORDER BY enabled DESC, created_at DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []monitorScheduleRecord{}
+	for rows.Next() {
+		rec, err := scanMonitorSchedule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (s *GatewayStore) GetMonitorSchedule(ctx context.Context, id string) (monitorScheduleRecord, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, description, enabled, scope_mode, targets_json, tags_json,
+		skills_json, prompt, command, inputs_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
+		created_by, created_at, updated_at
+		FROM monitor_schedules WHERE id=?`, id)
+	return scanMonitorSchedule(row)
+}
+
+func scanMonitorSchedule(row interface{ Scan(...any) error }) (monitorScheduleRecord, error) {
+	var rec monitorScheduleRecord
+	var enabledInt int
+	var targetsRaw, tagsRaw, skillsRaw, inputsRaw, thresholdsRaw string
+	err := row.Scan(
+		&rec.ID, &rec.Name, &rec.Description, &enabledInt, &rec.ScopeMode,
+		&targetsRaw, &tagsRaw, &skillsRaw, &rec.Prompt, &rec.Command, &inputsRaw, &thresholdsRaw,
+		&rec.IntervalSeconds, &rec.NextRunAtMs, &rec.LastRunAtMs,
+		&rec.LastRunID, &rec.LastStatus, &rec.CreatedBy, &rec.CreatedAt, &rec.UpdatedAt,
+	)
+	if err != nil {
+		return rec, err
+	}
+	rec.Enabled = enabledInt != 0
+	rec.Targets = []monitorTargetRef{}
+	rec.Tags = []string{}
+	rec.Skills = []string{}
+	_ = json.Unmarshal([]byte(targetsRaw), &rec.Targets)
+	_ = json.Unmarshal([]byte(tagsRaw), &rec.Tags)
+	_ = json.Unmarshal([]byte(skillsRaw), &rec.Skills)
+	if strings.TrimSpace(inputsRaw) != "" && strings.TrimSpace(inputsRaw) != "{}" {
+		var parsedInputs map[string]any
+		if json.Unmarshal([]byte(inputsRaw), &parsedInputs) == nil && len(parsedInputs) > 0 {
+			rec.Inputs = parsedInputs
+		}
+	}
+	_ = json.Unmarshal([]byte(thresholdsRaw), &rec.Thresholds)
+	rec.Skills = normalizeSkillSlugs(rec.Skills)
+	rec.Prompt = strings.TrimSpace(rec.Prompt)
+	rec.Command = strings.TrimSpace(rec.Command)
+	rec.Thresholds = normalizeMonitorThresholds(rec.Thresholds)
+	return rec, nil
+}
+
+func (s *GatewayStore) SaveMonitorSchedule(ctx context.Context, rec monitorScheduleRecord, isUpdate bool) (monitorScheduleRecord, error) {
+	now := time.Now().UTC()
+	nowStr := formatTime(now)
+	rec.Skills = normalizeSkillSlugs(rec.Skills)
+	rec.Prompt = strings.TrimSpace(rec.Prompt)
+	rec.Command = strings.TrimSpace(rec.Command)
+	rec.Thresholds = normalizeMonitorThresholds(rec.Thresholds)
+	if rec.Targets == nil {
+		rec.Targets = []monitorTargetRef{}
+	}
+	if rec.Tags == nil {
+		rec.Tags = []string{}
+	}
+	targetsJSON, _ := json.Marshal(rec.Targets)
+	tagsJSON, _ := json.Marshal(rec.Tags)
+	skillsJSON, _ := json.Marshal(rec.Skills)
+	inputsJSON := []byte("{}")
+	if len(rec.Inputs) > 0 {
+		if raw, err := json.Marshal(rec.Inputs); err == nil {
+			inputsJSON = raw
+		}
+	}
+	thresholdsJSON, _ := json.Marshal(rec.Thresholds)
+	enabledInt := 0
+	if rec.Enabled {
+		enabledInt = 1
+	}
+
+	if !isUpdate {
+		if rec.ID == "" {
+			rec.ID = "sched_" + randomHex(8)
+		}
+		rec.CreatedAt = nowStr
+		rec.UpdatedAt = nowStr
+		if rec.Enabled && rec.NextRunAtMs <= 0 {
+			rec.NextRunAtMs = now.Add(time.Duration(rec.IntervalSeconds) * time.Second).UnixMilli()
+		}
+		// strategies_json is never read and never updated at runtime. It is still
+		// named here with the constant "[]" because the frozen MySQL DDL declares
+		// it NOT NULL with no default (gateway_mysql_schema.sql), and MySQL 8.4 in
+		// strict mode rejects an INSERT that omits such a column with error 1364.
+		// SQLite would fill its DDL default; MySQL has none to fill. Drop this
+		// column from the INSERT once the MySQL DDL may give it a default that does
+		// not trip the copier guard (INT-05/INT-08: a TEXT column takes no literal
+		// default, and a DEFAULT_GENERATED extra is reported as schema drift).
+		_, err := s.db.ExecContext(ctx, `INSERT INTO monitor_schedules(
+			id, name, description, enabled, scope_mode, targets_json, tags_json,
+			strategies_json, skills_json, prompt, command, inputs_json, thresholds_json, interval_seconds, next_run_at_ms,
+			last_run_at_ms, last_run_id, last_status, created_by, created_at, updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			rec.ID, rec.Name, rec.Description, enabledInt, rec.ScopeMode,
+			string(targetsJSON), string(tagsJSON), "[]", string(skillsJSON), rec.Prompt, rec.Command, string(inputsJSON), string(thresholdsJSON),
+			rec.IntervalSeconds, rec.NextRunAtMs, rec.LastRunAtMs, rec.LastRunID, rec.LastStatus,
+			rec.CreatedBy, rec.CreatedAt, rec.UpdatedAt,
+		)
+		if err != nil {
+			return rec, err
+		}
+		return s.GetMonitorSchedule(ctx, rec.ID)
+	}
+
+	rec.UpdatedAt = nowStr
+	nextRun := rec.NextRunAtMs
+	if rec.Enabled && nextRun <= 0 {
+		nextRun = now.Add(time.Duration(rec.IntervalSeconds) * time.Second).UnixMilli()
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE monitor_schedules SET
+		name=?, description=?, enabled=?, scope_mode=?, targets_json=?, tags_json=?,
+		skills_json=?, prompt=?, command=?, inputs_json=?, thresholds_json=?, interval_seconds=?, next_run_at_ms=?, updated_at=?
+		WHERE id=?`,
+		rec.Name, rec.Description, enabledInt, rec.ScopeMode,
+		string(targetsJSON), string(tagsJSON), string(skillsJSON), rec.Prompt, rec.Command, string(inputsJSON), string(thresholdsJSON),
+		rec.IntervalSeconds, nextRun, rec.UpdatedAt, rec.ID,
+	)
+	if err != nil {
+		return rec, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return rec, sql.ErrNoRows
+	}
+	return s.GetMonitorSchedule(ctx, rec.ID)
+}
+
+func (s *GatewayStore) ToggleMonitorSchedule(ctx context.Context, id string, enabled bool) (monitorScheduleRecord, error) {
+	cur, err := s.GetMonitorSchedule(ctx, id)
+	if err != nil {
+		return cur, err
+	}
+	now := time.Now().UTC()
+	nextRun := cur.NextRunAtMs
+	if enabled && nextRun <= now.UnixMilli() {
+		nextRun = now.Add(time.Duration(cur.IntervalSeconds) * time.Second).UnixMilli()
+	}
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE monitor_schedules SET enabled=?, next_run_at_ms=?, updated_at=? WHERE id=?`,
+		enabledInt, nextRun, formatTime(now), id)
+	if err != nil {
+		return cur, err
+	}
+	return s.GetMonitorSchedule(ctx, id)
+}
+
+func (s *GatewayStore) DeleteMonitorSchedule(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM monitor_schedules WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ClaimDueMonitorSchedules atomically picks up to limit due schedules and advances their next_run_at_ms.
+func (s *GatewayStore) ClaimDueMonitorSchedules(ctx context.Context, now time.Time, limit int) ([]monitorScheduleRecord, error) {
+	if limit <= 0 {
+		limit = 4
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	nowMs := now.UnixMilli()
+	rows, err := tx.QueryContext(ctx, `SELECT id, name, description, enabled, scope_mode, targets_json, tags_json,
+		skills_json, prompt, command, inputs_json, thresholds_json, interval_seconds, next_run_at_ms, last_run_at_ms, last_run_id, last_status,
+		created_by, created_at, updated_at
+		FROM monitor_schedules WHERE enabled=1 AND next_run_at_ms>0 AND next_run_at_ms<=?
+		ORDER BY next_run_at_ms ASC, id ASC LIMIT ?`, nowMs, limit)
+	if err != nil {
+		return nil, err
+	}
+	var claimed []monitorScheduleRecord
+	for rows.Next() {
+		rec, err := scanMonitorSchedule(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		claimed = append(claimed, rec)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range claimed {
+		stepMs := int64(claimed[i].IntervalSeconds) * 1000
+		if stepMs < 60_000 {
+			stepMs = 60_000
+		}
+		nextMs := nowMs + stepMs
+		if _, err := tx.ExecContext(ctx, `UPDATE monitor_schedules SET next_run_at_ms=?, updated_at=? WHERE id=?`,
+			nextMs, formatTime(now.UTC()), claimed[i].ID); err != nil {
+			return nil, err
+		}
+		claimed[i].NextRunAtMs = nextMs
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return claimed, nil
+}
+
+// ---------------- Runs, Run Items & Snapshots Persistence ----------------
+
+func (s *GatewayStore) CreateMonitorRun(ctx context.Context, run monitorRunRecord) error {
+	skills := normalizeSkillSlugs(run.Skills)
+	skillsJSON, _ := json.Marshal(skills)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO monitor_runs(
+		id, schedule_id, schedule_name, trigger_kind, triggered_by, status,
+		skills_json, prompt, command,
+		total_targets, total_assets, passed_checks, warning_checks, failed_checks, skipped_checks,
+		offline_targets, metrics_written, started_at_ms, finished_at_ms, duration_ms, summary
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		run.ID, run.ScheduleID, run.ScheduleName, run.TriggerKind, run.TriggeredBy, run.Status,
+		string(skillsJSON), run.Prompt, run.Command,
+		run.TotalTargets, run.TotalAssets, run.PassedChecks, run.WarningChecks, run.FailedChecks, run.SkippedChecks,
+		run.OfflineTargets, run.MetricsWritten, run.StartedAtMs, run.FinishedAtMs, run.DurationMs, run.Summary,
+	)
+	return err
+}
+
+func (s *GatewayStore) PersistMonitorRunResults(
+	ctx context.Context,
+	run monitorRunRecord,
+	items []monitorRunItemRecord,
+	snapshots []monitorResourceSnapshot,
+	seriesPoints []monitorSeriesBridgeEntry,
+) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	// Extract trend metrics once; the same extraction both feeds
+	// inspection_metric_points and records the skipped-entry count on evidence.
+	extractions := make([]monitorMetricExtraction, len(items))
+	for i := range items {
+		extractions[i] = extractInspectionMetricForItem(run, items[i])
+	}
+	for i, item := range items {
+		metricsJSON, _ := json.Marshal(item.Metrics)
+		checksJSON, _ := json.Marshal(item.Checks)
+		evidence := sanitizeMonitorEvidence(item.Evidence)
+		if extraction := extractions[i]; len(extraction.Points) > 0 || extraction.Skipped > 0 {
+			if evidence == nil {
+				evidence = map[string]any{}
+			}
+			evidence["inspection_metrics"] = map[string]any{
+				"extracted": len(extraction.Points),
+				"skipped":   extraction.Skipped,
+			}
+		}
+		evidenceJSON, _ := json.Marshal(evidence)
+		artifactJSONStr := ""
+		if len(item.ArtifactJSON) > 0 && json.Valid(item.ArtifactJSON) {
+			candidate := redactSecretText(string(item.ArtifactJSON))
+			if json.Valid([]byte(candidate)) {
+				artifactJSONStr = candidate
+			}
+		}
+		// The row id names the on-disk item directory, so insert the light
+		// columns first and attach either the file index or the legacy text
+		// columns right after.
+		res, err := tx.ExecContext(ctx, `INSERT INTO monitor_run_items(
+			run_id, cluster, instance, asset_id, asset_name, asset_kind, strategy, collector_method,
+			status, reason, started_at_ms, finished_at_ms, duration_ms, metrics_json, checks_json, evidence_json,
+			artifact_format, artifact_markdown, artifact_json, raw_output,
+			artifact_dir, artifact_bytes, artifact_sha256, artifact_truncated
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			run.ID, item.Cluster, item.Instance, item.AssetID, item.AssetName, item.AssetKind, item.Strategy, item.CollectorMethod,
+			item.Status, item.Reason, item.StartedAtMs, item.FinishedAtMs, item.DurationMs,
+			string(metricsJSON), string(checksJSON), string(evidenceJSON),
+			item.ArtifactFormat, "", "", "", "", 0, "", 0,
+		)
+		if err != nil {
+			return 0, err
+		}
+		if itemID, idErr := res.LastInsertId(); idErr == nil && itemID > 0 {
+			if err := s.persistMonitorRunItemArtifact(ctx, tx, run.ID, itemID, item, artifactJSONStr); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	for _, snapshot := range snapshots {
+		if err := insertMonitorResourceSnapshot(ctx, tx, run.ID, snapshot); err != nil {
+			return 0, err
+		}
+	}
+
+	metricRows, err := persistInspectionMetricExtractions(ctx, tx, run, items, extractions, snapshots)
+	if err != nil {
+		return 0, err
+	}
+
+	// Optionally bridge granular series into asset_monitor_series / asset_monitor_samples when migrated.
+	bridged := 0
+	var hasAssetMonitor bool
+	_ = tx.QueryRowContext(ctx, gatewayTableExistsSQL(gatewayDialect()), "asset_monitor_series").Scan(&hasAssetMonitor)
+	// Items carry their own artifact JSON; merge explicit series_points first
+	// and then derived physical metrics (vm-host, container, k8s node, app probe)
+	// so every Skill-First run feeds Agent Monitor curves & threshold rules uniformly.
+	merged := append([]monitorSeriesBridgeEntry(nil), seriesPoints...)
+	if hasAssetMonitor {
+		var hasMachines bool
+		_ = tx.QueryRowContext(ctx, gatewayTableExistsSQL(gatewayDialect()), "inventory_machines").Scan(&hasMachines)
+		hostAssetCache := make(map[string]string, len(items))
+		resolveTargetHostAsset := func(cluster, instance string) string {
+			k := tunnelKey(cluster, instance)
+			if cached, ok := hostAssetCache[k]; ok {
+				return cached
+			}
+			assetID := instance
+			if hasMachines {
+				var bound string
+				if err := tx.QueryRowContext(ctx,
+					`SELECT asset_id FROM inventory_machines WHERE cluster=? AND instance=? ORDER BY kind='vm' DESC, asset_id LIMIT 1`,
+					cluster, instance).Scan(&bound); err == nil && monitorID(bound) {
+					assetID = bound
+				}
+			}
+			hostAssetCache[k] = assetID
+			return assetID
+		}
+		type seriesDedupKey struct {
+			cluster, instance, assetType, assetID, ns, origin, metric, device string
+		}
+		seenSeries := make(map[seriesDedupKey]bool, len(merged))
+		for _, entry := range merged {
+			p := entry.Point
+			seenSeries[seriesDedupKey{entry.Cluster, entry.Instance, p.Type, p.AssetID, p.Namespace, p.Origin, p.Metric, p.DeviceID}] = true
+		}
+		nowMs := time.Now().UnixMilli()
+		for i, item := range items {
+			for _, pt := range extractArtifactSeriesPoints(item.ArtifactJSON) {
+				k := seriesDedupKey{item.Cluster, item.Instance, pt.Type, pt.AssetID, pt.Namespace, pt.Origin, pt.Metric, pt.DeviceID}
+				if seenSeries[k] {
+					continue
+				}
+				seenSeries[k] = true
+				merged = append(merged, monitorSeriesBridgeEntry{
+					Cluster:  item.Cluster,
+					Instance: item.Instance,
+					Point:    pt,
+				})
+			}
+			collectedAt := monitorMetricCollectedAtMs(run, item)
+			if i < len(extractions) && extractions[i].CollectedAtMs > 0 {
+				collectedAt = extractions[i].CollectedAtMs
+			}
+			if collectedAt > nowMs {
+				collectedAt = nowMs
+			}
+			hostID := resolveTargetHostAsset(item.Cluster, item.Instance)
+			for _, pt := range deriveArtifactSeriesPoints(item, collectedAt, hostID) {
+				k := seriesDedupKey{item.Cluster, item.Instance, pt.Type, pt.AssetID, pt.Namespace, pt.Origin, pt.Metric, pt.DeviceID}
+				if seenSeries[k] {
+					continue
+				}
+				seenSeries[k] = true
+				merged = append(merged, monitorSeriesBridgeEntry{
+					Cluster:  item.Cluster,
+					Instance: item.Instance,
+					Point:    pt,
+				})
+			}
+		}
+	}
+	var monitorEvents []PlatformEvent
+	if hasAssetMonitor && len(merged) > 0 {
+		now := time.Now()
+		for _, entry := range merged {
+			pt := entry.Point
+			origin := pt.Origin
+			if !monitorOrigins[origin] {
+				continue
+			}
+			in := monitorInput{
+				DeviceID:     pt.DeviceID,
+				monitorAsset: monitorAsset{Type: pt.Type, AssetID: pt.AssetID, Namespace: pt.Namespace},
+				Metric:       pt.Metric,
+				Unit:         pt.Unit,
+				monitorPoint: monitorPoint{At: pt.AtMs, Status: pt.Status, Value: pt.Value},
+			}
+			if !in.valid(now) {
+				continue
+			}
+			req := monitorRequest{Cluster: entry.Cluster, Instance: entry.Instance}
+			events, err := storeMonitorPoint(ctx, tx, req, in, origin, "")
+			if err == nil {
+				monitorEvents = append(monitorEvents, events...)
+				bridged++
+			}
+		}
+	}
+
+	// metrics_written counts every metric row this run left behind: the Skill
+	// metric series (metricRows), the strategy snapshots, and the bridged asset
+	// monitor samples. Skill-driven runs have no legacy snapshots, so before this
+	// they reported 0 while their metrics were readable from /v1/monitor/metrics.
+	run.MetricsWritten = metricRows + bridged + len(snapshots)
+	if _, err := tx.ExecContext(ctx, `UPDATE monitor_runs SET
+		status=?, total_targets=?, total_assets=?, passed_checks=?, warning_checks=?, failed_checks=?, skipped_checks=?,
+		offline_targets=?, metrics_written=?, finished_at_ms=?, duration_ms=?, summary=?
+		WHERE id=?`,
+		run.Status, run.TotalTargets, run.TotalAssets, run.PassedChecks, run.WarningChecks, run.FailedChecks, run.SkippedChecks,
+		run.OfflineTargets, run.MetricsWritten, run.FinishedAtMs, run.DurationMs, run.Summary, run.ID,
+	); err != nil {
+		return 0, err
+	}
+
+	if run.ScheduleID != "" {
+		_, _ = tx.ExecContext(ctx, `UPDATE monitor_schedules SET last_run_at_ms=?, last_run_id=?, last_status=?, updated_at=? WHERE id=?`,
+			run.StartedAtMs, run.ID, run.Status, formatTime(time.Now().UTC()), run.ScheduleID)
+	}
+
+	finishedAt := run.FinishedAtMs
+	if finishedAt == 0 {
+		finishedAt = time.Now().UnixMilli()
+	}
+	inspectionEvent, err := newPlatformEvent("inspection.run.finished", time.UnixMilli(finishedAt), run.TriggeredBy, "", "", run.ID, map[string]any{
+		"run_id":       run.ID,
+		"schedule_id":  run.ScheduleID,
+		"status":       run.Status,
+		"trigger_kind": run.TriggerKind,
+		"counts": map[string]int{
+			"targets": run.TotalTargets,
+			"assets":  run.TotalAssets,
+			"passed":  run.PassedChecks,
+			"warning": run.WarningChecks,
+			"failed":  run.FailedChecks,
+			"skipped": run.SkippedChecks,
+			"offline": run.OfflineTargets,
+		},
+		"started_at":  time.UnixMilli(run.StartedAtMs).UTC().Format(time.RFC3339Nano),
+		"finished_at": time.UnixMilli(finishedAt).UTC().Format(time.RFC3339Nano),
+		"duration_ms": run.DurationMs,
+	}, fmt.Sprintf("inspection:%s:finished", run.ID))
+	if err != nil {
+		return 0, err
+	}
+
+	for _, ev := range append(monitorEvents, inspectionEvent) {
+		if _, _, err := enqueuePlatformEventTx(ctx, tx, ev); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	if s.webhookWake != nil {
+		s.webhookWake()
+	}
+	return run.MetricsWritten, nil
+}
+
+// insertMonitorResourceSnapshot appends one resource snapshot row. Strategy-
+// provided snapshots and the inspection-metric bridge (spec §4.2) share it so
+// there stays exactly one canonical snapshot table.
+func insertMonitorResourceSnapshot(ctx context.Context, tx *sql.Tx, runID string, snapshot monitorResourceSnapshot) error {
+	tagsJSON, _ := json.Marshal(snapshot.Tags)
+	detailsJSON, _ := json.Marshal(sanitizeMonitorEvidence(snapshot.Details))
+	_, err := tx.ExecContext(ctx, `INSERT INTO monitor_resource_snapshots(
+		cluster, instance, asset_id, asset_name, asset_kind, strategy, collector_method,
+		collected_at_ms, run_id, status,
+		cpu_cores, cpu_total_cores, cpu_percent,
+		memory_used_bytes, memory_total_bytes, memory_percent,
+		disk_used_bytes, disk_total_bytes, disk_percent,
+		net_bytes_per_sec, disk_iops, disk_latency_ms, gpu_percent,
+		response_time_ms, error_rate, active_connections, requests_per_sec,
+		uptime_seconds, load_1m, os_info, kernel_info, tags_json, details_json
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		snapshot.Cluster, snapshot.Instance, snapshot.AssetID, snapshot.AssetName, snapshot.AssetKind, snapshot.Strategy, snapshot.CollectorMethod,
+		snapshot.CollectedAtMs, runID, snapshot.Status,
+		snapshot.CPUCores, snapshot.CPUTotalCores, snapshot.CPUPercent,
+		snapshot.MemoryUsedBytes, snapshot.MemoryTotalBytes, snapshot.MemoryPercent,
+		snapshot.DiskUsedBytes, snapshot.DiskTotalBytes, snapshot.DiskPercent,
+		snapshot.NetBytesPerSec, snapshot.DiskIOPS, snapshot.DiskLatencyMs, snapshot.GPUPercent,
+		snapshot.ResponseTimeMs, snapshot.ErrorRate, snapshot.ActiveConnections, snapshot.RequestsPerSec,
+		snapshot.UptimeSeconds, snapshot.Load1m, snapshot.OSInfo, snapshot.KernelInfo, string(tagsJSON), string(detailsJSON),
+	)
+	return err
+}
+
+// persistMonitorRunItemArtifact writes the sanitized payload to
+// <dbDir>/artifacts (file-first) and stores only the index columns. When file
+// storage is unavailable — or a write fails — the sanitized payload stays in
+// the SQLite text columns so no inspection evidence is lost. Legacy rows keep
+// reading those columns (see GetMonitorRunDetail).
+func (s *GatewayStore) persistMonitorRunItemArtifact(ctx context.Context, tx *sql.Tx, runID string, itemID int64, item monitorRunItemRecord, artifactJSONStr string) error {
+	atMs := item.StartedAtMs
+	if atMs <= 0 {
+		atMs = time.Now().UnixMilli()
+	}
+	content, truncated := prepareMonitorArtifactForItem(item)
+	if !monitorArtifactContentEmpty(content) {
+		dir, size, digest, err := s.writeMonitorArtifactFiles(runID, itemID, atMs, content)
+		if err == nil && dir != "" {
+			truncatedValue := 0
+			if truncated {
+				truncatedValue = 1
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE monitor_run_items
+				SET artifact_dir=?, artifact_bytes=?, artifact_sha256=?, artifact_truncated=? WHERE id=?`,
+				dir, size, digest, truncatedValue, itemID)
+			return err
+		}
+		if err != nil && !errors.Is(err, errMonitorArtifactStorageDisabled) {
+			// Keep the run usable: fall back to the SQLite text columns below
+			// instead of failing the whole persistence.
+			_ = err
+		}
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE monitor_run_items
+		SET artifact_markdown=?, artifact_json=?, raw_output=? WHERE id=?`,
+		sanitizeAndCapArtifact(item.ArtifactMarkdown), artifactJSONStr, sanitizeAndCapArtifact(item.RawOutput), itemID)
+	return err
+}
+
+// ---------------- Queries (Target-Grant Scoped) ----------------
+
+type monitorRunListFilter struct {
+	ScheduleID string
+	Status     string
+	Cluster    string
+	Instance   string
+	Limit      int
+}
+
+func (s *GatewayStore) ListMonitorRuns(ctx context.Context, auth TokenAuth, scheduleID, statusFilter string, limit int) ([]monitorRunRecord, error) {
+	return s.ListMonitorRunsFiltered(ctx, auth, monitorRunListFilter{
+		ScheduleID: scheduleID,
+		Status:     statusFilter,
+		Limit:      limit,
+	})
+}
+
+func (s *GatewayStore) ListMonitorRunsFiltered(ctx context.Context, auth TokenAuth, filter monitorRunListFilter) ([]monitorRunRecord, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	isAdmin := s.UserIsPlatformAdmin(auth.UserID)
+	where := []string{"1=1"}
+	args := []any{}
+	if filter.ScheduleID != "" {
+		where = append(where, "r.schedule_id=?")
+		args = append(args, filter.ScheduleID)
+	}
+	if filter.Status != "" {
+		where = append(where, "r.status=?")
+		args = append(args, filter.Status)
+	}
+	if filter.Cluster != "" && filter.Instance != "" {
+		where = append(where, `EXISTS(
+			SELECT 1 FROM monitor_run_items ti
+			WHERE ti.run_id=r.id AND `+gatewayIdentityTextFor(s.dialect, "ti.cluster")+`=? AND `+gatewayIdentityTextFor(s.dialect, "ti.instance")+`=?
+		)`)
+		args = append(args, filter.Cluster, filter.Instance)
+	}
+	if !isAdmin {
+		where = append(where, `(r.triggered_by=? OR EXISTS(
+			SELECT 1 FROM monitor_run_items i JOIN grants g ON g.user_id=?
+			WHERE i.run_id=r.id AND `+targetGrantPredicate(s.dialect, "g", "i.cluster", "i.instance")+`
+		))`)
+		args = append(args, auth.UserID, auth.UserID)
+	}
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id, r.schedule_id, r.schedule_name, r.trigger_kind, r.triggered_by, r.status,
+		r.skills_json, r.prompt, r.command,
+		r.total_targets, r.total_assets, r.passed_checks, r.warning_checks, r.failed_checks, r.skipped_checks,
+		r.offline_targets, r.metrics_written, r.started_at_ms, r.finished_at_ms, r.duration_ms, r.summary
+		FROM monitor_runs r WHERE `+strings.Join(where, " AND ")+` ORDER BY r.started_at_ms DESC, r.id DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []monitorRunRecord{}
+	for rows.Next() {
+		var rec monitorRunRecord
+		var skillsRaw string
+		if err := rows.Scan(
+			&rec.ID, &rec.ScheduleID, &rec.ScheduleName, &rec.TriggerKind, &rec.TriggeredBy, &rec.Status,
+			&skillsRaw, &rec.Prompt, &rec.Command,
+			&rec.TotalTargets, &rec.TotalAssets, &rec.PassedChecks, &rec.WarningChecks, &rec.FailedChecks, &rec.SkippedChecks,
+			&rec.OfflineTargets, &rec.MetricsWritten, &rec.StartedAtMs, &rec.FinishedAtMs, &rec.DurationMs, &rec.Summary,
+		); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(skillsRaw), &rec.Skills)
+		rec.Skills = normalizeSkillSlugs(rec.Skills)
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+// monitorItemDispatchMode reads the persisted Skill dispatch decision back out of the
+// item evidence (SKILL_FIRST_INSPECTION_SPEC.md 2.3.1). Runs written before this
+// field existed return "" and the JSON field is omitted.
+func monitorItemDispatchMode(evidence map[string]any) string {
+	mode, _ := evidence["dispatch_mode"].(string)
+	return mode
+}
+
+func (s *GatewayStore) GetMonitorRunDetail(ctx context.Context, auth TokenAuth, runID string) (monitorRunRecord, []monitorRunItemRecord, error) {
+	var run monitorRunRecord
+	var skillsRaw string
+	err := s.db.QueryRowContext(ctx, `SELECT id, schedule_id, schedule_name, trigger_kind, triggered_by, status,
+		skills_json, prompt, command,
+		total_targets, total_assets, passed_checks, warning_checks, failed_checks, skipped_checks,
+		offline_targets, metrics_written, started_at_ms, finished_at_ms, duration_ms, summary
+		FROM monitor_runs WHERE id=?`, runID).Scan(
+		&run.ID, &run.ScheduleID, &run.ScheduleName, &run.TriggerKind, &run.TriggeredBy, &run.Status,
+		&skillsRaw, &run.Prompt, &run.Command,
+		&run.TotalTargets, &run.TotalAssets, &run.PassedChecks, &run.WarningChecks, &run.FailedChecks, &run.SkippedChecks,
+		&run.OfflineTargets, &run.MetricsWritten, &run.StartedAtMs, &run.FinishedAtMs, &run.DurationMs, &run.Summary,
+	)
+	if err != nil {
+		return run, nil, err
+	}
+	_ = json.Unmarshal([]byte(skillsRaw), &run.Skills)
+	run.Skills = normalizeSkillSlugs(run.Skills)
+	isAdmin := s.UserIsPlatformAdmin(auth.UserID)
+	query := `SELECT i.id, i.run_id, i.cluster, i.instance, i.asset_id, i.asset_name, i.asset_kind, i.strategy, i.collector_method,
+		i.status, i.reason, i.started_at_ms, i.finished_at_ms, i.duration_ms, i.metrics_json, i.checks_json, i.evidence_json,
+		i.artifact_format, i.artifact_markdown, i.artifact_json, i.raw_output,
+		i.artifact_dir, i.artifact_bytes, i.artifact_sha256, i.artifact_truncated
+		FROM monitor_run_items i WHERE i.run_id=?`
+	args := []any{runID}
+	if !isAdmin {
+		query += ` AND EXISTS(SELECT 1 FROM grants g WHERE g.user_id=? AND g.cluster IN ('*', i.cluster) AND g.instance IN ('*', i.instance))`
+		args = append(args, auth.UserID)
+	}
+	query += ` ORDER BY i.id ASC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return run, nil, err
+	}
+	defer rows.Close()
+	items := []monitorRunItemRecord{}
+	missingArtifacts := 0
+	for rows.Next() {
+		var item monitorRunItemRecord
+		var metricsRaw, checksRaw, evidenceRaw, artifactJSONRaw string
+		var artifactTruncated int
+		if err := rows.Scan(
+			&item.ID, &item.RunID, &item.Cluster, &item.Instance, &item.AssetID, &item.AssetName, &item.AssetKind,
+			&item.Strategy, &item.CollectorMethod, &item.Status, &item.Reason,
+			&item.StartedAtMs, &item.FinishedAtMs, &item.DurationMs, &metricsRaw, &checksRaw, &evidenceRaw,
+			&item.ArtifactFormat, &item.ArtifactMarkdown, &artifactJSONRaw, &item.RawOutput,
+			&item.ArtifactDir, &item.ArtifactBytes, &item.ArtifactSHA256, &artifactTruncated,
+		); err != nil {
+			return run, nil, err
+		}
+		item.ArtifactTruncated = artifactTruncated != 0
+		item.Checks = []api.MonitorInspectCheck{}
+		_ = json.Unmarshal([]byte(metricsRaw), &item.Metrics)
+		_ = json.Unmarshal([]byte(checksRaw), &item.Checks)
+		_ = json.Unmarshal([]byte(evidenceRaw), &item.Evidence)
+		item.DispatchMode = monitorItemDispatchMode(item.Evidence)
+		// File-first: a row with an artifact directory reads the full payload
+		// back from disk. Legacy rows without one keep their SQLite text
+		// columns, so upgrades stay lossless.
+		artifactFilesRead := false
+		if item.ArtifactDir != "" {
+			if content, ok := s.readMonitorArtifactFiles(item.ArtifactDir); ok {
+				artifactFilesRead = true
+				item.ArtifactMarkdown = content.Markdown
+				item.ArtifactJSON = content.JSON
+				item.RawOutput = content.Raw
+			}
+		}
+		// The index row survives its payload when retention deletes the files
+		// first (spec §3.3), or when an operator removes the directory by hand.
+		// Report that instead of returning a silent 200 with an empty body.
+		// Rows without artifact_dir are legacy text fallbacks (or gap items that
+		// never had an artifact) and stay present.
+		if item.ArtifactDir != "" && !artifactFilesRead {
+			item.ArtifactState = monitorArtifactStateMissing
+			missingArtifacts++
+		} else {
+			item.ArtifactState = monitorArtifactStatePresent
+		}
+		if len(item.ArtifactJSON) == 0 {
+			if compact, ok := compactValidJSON(artifactJSONRaw); ok {
+				item.ArtifactJSON = compact
+			}
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return run, nil, err
+	}
+	run.ArtifactState = monitorArtifactStatePresent
+	if missingArtifacts > 0 {
+		run.ArtifactState = monitorArtifactStateMissing
+	}
+	if !isAdmin && len(items) == 0 && run.TriggeredBy != auth.UserID {
+		return run, nil, sql.ErrNoRows
+	}
+	// Close the item cursor before the diff lookups so the single write
+	// connection is free (SQLite store runs with MaxOpenConns=1).
+	_ = rows.Close()
+	s.attachMonitorRunItemDiffs(ctx, run, items)
+	return run, items, nil
+}
+
+func scanResourceSnapshot(row interface{ Scan(...any) error }) (monitorResourceSnapshot, error) {
+	var snap monitorResourceSnapshot
+	var tagsRaw, detailsRaw string
+	err := row.Scan(
+		&snap.ID, &snap.Cluster, &snap.Instance, &snap.AssetID, &snap.AssetName, &snap.AssetKind,
+		&snap.Strategy, &snap.CollectorMethod, &snap.CollectedAtMs, &snap.RunID, &snap.Status,
+		&snap.CPUCores, &snap.CPUTotalCores, &snap.CPUPercent,
+		&snap.MemoryUsedBytes, &snap.MemoryTotalBytes, &snap.MemoryPercent,
+		&snap.DiskUsedBytes, &snap.DiskTotalBytes, &snap.DiskPercent,
+		&snap.NetBytesPerSec, &snap.DiskIOPS, &snap.DiskLatencyMs, &snap.GPUPercent,
+		&snap.ResponseTimeMs, &snap.ErrorRate, &snap.ActiveConnections, &snap.RequestsPerSec,
+		&snap.UptimeSeconds, &snap.Load1m, &snap.OSInfo, &snap.KernelInfo, &tagsRaw, &detailsRaw,
+	)
+	if err != nil {
+		return snap, err
+	}
+	snap.Tags = []string{}
+	_ = json.Unmarshal([]byte(tagsRaw), &snap.Tags)
+	_ = json.Unmarshal([]byte(detailsRaw), &snap.Details)
+	return snap, nil
+}
+
+func (h *GatewayHub) BuildMonitorOverview(ctx context.Context, auth TokenAuth, rangeKey, clusterFilter, kindFilter, tagFilter string) (monitorOverviewResponse, error) {
+	rName, window, bucketCount, ok := monitorEngineRangeDuration(rangeKey)
+	if !ok {
+		return monitorOverviewResponse{}, errors.New("invalid_monitor_range")
+	}
+	now := time.Now().UTC()
+	toMs := now.UnixMilli()
+	fromMs := now.Add(-window).UnixMilli()
+	isAdmin := h.store.UserIsPlatformAdmin(auth.UserID)
+	scope := "self"
+	if isAdmin {
+		scope = "global"
+	}
+
+	// Build live target status map.
+	liveTargets := make(map[string]bool)
+	for _, t := range h.ListTargets() {
+		if isAdmin || h.store.UserCanUseTarget(auth.UserID, t.Cluster, t.Instance) {
+			if clusterFilter == "" || t.Cluster == clusterFilter {
+				liveTargets[tunnelKey(t.Cluster, t.Instance)] = true
+			}
+		}
+	}
+	statuses, _ := h.store.ListAgentStatus()
+	knownTargets := make(map[string]bool)
+	for _, st := range statuses {
+		if meaningfulInstanceTime(st.ArchivedAt) {
+			continue
+		}
+		if !isAdmin && !h.store.UserCanUseTarget(auth.UserID, st.Cluster, st.Instance) {
+			continue
+		}
+		if clusterFilter != "" && st.Cluster != clusterFilter {
+			continue
+		}
+		knownTargets[tunnelKey(st.Cluster, st.Instance)] = true
+	}
+	for k := range liveTargets {
+		knownTargets[k] = true
+	}
+
+	// Query latest snapshot per (cluster, instance, asset_kind, asset_id).
+	where := []string{"1=1"}
+	args := []any{}
+	if clusterFilter != "" {
+		where = append(where, "s.cluster=?")
+		args = append(args, clusterFilter)
+	}
+	if kindFilter != "" {
+		where = append(where, "s.asset_kind=?")
+		args = append(args, kindFilter)
+	}
+	if !isAdmin {
+		where = append(where, `EXISTS(SELECT 1 FROM grants g WHERE g.user_id=? AND g.cluster IN ('*', s.cluster) AND g.instance IN ('*', s.instance))`)
+		args = append(args, auth.UserID)
+	}
+
+	latestSQL := `SELECT s.id, s.cluster, s.instance, s.asset_id, s.asset_name, s.asset_kind,
+		s.strategy, s.collector_method, s.collected_at_ms, s.run_id, s.status,
+		s.cpu_cores, s.cpu_total_cores, s.cpu_percent,
+		s.memory_used_bytes, s.memory_total_bytes, s.memory_percent,
+		s.disk_used_bytes, s.disk_total_bytes, s.disk_percent,
+		s.net_bytes_per_sec, s.disk_iops, s.disk_latency_ms, s.gpu_percent,
+		s.response_time_ms, s.error_rate, s.active_connections, s.requests_per_sec,
+		s.uptime_seconds, s.load_1m, s.os_info, s.kernel_info, s.tags_json, s.details_json
+		FROM monitor_resource_snapshots s
+		JOIN (
+			SELECT cluster, instance, asset_kind, asset_id, MAX(id) AS max_id
+			FROM monitor_resource_snapshots
+			GROUP BY cluster, instance, asset_kind, asset_id
+		) latest ON latest.max_id = s.id
+		WHERE ` + strings.Join(where, " AND ") + `
+		ORDER BY s.cluster, s.instance, s.asset_kind, s.asset_id`
+
+	rows, err := h.store.db.QueryContext(ctx, latestSQL, args...)
+	if err != nil {
+		return monitorOverviewResponse{}, err
+	}
+	defer rows.Close()
+	resources := []monitorResourceSnapshot{}
+	tagFilterLower := strings.ToLower(strings.TrimSpace(tagFilter))
+	for rows.Next() {
+		snap, err := scanResourceSnapshot(rows)
+		if err != nil {
+			return monitorOverviewResponse{}, err
+		}
+		if tagFilterLower != "" {
+			matched := false
+			for _, t := range snap.Tags {
+				if strings.ToLower(t) == tagFilterLower {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		snap.Online = liveTargets[tunnelKey(snap.Cluster, snap.Instance)]
+		snap.Stale = toMs-snap.CollectedAtMs > 15*60*1000
+		resources = append(resources, snap)
+	}
+	if err := rows.Err(); err != nil {
+		return monitorOverviewResponse{}, err
+	}
+	resources = dedupeMonitorOverviewHostSnapshots(resources)
+
+	// Aggregate summary stats.
+	var summary monitorOverviewSummary
+	summary.OnlineAgents = len(liveTargets)
+	summary.OfflineAgents = max(0, len(knownTargets)-len(liveTargets))
+	summary.TotalAssets = len(resources)
+	byKind := map[string]int{}
+	var cpuPctSum, memPctSum, diskPctSum float64
+	var cpuPctCnt, memPctCnt, diskPctCnt int
+	coveredSet := map[string]bool{}
+	for _, r := range resources {
+		byKind[r.AssetKind]++
+		if r.CollectedAtMs > summary.LastCollectedAtMs {
+			summary.LastCollectedAtMs = r.CollectedAtMs
+		}
+		if r.Online && !r.Stale && r.Status != "offline" && r.Status != "error" {
+			summary.CoveredAssets++
+			coveredSet[tunnelKey(r.Cluster, r.Instance)] = true
+		}
+		switch {
+		case !r.Online || r.Status == "offline":
+			summary.OfflineAssets++
+		case r.Status == "critical" || r.Status == "error":
+			summary.CriticalAssets++
+		case r.Status == "warning":
+			summary.WarningAssets++
+		default:
+			summary.HealthyAssets++
+		}
+		// Avoid double-counting container/k8s totals on top of host totals in fleet capacity KPIs,
+		// while still averaging all host/k8s assets (including Skill-First bridged snapshots).
+		isHostSkill := r.AssetKind == "skill" && (r.Strategy == "skill:inspect-vm-host" || r.AssetID == "inspect-vm-host")
+		isK8sSkill := r.AssetKind == "skill" && (r.Strategy == "skill:inspect-k8s-cluster" || r.AssetID == "inspect-k8s-cluster")
+		if r.AssetKind == "vm" || r.AssetKind == "physical" || r.AssetKind == "k8s" || isHostSkill || isK8sSkill {
+			if r.CPUPercent != nil {
+				cpuPctSum += *r.CPUPercent
+				cpuPctCnt++
+			}
+			if r.MemoryPercent != nil {
+				memPctSum += *r.MemoryPercent
+				memPctCnt++
+			}
+			if r.DiskPercent != nil {
+				diskPctSum += *r.DiskPercent
+				diskPctCnt++
+			}
+		}
+		if r.AssetKind == "vm" || r.AssetKind == "physical" || isHostSkill {
+			if r.CPUTotalCores != nil {
+				summary.TotalCPUCores += *r.CPUTotalCores
+			}
+			if r.CPUCores != nil {
+				summary.UsedCPUCores += *r.CPUCores
+			} else if r.CPUTotalCores != nil && r.CPUPercent != nil {
+				summary.UsedCPUCores += (*r.CPUTotalCores) * (*r.CPUPercent) / 100.0
+			}
+			if r.MemoryTotalBytes != nil {
+				summary.TotalMemoryBytes += *r.MemoryTotalBytes
+			}
+			if r.MemoryUsedBytes != nil {
+				summary.UsedMemoryBytes += *r.MemoryUsedBytes
+			}
+			if r.DiskTotalBytes != nil {
+				summary.TotalDiskBytes += *r.DiskTotalBytes
+			}
+			if r.DiskUsedBytes != nil {
+				summary.UsedDiskBytes += *r.DiskUsedBytes
+			}
+		}
+	}
+	summary.UsedCPUCores = math.Round(summary.UsedCPUCores*100) / 100
+	if cpuPctCnt > 0 {
+		summary.AvgCPUPercent = math.Round((cpuPctSum/float64(cpuPctCnt))*10) / 10
+	}
+	if memPctCnt > 0 {
+		summary.AvgMemoryPercent = math.Round((memPctSum/float64(memPctCnt))*10) / 10
+	}
+	if diskPctCnt > 0 {
+		summary.AvgDiskPercent = math.Round((diskPctSum/float64(diskPctCnt))*10) / 10
+	}
+	denom := len(resources)
+	if len(knownTargets) > denom {
+		denom = len(knownTargets)
+	}
+	if denom > 0 {
+		summary.ProbeCoveragePct = math.Round((float64(summary.CoveredAssets)/float64(denom))*1000) / 10
+	}
+
+	_ = h.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM monitor_schedules WHERE enabled=1`).Scan(&summary.ActiveSchedules)
+	_ = h.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM monitor_runs`).Scan(&summary.TotalRuns)
+
+	thresholdAlerts := h.store.readOpenThresholdAlerts(ctx, auth, isAdmin, clusterFilter)
+	summary.OpenThresholdAlerts = len(thresholdAlerts)
+
+	// Top consumers (up to 5 each).
+	topCPU := topResourcesBy(resources, func(r monitorResourceSnapshot) (float64, bool) {
+		if r.CPUPercent == nil {
+			return 0, false
+		}
+		return *r.CPUPercent, true
+	}, 5)
+	topMem := topResourcesBy(resources, func(r monitorResourceSnapshot) (float64, bool) {
+		if r.MemoryPercent == nil {
+			return 0, false
+		}
+		return *r.MemoryPercent, true
+	}, 5)
+	topDisk := topResourcesBy(resources, func(r monitorResourceSnapshot) (float64, bool) {
+		if r.DiskPercent == nil {
+			return 0, false
+		}
+		return *r.DiskPercent, true
+	}, 5)
+
+	// Fleet utilization trend buckets over [fromMs, toMs].
+	trends, err := h.store.readMonitorTrendBuckets(ctx, auth, isAdmin, fromMs, toMs, bucketCount, clusterFilter, kindFilter)
+	if err != nil {
+		return monitorOverviewResponse{}, err
+	}
+
+	recentRuns, err := h.store.ListMonitorRuns(ctx, auth, "", "", 10)
+	if err != nil {
+		return monitorOverviewResponse{}, err
+	}
+
+	return monitorOverviewResponse{
+		Scope:           scope,
+		Range:           rName,
+		FromMs:          fromMs,
+		ToMs:            toMs,
+		Summary:         summary,
+		ByKind:          byKind,
+		Resources:       resources,
+		TopCPU:          topCPU,
+		TopMemory:       topMem,
+		TopDisk:         topDisk,
+		Trends:          trends,
+		ThresholdAlerts: thresholdAlerts,
+		RecentRuns:      recentRuns,
+	}, nil
+}
+
+func isMonitorHostSkillSnapshot(r monitorResourceSnapshot) bool {
+	return r.AssetKind == "skill" && (r.Strategy == "skill:inspect-vm-host" || r.AssetID == "inspect-vm-host")
+}
+
+// dedupeMonitorOverviewHostSnapshots prevents the same target Agent from being
+// listed and capacity-summed twice when both Skill-First (inspect-vm-host) and
+// native host collection (vm/physical) have written snapshots into
+// monitor_resource_snapshots. It keeps the fresher host snapshot per target
+// (preferring the CMDB vm/physical row on equal timestamps).
+func dedupeMonitorOverviewHostSnapshots(resources []monitorResourceSnapshot) []monitorResourceSnapshot {
+	bestHostIdx := map[string]int{}
+	drop := map[int]bool{}
+	for i, r := range resources {
+		isMachine := r.AssetKind == "vm" || r.AssetKind == "physical"
+		isSkillHost := isMonitorHostSkillSnapshot(r)
+		if !isMachine && !isSkillHost {
+			continue
+		}
+		key := tunnelKey(r.Cluster, r.Instance)
+		prevIdx, exists := bestHostIdx[key]
+		if !exists {
+			bestHostIdx[key] = i
+			continue
+		}
+		prev := resources[prevIdx]
+		prevIsMachine := prev.AssetKind == "vm" || prev.AssetKind == "physical"
+		// Only dedupe across the Skill-First vs native vm/physical boundary so
+		// distinct CMDB machine asset_ids bound to one target are still preserved.
+		if prevIsMachine == isMachine {
+			continue
+		}
+		replace := r.CollectedAtMs > prev.CollectedAtMs || (r.CollectedAtMs == prev.CollectedAtMs && isMachine && !prevIsMachine)
+		if replace {
+			drop[prevIdx] = true
+			bestHostIdx[key] = i
+		} else {
+			drop[i] = true
+		}
+	}
+	if len(drop) == 0 {
+		return resources
+	}
+	out := make([]monitorResourceSnapshot, 0, len(resources)-len(drop))
+	for i, r := range resources {
+		if !drop[i] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (s *GatewayStore) readOpenThresholdAlerts(ctx context.Context, auth TokenAuth, isAdmin bool, clusterFilter string) []monitorOpenThresholdAlert {
+	out := []monitorOpenThresholdAlert{}
+	if !s.tableExists(ctx, "asset_monitor_alerts") || !s.tableExists(ctx, "asset_monitor_series") {
+		return out
+	}
+	where := []string{"a.state='open'"}
+	args := []any{}
+	if clusterFilter != "" {
+		where = append(where, "s.cluster=?")
+		args = append(args, clusterFilter)
+	}
+	if !isAdmin {
+		where = append(where, `EXISTS(SELECT 1 FROM grants g WHERE g.user_id=? AND g.cluster IN ('*', s.cluster) AND g.instance IN ('*', s.instance))`)
+		args = append(args, auth.UserID)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT s.cluster, s.instance, s.type, s.asset_id, s.namespace, s.origin,
+		s.metric, s.device_id, a.threshold, a.duration_seconds, a.opened_ms
+		FROM asset_monitor_alerts a JOIN asset_monitor_series s ON s.id = a.series_id
+		WHERE `+strings.Join(where, " AND ")+` ORDER BY a.opened_ms DESC LIMIT 50`, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item monitorOpenThresholdAlert
+		if rows.Scan(&item.Cluster, &item.Instance, &item.AssetType, &item.AssetID, &item.Namespace, &item.Origin,
+			&item.Metric, &item.DeviceID, &item.Threshold, &item.DurationSeconds, &item.OpenedMs) == nil {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func topResourcesBy(list []monitorResourceSnapshot, fn func(monitorResourceSnapshot) (float64, bool), limit int) []monitorResourceSnapshot {
+	type scored struct {
+		row monitorResourceSnapshot
+		val float64
+	}
+	var items []scored
+	for _, r := range list {
+		if v, ok := fn(r); ok {
+			items = append(items, scored{row: r, val: v})
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].val != items[j].val {
+			return items[i].val > items[j].val
+		}
+		return items[i].row.AssetID < items[j].row.AssetID
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	out := make([]monitorResourceSnapshot, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.row)
+	}
+	return out
+}
+
+func (s *GatewayStore) readMonitorTrendBuckets(
+	ctx context.Context, auth TokenAuth, isAdmin bool, fromMs, toMs int64, bucketCount int, clusterFilter, kindFilter string,
+) ([]monitorTrendBucket, error) {
+	out := make([]monitorTrendBucket, bucketCount)
+	span := toMs - fromMs
+	if span <= 0 {
+		span = 1
+	}
+	for i := 0; i < bucketCount; i++ {
+		out[i] = monitorTrendBucket{
+			StartMs: fromMs + (span*int64(i))/int64(bucketCount),
+			EndMs:   fromMs + (span*int64(i+1))/int64(bucketCount),
+		}
+	}
+	where := []string{"s.collected_at_ms >= ?", "s.collected_at_ms <= ?"}
+	args := []any{fromMs, toMs}
+	if clusterFilter != "" {
+		where = append(where, "s.cluster=?")
+		args = append(args, clusterFilter)
+	}
+	if kindFilter != "" {
+		where = append(where, "s.asset_kind=?")
+		args = append(args, kindFilter)
+	} else {
+		where = append(where, "(s.asset_kind IN ('vm','physical','k8s') OR (s.asset_kind='skill' AND s.strategy IN ('skill:inspect-vm-host','skill:inspect-k8s-cluster')))")
+	}
+	if !isAdmin {
+		where = append(where, `EXISTS(SELECT 1 FROM grants g WHERE g.user_id=? AND g.cluster IN ('*', s.cluster) AND g.instance IN ('*', s.instance))`)
+		args = append(args, auth.UserID)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT s.collected_at_ms, s.cpu_percent, s.memory_percent, s.disk_percent
+		FROM monitor_resource_snapshots s WHERE `+strings.Join(where, " AND ")+` ORDER BY s.collected_at_ms ASC LIMIT 10000`, args...)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+
+	type acc struct {
+		cpuSum, memSum, diskSum float64
+		cpuCnt, memCnt, diskCnt int
+		cpuMax, memMax          float64
+	}
+	accs := make([]acc, bucketCount)
+	for rows.Next() {
+		var ts int64
+		var cpu, mem, disk sql.NullFloat64
+		if err := rows.Scan(&ts, &cpu, &mem, &disk); err != nil {
+			return out, err
+		}
+		idx := int(((ts - fromMs) * int64(bucketCount)) / span)
+		if idx < 0 {
+			idx = 0
+		} else if idx >= bucketCount {
+			idx = bucketCount - 1
+		}
+		out[idx].Samples++
+		if cpu.Valid {
+			accs[idx].cpuSum += cpu.Float64
+			accs[idx].cpuCnt++
+			if cpu.Float64 > accs[idx].cpuMax {
+				accs[idx].cpuMax = cpu.Float64
+			}
+		}
+		if mem.Valid {
+			accs[idx].memSum += mem.Float64
+			accs[idx].memCnt++
+			if mem.Float64 > accs[idx].memMax {
+				accs[idx].memMax = mem.Float64
+			}
+		}
+		if disk.Valid {
+			accs[idx].diskSum += disk.Float64
+			accs[idx].diskCnt++
+		}
+	}
+	for i := range out {
+		if accs[i].cpuCnt > 0 {
+			out[i].AvgCPUPercent = monitorFloatPtr(accs[i].cpuSum / float64(accs[i].cpuCnt))
+			out[i].MaxCPUPercent = monitorFloatPtr(accs[i].cpuMax)
+		}
+		if accs[i].memCnt > 0 {
+			out[i].AvgMemoryPercent = monitorFloatPtr(accs[i].memSum / float64(accs[i].memCnt))
+			out[i].MaxMemoryPercent = monitorFloatPtr(accs[i].memMax)
+		}
+		if accs[i].diskCnt > 0 {
+			out[i].AvgDiskPercent = monitorFloatPtr(accs[i].diskSum / float64(accs[i].diskCnt))
+		}
+	}
+	return out, rows.Err()
+}
+
+func (h *GatewayHub) ReadMonitorResourceHistory(ctx context.Context, auth TokenAuth, cluster, instance, assetKind, assetID, rangeKey string) (monitorHistoryResponse, error) {
+	if !monitorID(cluster) || !monitorID(instance) || !monitorID(assetID) {
+		return monitorHistoryResponse{}, fmt.Errorf("invalid_monitor_target")
+	}
+	if !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
+		return monitorHistoryResponse{}, ErrForbidden
+	}
+	rName, window, _, ok := monitorEngineRangeDuration(rangeKey)
+	if !ok {
+		return monitorHistoryResponse{}, fmt.Errorf("invalid_monitor_range")
+	}
+	now := time.Now().UTC()
+	toMs := now.UnixMilli()
+	fromMs := now.Add(-window).UnixMilli()
+
+	query := `SELECT id, cluster, instance, asset_id, asset_name, asset_kind,
+		strategy, collector_method, collected_at_ms, run_id, status,
+		cpu_cores, cpu_total_cores, cpu_percent,
+		memory_used_bytes, memory_total_bytes, memory_percent,
+		disk_used_bytes, disk_total_bytes, disk_percent,
+		net_bytes_per_sec, disk_iops, disk_latency_ms, gpu_percent,
+		response_time_ms, error_rate, active_connections, requests_per_sec,
+		uptime_seconds, load_1m, os_info, kernel_info, tags_json, details_json
+		FROM monitor_resource_snapshots
+		WHERE cluster=? AND instance=? AND asset_id=? AND (?='' OR asset_kind=?)
+			AND collected_at_ms BETWEEN ? AND ?
+		ORDER BY collected_at_ms ASC LIMIT 1000`
+	rows, err := h.store.db.QueryContext(ctx, query, cluster, instance, assetID, assetKind, assetKind, fromMs, toMs)
+	if err != nil {
+		return monitorHistoryResponse{}, err
+	}
+	defer rows.Close()
+	points := []monitorResourceSnapshot{}
+	online := h.getAgent(cluster, instance) != nil
+	for rows.Next() {
+		snap, err := scanResourceSnapshot(rows)
+		if err != nil {
+			return monitorHistoryResponse{}, err
+		}
+		snap.Online = online
+		snap.Stale = toMs-snap.CollectedAtMs > 15*60*1000
+		points = append(points, snap)
+	}
+	if err := rows.Err(); err != nil {
+		return monitorHistoryResponse{}, err
+	}
+	resp := monitorHistoryResponse{
+		Cluster:   cluster,
+		Instance:  instance,
+		AssetKind: assetKind,
+		AssetID:   assetID,
+		Range:     rName,
+		FromMs:    fromMs,
+		ToMs:      toMs,
+		Points:    points,
+	}
+	if len(points) > 0 {
+		last := points[len(points)-1]
+		resp.Latest = &last
+	}
+	return resp, nil
+}
+
+// PruneMonitorEngineHistory is the hourly fallback entrypoint. It always scans:
+// the throttle only applies to the post-run trigger, so a quiet gateway still
+// reclaims space (see monitor_retention.go).
+func (s *GatewayStore) PruneMonitorEngineHistory(now time.Time) {
+	s.PruneMonitorRetention(now, monitorRetentionPolicyFromEnv(), true)
+}

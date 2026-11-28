@@ -1,0 +1,128 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.inspect-container-runtime
+  name: 容器运行时治理
+  description: 自动探测 Docker / nerdctl / Podman 运行时，监控容器 CPU、内存上限占比与 OOM 风险
+  category: infrastructure
+  icon: box
+  scenarios:
+    - app-delivery-web
+    - host-security-ops
+    - all-in-one
+capabilities:
+  target_modes:
+    - docker
+    - linux
+  requires_skills:
+    - inspect-container-runtime
+  companion_agent_skill: shell
+ui:
+  slots:
+    sidebar:
+      enabled: false
+      label: 容器运行时治理
+      group: extensions
+      order: 25
+    target_tab:
+      enabled: true
+      label: 容器治理
+      order: 25
+    home_widget:
+      enabled: true
+      title: 容器运行时治理
+      span: 1
+      metrics:
+        - key: containers_running
+          label: 运行中容器
+          unit: "个"
+          aggregate: max
+        - key: container_max_mem_percent
+          label: 最高内存占比
+          unit: "%"
+          aggregate: max
+    ask_presets:
+      - title: 排查高内存与异常退出容器
+        description: 核查高内存占比容器的日志、OOMKilled 记录与重启次数
+        prompt: 请使用 inspect-container-runtime Skill 检查当前节点的容器运行时与容器内存占比，重点排查高内存水位或非健康容器的日志与重启原因。
+  presets:
+    - id: container-quick-stats
+      title: 容器运行时实时体检
+      description: 零 Token 采集运行中容器 CPU、内存上限占比与 Top8 柱图
+      mode: script
+    - id: container-ai-oom
+      title: AI 排查 OOM 与容器泄漏
+      description: 结合容器 stats 与最近日志定位内存泄漏与限额不足风险
+      mode: agent
+      prompt: 请运行 inspect-container-runtime Skill 识别高内存占比容器，只读拉取对应容器尾部日志与 inspect 限额配置，输出安全调优方案。
+  actions:
+    - id: container-inspect
+      label: 排查容器日志与状态
+      description: 只读检查所选容器的 inspect 元数据、健康检查与最近错误日志
+      mode: check
+      skill: shell
+      prompt_template: 请只读检查所选容器的运行时状态、内存限额、重启次数与最近 100 行日志（自动脱敏任何敏感变量），定位异常原因。
+    - id: container-ops-plan
+      label: 规划限额与维护方案
+      description: 为高水位容器制定内存限额调整、日志轮转或滚动重启方案
+      mode: plan
+      skill: shell
+      prompt_template: 请针对所选容器的资源水位或异常状态生成可回滚的维护方案（含前置检查、执行命令与验证步骤），严禁直接变更。
+    - id: container-ops-apply
+      label: 受控执行容器维护
+      description: 经审计 Bash 执行用户明确指定的容器重启或悬空资源清理并验证健康状态
+      mode: apply
+      skill: shell
+      prompt_template: 请按用户明确要求通过受审计 Bash 执行单机容器维护操作（仅限用户指定容器，严禁误删数据卷），执行后必须回读容器运行状态与健康检查作为证据。
+  views:
+    - type: kpi_grid
+      title: 容器运行时态势
+      items:
+        - key: containers_running
+          label: 运行中容器数
+          unit: "个"
+        - key: container_max_mem_percent
+          label: 最高容器内存占比
+          unit: "%"
+          warn_threshold: 85
+          crit_threshold: 95
+    - type: charts
+      title: 容器内存占比 Top 8
+    - type: resource_table
+      title: 运行中容器资源明细
+      source_key: containers
+      row_action_id: container-inspect
+      columns:
+        - key: name
+          label: 容器名称
+          kind: code
+        - key: cpu_percent
+          label: CPU(%)
+          kind: number
+        - key: mem_percent
+          label: 内存占比(%)
+          kind: number
+        - key: mem_usage
+          label: 内存用量
+          kind: code
+        - key: pids
+          label: PIDs
+          kind: number
+        - key: status
+          label: 状态
+          kind: badge
+    - type: checks_table
+      title: 运行时与水位核查明细
+    - type: trend_series
+      title: 容器资源历史趋势
+      metric_keys:
+        - containers_running
+        - container_max_mem_percent
+      range: 24h
+    - type: artifact_viewer
+      title: 完整容器运行时报告
+schedule_template:
+  name: 单机容器运行时定时巡检
+  description: 每 15 分钟巡检 Docker / nerdctl / Podman 运行中容器水位与内存上限风险
+  interval_seconds: 900
+  scope_mode: all_online

@@ -1,0 +1,171 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.host-security
+  name: 主机安全治理
+  description: 一站式核查挖矿木马、违规代理穿透、SSH 加固基线与待更新安全补丁
+  category: security
+  icon: shield
+  scenarios:
+    - ai-compute-cluster
+    - host-security-ops
+    - all-in-one
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - host-security
+  companion_agent_skill: shell
+ui:
+  slots:
+    sidebar:
+      enabled: true
+      label: 主机安全治理
+      group: extensions
+      order: 20
+    target_tab:
+      enabled: true
+      label: 安全治理
+      order: 20
+    home_widget:
+      enabled: true
+      title: 主机安全治理
+      span: 1
+      metrics:
+        - key: sec_risk_total
+          label: 风险项合计
+          unit: "项"
+          aggregate: max
+        - key: sec_mining_suspects
+          label: 疑似挖矿进程
+          unit: "个"
+          aggregate: max
+        - key: sec_proxy_suspects
+          label: 违规代理线索
+          unit: "条"
+          aggregate: max
+        - key: sec_pending_updates
+          label: 待更新补丁
+          unit: "个"
+          aggregate: max
+    ask_presets:
+      - title: 排查挖矿与可疑外联
+        description: 结合进程、计划任务与网络连接做安全溯源分析
+        prompt: 请使用 host-security Skill 全面核查当前主机的挖矿木马特征、违规代理穿透、SSH 加固配置与高危补丁缺口，并给出只读溯源证据与加固建议。
+  inputs:
+    - key: CHECK_PROXY
+      label: 检测违规代理与穿透
+      description: 扫描 clash/v2ray/frpc 等进程及常见代理监听端口
+      type: boolean
+      default: true
+    - key: CHECK_UPDATES
+      label: 核查待更新补丁
+      description: 只读查询 apt/dnf/yum 待更新安全包概况
+      type: boolean
+      default: true
+    - key: SENSITIVITY
+      label: 扫描灵敏度
+      description: 严格模式额外告警 /tmp 与 /dev/shm 进程及 SSH 密码登录
+      type: select
+      default: standard
+      options:
+        - value: standard
+          label: 标准基线
+        - value: strict
+          label: 严格审计
+  presets:
+    - id: sec-standard-scan
+      title: 标准安全体检
+      description: 平衡误报率，全面扫描挖矿、代理、SSH 与补丁风险
+      mode: script
+      inputs:
+        CHECK_PROXY: true
+        CHECK_UPDATES: true
+        SENSITIVITY: standard
+    - id: sec-strict-audit
+      title: 严格合规审计
+      description: 开启严格模式，同时核查临时目录执行与 SSH 密码登录
+      mode: script
+      inputs:
+        CHECK_PROXY: true
+        CHECK_UPDATES: true
+        SENSITIVITY: strict
+    - id: sec-incident-triage
+      title: AI 安全事件研判
+      description: 在 AI 助手中对告警项做只读溯源并生成处置清单
+      mode: agent
+      prompt: 请使用 host-security Skill 执行严格安全核查，针对所有 warning 和 critical 风险项检查对应进程属主与计划任务，输出按优先级排序的安全加固清单（严禁自动修改系统）。
+  actions:
+    - id: sec-triage-check
+      label: 只读溯源告警进程与连接
+      description: 对命中的挖矿、代理、SSH 风险项做只读属主、启动项与外联连接取证
+      mode: check
+      skill: shell
+      prompt_template: 请只读核查当前主机安全巡检命中的高风险进程、监听端口、计划任务（cron/systemd timer）与 SSH 弱配置来源，输出完整溯源证据链，严禁执行变更。
+    - id: sec-harden-plan
+      label: 生成安全加固与补丁计划
+      description: 输出 SSH 基线加固、补丁升级与可疑服务下线的分步骤实施方案与回滚清单
+      mode: plan
+      skill: shell
+      prompt_template: 请针对主机安全巡检发现的 SSH 弱配置、待更新补丁与违规代理/异常进程风险，制定分优先级的安全加固方案、验证命令与回滚步骤，严禁直接修改系统。
+    - id: sec-contain-apply
+      label: 受控执行应急处置与封堵
+      description: 经人工确认后在审计通道内执行恶意进程终止、端口封堵或 SSH 加固
+      mode: apply
+      skill: shell
+      prompt_template: 请先列明拟处置的风险对象、影响范围与回滚命令，在人工确认后通过审计通道执行应急处置（如终止确认恶意的进程、应用已备份的 sshd 加固配置），完成后立即复跑 host-security 验证。
+  views:
+    - type: kpi_grid
+      title: 安全态势概览
+      items:
+        - key: sec_risk_total
+          label: 风险项合计
+          unit: "项"
+          warn_threshold: 1
+          crit_threshold: 3
+        - key: sec_mining_suspects
+          label: 疑似挖矿进程
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 1
+        - key: sec_proxy_suspects
+          label: 违规代理线索
+          unit: "条"
+          warn_threshold: 1
+          crit_threshold: 2
+        - key: sec_ssh_issues
+          label: SSH 基线缺口
+          unit: "项"
+          warn_threshold: 1
+          crit_threshold: 2
+        - key: sec_pending_updates
+          label: 待更新软件包
+          unit: "个"
+          warn_threshold: 10
+          crit_threshold: 50
+    - type: findings_list
+      title: 安全风险发现清单（根因归并）
+    - type: checks_table
+      title: 安全检查明细
+    - type: charts
+      title: 安全风险分类统计
+    - type: trend_series
+      title: 安全风险历史趋势
+      metric_keys:
+        - sec_risk_total
+        - sec_mining_suspects
+        - sec_proxy_suspects
+      range: 7d
+    - type: artifact_viewer
+      title: 完整安全巡检报告
+schedule_template:
+  name: 主机安全治理定时巡检
+  description: 每小时自动执行全集群挖矿、违规代理、SSH 基线与补丁安全核查
+  interval_seconds: 3600
+  scope_mode: all_online
+  inputs:
+    CHECK_PROXY: true
+    CHECK_UPDATES: true
+    SENSITIVITY: standard

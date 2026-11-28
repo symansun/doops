@@ -1,0 +1,822 @@
+@import "tailwindcss";
+/* shadcn/ui animation utilities (animate-in, fade-in-0, zoom-in-95, ...). */
+@import "tw-animate-css";
+@source "../node_modules/streamdown/dist/*.js";
+
+@theme {
+  --text-2xs: 0.8125rem;
+  --text-2xs--line-height: 1.125rem;
+  --text-xs: 0.875rem;
+  --text-xs--line-height: 1.25rem;
+  --text-sm: 1rem;
+  --text-sm--line-height: 1.5rem;
+  --text-base: 1.125rem;
+  --text-base--line-height: 1.625rem;
+  --text-lg: 1.25rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.875rem;
+}
+
+@theme inline {
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  color-scheme: dark;
+  --radius: 0.625rem;
+
+  --background: oklch(0.16 0.02 262);
+  --foreground: oklch(0.92 0.006 252);
+
+  --card: oklch(0.2 0.02 262);
+  --card-foreground: oklch(0.92 0.006 252);
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--card-foreground);
+
+  --popover: oklch(0.2 0.02 262);
+  --popover-foreground: oklch(0.92 0.006 252);
+
+  /* Brand blue from the DoOps mark; filled elements always carry light text. */
+  --primary: oklch(0.58 0.22 266);
+  --primary-foreground: oklch(0.985 0.006 250);
+
+  --secondary: oklch(0.27 0.018 262);
+  --secondary-foreground: oklch(0.92 0.006 252);
+
+  --muted: oklch(0.25 0.016 262);
+  --muted-foreground: oklch(0.72 0.012 252);
+
+  /* Brand teal sampled from the mark, used for selections and accents. */
+  --accent: oklch(0.78 0.14 194);
+  --accent-foreground: oklch(0.16 0.02 262);
+
+  --destructive: oklch(0.62 0.2 22);
+  --destructive-foreground: oklch(0.96 0.006 250);
+
+  --success: oklch(0.72 0.15 150);
+  --success-bg: color-mix(in oklch, var(--success) 12%, var(--background));
+
+  --warning: oklch(0.78 0.13 75);
+  --warning-foreground: oklch(0.16 0.012 250);
+  --warning-bg: color-mix(in oklch, var(--warning) 12%, var(--background));
+
+  --danger: var(--destructive);
+  --danger-bg: color-mix(in oklch, var(--destructive) 12%, var(--background));
+
+  --border: oklch(0.3 0.018 262);
+  --input: oklch(0.3 0.018 262);
+  --ring: oklch(0.7 0.16 266);
+
+  /* Duo from the logo: blue -> teal. */
+  --brand-blue: oklch(0.56 0.24 265);
+  --brand-teal: oklch(0.78 0.14 194);
+  --brand-gradient: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-teal) 100%);
+
+  accent-color: var(--primary);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+}
+
+html {
+  background-color: var(--background);
+  /* Always reserve the vertical scrollbar: pages that do not scroll would
+     otherwise center their content ~5px to the right of pages that do, and the
+     left/right margins stop matching between routes. */
+  overflow-y: scroll;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  background-color: var(--background);
+  color: var(--foreground);
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+/* Zero specificity so a component's own outline-none (e.g. agent-ui's unlayered
+   utilities) wins; layered Tailwind utilities still lose to this unlayered rule. */
+:where(:focus-visible) {
+  outline: 2px solid color-mix(in oklch, var(--ring) 75%, transparent);
+  outline-offset: 2px;
+}
+
+/* Preflight dims placeholders; keep hints readable on the dark surfaces. */
+::placeholder {
+  color: var(--muted-foreground);
+  opacity: 1;
+}
+
+::selection {
+  background-color: color-mix(in oklch, var(--primary) 35%, transparent);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+@layer components {
+  .btn {
+    display: inline-flex;
+    min-height: 2.25rem;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background-color: var(--background);
+    padding: 0.375rem 0.75rem;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    line-height: var(--text-sm--line-height);
+    color: var(--foreground);
+    cursor: pointer;
+    transition: background-color 150ms, border-color 150ms, color 150ms;
+  }
+  .btn:hover:not(:disabled) {
+    background-color: var(--muted);
+  }
+  .btn-primary {
+    border-color: transparent;
+    background-color: var(--primary);
+    color: var(--primary-foreground);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: color-mix(in oklch, var(--primary) 90%, var(--background));
+  }
+  .btn-danger {
+    border-color: transparent;
+    background-color: var(--destructive);
+    color: var(--destructive-foreground);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background-color: color-mix(in oklch, var(--destructive) 90%, var(--background));
+  }
+  .btn-danger-outline {
+    border-color: color-mix(in oklch, var(--destructive) 55%, transparent);
+    background-color: transparent;
+    color: var(--destructive);
+  }
+  .btn-danger-outline:hover:not(:disabled) {
+    border-color: color-mix(in oklch, var(--destructive) 75%, transparent);
+    background-color: var(--danger-bg);
+  }
+  .btn-ghost {
+    border-color: transparent;
+    background-color: transparent;
+    color: var(--muted-foreground);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background-color: var(--muted);
+    color: var(--foreground);
+  }
+  .btn-sm {
+    min-height: 2rem;
+    padding: 0.25rem 0.625rem;
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+  }
+  .btn-md {
+    min-height: 2.375rem;
+    padding: 0.5rem 1.125rem;
+    border-radius: 9999px;
+    font-size: var(--text-sm);
+  }
+  .btn-lg {
+    min-height: 2.75rem;
+    padding: 0.625rem 1.375rem;
+    border-radius: 9999px;
+    font-size: var(--text-base);
+  }
+  .btn-icon {
+    width: 2.25rem;
+    padding-inline: 0;
+  }
+  .btn-icon.btn-sm {
+    width: 2rem;
+  }
+  .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  /* 用 label 包住原生 file input：外观与 .btn 一致，键盘聚焦时由内部 input 触发出焦点样式。
+     不用脚本 input.click()，移动端浏览器和部分 WebView 会忽略它。 */
+  .btn-file {
+    position: relative;
+    cursor: pointer;
+  }
+  .btn-file:focus-within {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .btn-file[aria-disabled="true"] {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .segmented {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.125rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background-color: var(--background);
+    padding: 0.125rem;
+  }
+  .segment-option {
+    display: inline-flex;
+    min-height: 1.875rem;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border-radius: var(--radius-sm);
+    padding: 0.25rem 0.625rem;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    line-height: var(--text-xs--line-height);
+    white-space: nowrap;
+    color: var(--muted-foreground);
+    cursor: pointer;
+    transition: background-color 150ms, color 150ms;
+  }
+  .segment-option:not([aria-pressed="true"]):hover:not(:disabled) {
+    background-color: var(--muted);
+    color: var(--foreground);
+  }
+  .segment-option[aria-pressed="true"] {
+    background-color: var(--primary);
+    color: var(--primary-foreground);
+  }
+  .segment-option:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .page-tab {
+    display: inline-flex;
+    min-height: 2.75rem;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: -1px;
+    border-bottom: 2px solid transparent;
+    padding: 0.5rem 0.75rem;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    color: var(--muted-foreground);
+    cursor: pointer;
+  }
+  .page-tab:hover:not(:disabled) {
+    color: var(--foreground);
+  }
+  .page-tab[aria-current="page"] {
+    border-bottom-color: var(--primary);
+    color: var(--foreground);
+  }
+  .page-tab:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .input {
+    min-height: 2.25rem;
+    min-width: 0;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background-color: var(--background);
+    padding: 0.375rem 0.75rem;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    color: var(--foreground);
+    outline: none;
+  }
+  .input:focus {
+    border-color: var(--ring);
+  }
+  .input-sm {
+    min-height: 2rem;
+    padding: 0.25rem 0.625rem;
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+  }
+  .input:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  .input[aria-invalid="true"] {
+    border-color: var(--destructive);
+  }
+
+  .checkbox {
+    height: 1rem;
+    width: 1rem;
+    flex-shrink: 0;
+    border-radius: 0.25rem;
+    border: 1px solid var(--input);
+    background-color: var(--background);
+    accent-color: var(--primary);
+    cursor: pointer;
+  }
+  .checkbox:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .status-error,
+  .status-warning,
+  .status-success,
+  .status-info {
+    border: 1px solid;
+    border-radius: var(--radius-md);
+    padding: 0.5rem 0.75rem;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+  }
+  .status-error {
+    border-color: color-mix(in oklch, var(--destructive) 30%, transparent);
+    background-color: var(--danger-bg);
+    color: var(--destructive);
+  }
+  .status-warning {
+    border-color: color-mix(in oklch, var(--warning) 35%, transparent);
+    background-color: var(--warning-bg);
+    color: var(--warning);
+  }
+  .status-success {
+    border-color: color-mix(in oklch, var(--success) 30%, transparent);
+    background-color: var(--success-bg);
+    color: var(--success);
+  }
+  .status-info {
+    border-color: var(--border);
+    background-color: color-mix(in oklch, var(--muted) 55%, var(--background));
+    color: var(--muted-foreground);
+  }
+
+  .btn:focus-visible,
+  .segment-option:focus-visible,
+  .page-tab:focus-visible,
+  .input:focus-visible,
+  .checkbox:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .page-tab:focus-visible {
+    outline-offset: -2px;
+  }
+
+  /* Elevated card surface: hairline top highlight + soft drop shadow. */
+  .card-surface {
+    border-radius: 1rem;
+    border: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--card) 86%, white 4%) 0%,
+      var(--card) 100%
+    );
+    box-shadow:
+      inset 0 1px 0 0 color-mix(in oklch, white 4%, transparent),
+      0 24px 48px -32px rgb(0 0 0 / 0.9);
+  }
+
+  .card-interactive {
+    transition:
+      transform 200ms ease,
+      border-color 200ms ease,
+      box-shadow 200ms ease;
+  }
+  .card-interactive:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklch, var(--primary) 40%, var(--border));
+    box-shadow:
+      inset 0 1px 0 0 color-mix(in oklch, white 6%, transparent),
+      0 30px 60px -34px rgb(0 0 0 / 1);
+  }
+
+  /* Frosted, sticky site header shared by the marketing pages and blog. */
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    border-bottom: 1px solid color-mix(in oklch, var(--border) 55%, transparent);
+    background-color: color-mix(in oklch, var(--background) 78%, transparent);
+    backdrop-filter: blur(18px) saturate(1.3);
+  }
+
+  /* Ambient hero lighting: brand blue and teal at very low opacity. */
+  .hero-ambient {
+    background-image:
+      radial-gradient(
+        60% 48% at 50% -4%,
+        color-mix(in oklch, var(--brand-blue) 26%, transparent) 0%,
+        transparent 72%
+      ),
+      radial-gradient(
+        38% 36% at 84% 10%,
+        color-mix(in oklch, var(--brand-teal) 14%, transparent) 0%,
+        transparent 70%
+      ),
+      radial-gradient(
+        36% 32% at 16% 18%,
+        color-mix(in oklch, var(--brand-blue) 12%, transparent) 0%,
+        transparent 72%
+      );
+  }
+
+  /* Precision architectural grid backdrop for the public portal hero & sections. */
+  .portal-grid-bg {
+    background-image:
+      linear-gradient(to right, color-mix(in oklch, var(--border) 42%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklch, var(--border) 42%, transparent) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 80% 62% at 50% 18%, #000 18%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 62% at 50% 18%, #000 18%, transparent 80%);
+  }
+
+  .portal-dot-bg {
+    background-image: radial-gradient(
+      color-mix(in oklch, var(--muted-foreground) 24%, transparent) 1px,
+      transparent 1px
+    );
+    background-size: 20px 20px;
+  }
+
+  /* Recessed code / terminal surface on public portal & docs. */
+  .code-surface {
+    border-radius: 0.875rem;
+    border: 1px solid color-mix(in oklch, var(--border) 85%, transparent);
+    background-color: color-mix(in oklch, var(--background) 92%, black 8%);
+    box-shadow:
+      inset 0 1px 0 0 color-mix(in oklch, white 4%, transparent),
+      0 24px 56px -32px rgb(0 0 0 / 0.95);
+  }
+
+  /* Elevated portal frame with subtle dual-tone rim light. */
+  .portal-frame {
+    position: relative;
+    border-radius: 1.125rem;
+    border: 1px solid color-mix(in oklch, var(--border) 82%, var(--primary) 18%);
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--card) 92%, white 3%) 0%,
+      color-mix(in oklch, var(--background) 94%, var(--card) 6%) 100%
+    );
+    box-shadow:
+      inset 0 1px 0 0 color-mix(in oklch, white 7%, transparent),
+      0 32px 80px -36px rgb(0 0 0 / 0.95),
+      0 0 64px -36px color-mix(in oklch, var(--brand-blue) 45%, transparent);
+  }
+
+  .portal-pulse-line {
+    position: relative;
+    overflow: hidden;
+  }
+  .portal-pulse-line::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    width: 38%;
+    background: linear-gradient(90deg, transparent, var(--brand-teal), var(--brand-blue), transparent);
+    animation: portal-signal-slide 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  @keyframes portal-signal-slide {
+    0% {
+      transform: translateX(-110%);
+      opacity: 0;
+    }
+    20% {
+      opacity: 0.95;
+    }
+    80% {
+      opacity: 0.95;
+    }
+    100% {
+      transform: translateX(310%);
+      opacity: 0;
+    }
+  }
+
+  /* Subtle hover-revealed thin scrollbar for docs sidebars and command pills. */
+  .docs-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  .docs-scroll:hover {
+    scrollbar-color: color-mix(in oklch, var(--border) 90%, transparent) transparent;
+  }
+  .docs-scroll::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  .docs-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .docs-scroll::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 9999px;
+  }
+  .docs-scroll:hover::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--border) 90%, transparent);
+  }
+
+  /* Documentation prose refinements: crisp inline code, non-clipping tables, smooth Mermaid frames. */
+  .docs-prose :not(pre) > code {
+    border-radius: 0.375rem;
+    border: 1px solid color-mix(in oklch, var(--border) 65%, transparent);
+    background-color: color-mix(in oklch, var(--muted) 70%, var(--background));
+    padding: 0.1rem 0.38rem;
+    font-family: var(--font-mono);
+    font-size: 0.84em;
+    line-height: 1.45;
+    color: var(--foreground);
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .docs-prose table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+    line-height: 1.55;
+  }
+  .docs-prose th,
+  .docs-prose td {
+    vertical-align: top;
+    padding: 0.625rem 0.75rem;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .docs-prose td code,
+  .docs-prose th code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    font-size: 0.8em;
+  }
+  .docs-prose [data-streamdown="mermaid-block"] {
+    border-radius: 0.875rem;
+    border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+    background-color: color-mix(in oklch, var(--card) 60%, var(--background));
+    padding: 0.75rem;
+  }
+
+  .brand-gradient {
+    background-image: var(--brand-gradient);
+  }
+
+  .text-gradient {
+    background-image: var(--brand-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+
+  /* Progress: recessed track, brand-gradient fill. */
+  .progress-track {
+    overflow: hidden;
+    border-radius: 9999px;
+    background-color: var(--muted);
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.35);
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 9999px;
+    background-image: var(--brand-gradient);
+    box-shadow: 0 0 12px -2px color-mix(in oklch, var(--brand-teal) 45%, transparent);
+    transition: width 200ms ease;
+  }
+
+  /* 3D Holographic Command Center Surfaces & Animations */
+  .doops-3d-stage {
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(ellipse 80% 55% at 50% 0%, color-mix(in oklch, var(--brand-blue) 18%, transparent), transparent 70%),
+      radial-gradient(ellipse 65% 50% at 85% 95%, color-mix(in oklch, var(--brand-teal) 14%, transparent), transparent 70%),
+      linear-gradient(180deg, oklch(0.14 0.025 262) 0%, oklch(0.11 0.022 262) 100%);
+  }
+
+  .doops-3d-grid-floor {
+    pointer-events: none;
+    position: absolute;
+    inset: -30% -20%;
+    background-image:
+      linear-gradient(to right, color-mix(in oklch, var(--brand-teal) 12%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklch, var(--brand-blue) 14%, transparent) 1px, transparent 1px);
+    background-size: 36px 36px;
+    transform: perspective(640px) rotateX(62deg) translateY(34%);
+    transform-origin: center bottom;
+    mask-image: radial-gradient(ellipse 75% 75% at 50% 55%, #000 15%, transparent 78%);
+    -webkit-mask-image: radial-gradient(ellipse 75% 75% at 50% 55%, #000 15%, transparent 78%);
+  }
+
+  .doops-3d-slab {
+    position: relative;
+    transform-style: preserve-3d;
+    backdrop-filter: blur(8px);
+    box-shadow:
+      0 14px 28px -12px rgb(0 0 0 / 0.72),
+      0 3px 0 0 color-mix(in oklch, var(--brand-blue) 30%, oklch(0.24 0.02 262)),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.09);
+  }
+
+  .doops-3d-node {
+    transform-style: preserve-3d;
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease, border-color 180ms ease;
+    box-shadow:
+      0 8px 18px -10px rgb(0 0 0 / 0.75),
+      0 2px 0 0 rgb(255 255 255 / 0.06),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.08);
+  }
+
+  .doops-3d-node:hover {
+    transform: translateZ(16px) translateY(-2px);
+    box-shadow:
+      0 18px 32px -12px rgb(0 0 0 / 0.85),
+      0 0 18px -4px color-mix(in oklch, var(--brand-teal) 45%, transparent),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.16);
+  }
+
+  .doops-3d-node-active {
+    transform: translateZ(20px) translateY(-2px);
+    box-shadow:
+      0 20px 36px -12px rgb(0 0 0 / 0.88),
+      0 0 24px -3px color-mix(in oklch, var(--brand-teal) 60%, transparent),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.22);
+  }
+
+  .doops-beam-pulse {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .doops-beam-pulse::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 12px;
+    background: linear-gradient(180deg, transparent, var(--brand-teal), transparent);
+    animation: doops-beam-flow 1.8s linear infinite;
+  }
+
+  .doops-scan-beam {
+    pointer-events: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, transparent, var(--brand-teal), var(--brand-blue), transparent);
+    box-shadow: 0 0 26px 6px color-mix(in oklch, var(--brand-teal) 55%, transparent);
+    animation: doops-scan-sweep 1.8s ease-in-out infinite;
+    z-index: 30;
+  }
+
+  @keyframes doops-beam-flow {
+    0% {
+      transform: translateY(-100%);
+      opacity: 0;
+    }
+    25% {
+      opacity: 1;
+    }
+    75% {
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(260%);
+      opacity: 0;
+    }
+  }
+
+  @keyframes doops-scan-sweep {
+    0% {
+      top: 4%;
+      opacity: 0.15;
+    }
+    50% {
+      opacity: 0.95;
+    }
+    100% {
+      top: 94%;
+      opacity: 0.15;
+    }
+  }
+
+  @media (pointer: coarse) {
+    .btn,
+    .segment-option {
+      min-width: 2.75rem;
+    }
+    .btn,
+    .segment-option,
+    .input:not(textarea) {
+      min-height: 2.75rem;
+    }
+    .btn-icon,
+    .btn-icon.btn-sm {
+      width: 2.75rem;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Keep @agent-cloud/agent-ui's CodeMirror 6 previews aligned with DoOps dark surfaces. */
+.agent-ui .cm-editor {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+.agent-ui .cm-gutters {
+  background-color: var(--card);
+  color: var(--muted-foreground);
+  border-right: 1px solid var(--border);
+}
+.agent-ui .cm-activeLineGutter {
+  background-color: var(--muted);
+  color: var(--foreground);
+}
+.agent-ui .cm-foldPlaceholder {
+  background-color: var(--muted);
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+}
+.agent-ui .cm-panels {
+  background-color: var(--card);
+  color: var(--foreground);
+  border-color: var(--border);
+}
+.agent-ui .cm-scroller::-webkit-scrollbar-corner {
+  background: transparent;
+}

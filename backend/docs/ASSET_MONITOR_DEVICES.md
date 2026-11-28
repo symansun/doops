@@ -1,0 +1,67 @@
+# 从授权目标的宿主采样到设备曲线
+
+| 操作 | Gateway 权限与取数范围 |
+| --- | --- |
+| `GET /v1/assets/monitor` | 有效用户凭据和对应 `cluster`、`instance` 的读取授权。指定 `cluster_id` 时还会检查集群台账绑定。 |
+| `POST`，`action=collect` | 普通账号可对获授的在线目标指定一个命名空间。Gateway 通过该目标的 Agent 执行固定的 `kubectl top pods --namespace …`，需要指标服务可用且 Agent 身份能读取该命名空间的 Pod 指标。结果为 Pod CPU 和内存。用户的目标授权本身不细分 namespace。 |
+| `POST`，`action=ingest` 或 `rule` | 要求有效的平台管理员用户凭据和已登记、未归档的目标。普通账号即使能读取该目标，写入仍返回 403。管理员身份在 Gateway 中涵盖所有目标。 |
+
+**1. 在台账对应的可信宿主采样。** 在宿主上用已有受控任务执行下列单次命令，将标准输出作为该次任务的 JSON 结果。宿主不需要 Gateway token。将示例标识、网卡和挂载路径换成该任务绑定的实际值。
+
+```sh
+python3 backend/scripts/asset_monitor_collector.py \
+  --cluster east --instance node01 --type machine --asset-id SRV-001 \
+  --interface eth0 --interface eth1 --mount / --mount /data
+```
+
+Linux 主机采集要求宿主根目录、可访问的 PID 1 根目录与命名空间、`/proc`、`/sys` 和 `/usr/bin/systemd-detect-virt`。请直接在宿主运行。Agent 容器内请求 `machine`、`os`、`kernel` 观测会在输出前拒绝。容器应用上下文的指标只能按其实际应用来源解释。网卡速率为各接口 RX 与 TX 字节增量之和除以观测秒数。挂载点要求规范绝对路径，每次从同一文件系统快照取得 `storage_total`（总字节）、`storage`（已用字节）和 `storage_available`（普通用户可用字节）。预留块可能使三者无法简单相加。指定设备读不到会返回 `missing` 和 `null`，仍保留设备标识。
+
+**2. 在已有受控中心验证来源并提交。** 中心按已认证的采样任务或只读证据通道取得 JSON，将该来源绑定到预先批准的 `cluster/instance/asset_id` 和设备清单。示例为单次任务，`snapshot.json` 是刚从该任务收到的只读结果。中心本地只读密钥文件 `MONITOR_AUTH_HEADER` 含一行 `Authorization: Bearer …`，仅提交进程可读；`MONITOR_GATEWAY` 由中心配置为固定 HTTPS origin。以下命令一次验证并提交同一份内容，校验失败时终止。
+
+```sh
+set -e
+body=$(jq -ces '
+  if length != 1 then error("expected one observation") else .[0] end
+  | select(.action == "ingest" and .cluster == "east" and .instance == "node01")
+  | select((.samples | length) == 8 and all(.samples[];
+      .type == "machine" and .asset_id == "SRV-001" and .namespace == ""))
+  | select(([.samples[] | [.metric, .device_id]] | sort) ==
+      ([["network","eth0"],["network","eth1"]] +
+       [(["storage","storage_total","storage_available"][]) as $m |
+        (["/","/data"][]) as $d | [$m,$d]] | sort))
+  | {action,cluster,instance,samples}' snapshot.json)
+printf '%s' "$body" | curl --fail-with-body --silent --show-error --proto '=https' \
+  --header "@$MONITOR_AUTH_HEADER" --header 'Content-Type: application/json' \
+  --data-binary @- "$MONITOR_GATEWAY/v1/assets/monitor"
+```
+
+返回 `{"action":"ingest","accepted":8}` 表示 Gateway 接收了该批 8 项记录，含缺测记录。需要曲线时按同一来源绑定多次执行。采集器的 `--gateway` 会读取 stdin 的 bearer 并直接 POST；它仅适用于执行位置本身已获准持有对应账号凭据的情况。普通用户 token 可用于 `--pod-namespace` 的 `collect`。外部主机指标使用以上中心提交路径，管理员密钥只驻留中心。普通用户的目标授权可精确到单一 `cluster/instance`。
+
+**3. 用获授该目标的普通账号验收。** 在「资产 → 监控」选择采集目标、机器和资产编号。两张网卡各有一条 bytes/s 曲线，两个挂载点各有三条 bytes 曲线。管理员可在具体曲线保存阈值和持续时间；现有规则按持续超过阈值触发。回读示例为 `GET /v1/assets/monitor?cluster=east&instance=node01&type=machine&asset_id=SRV-001&origin=exporter&metric=storage&device_id=%2Fdata`。省略 `device_id` 返回匹配的所有序列。`metric=storage&device_id=` 或 `metric=network&device_id=` 可精确回读旧的无设备维度序列。
+
+Gateway 启动时会自动幂等创建并升级监控表（含设备维度、磁盘 I/O、容器/应用/宿主来源及数据库指标的 `CHECK` 约束），存量 SQLite 库升级也会在启动时自动保留序列 ID、样本、规则、告警及旧空设备标识完成平滑迁移。对应 DDL 参考见 [监控基础表](migrations/asset_monitor.sql)、[设备维度升级](migrations/asset_monitor_devices.sql)、[磁盘 I/O 迁移](migrations/asset_monitor_disk_io.sql) 与 [数据库指标迁移](migrations/asset_monitor_db_metrics.sql)。
+
+## 磁盘 I/O
+
+在已核验的 Linux 宿主采样任务中，按 `/proc/diskstats` 中的内核设备名配置 `--disk nvme0n1`；
+可重复选择设备，不传 `/dev/` 路径。受控中心的设备与指标白名单需为每个选定设备加入下表六项，
+并同步调整批次大小校验。磁盘 I/O 不使用挂载点标识，也不代表 K8s Pod 的 I/O。
+
+| 指标 | 单位 | 含义 |
+| --- | --- | --- |
+| `disk_read_iops`、`disk_write_iops` | `ops/s` | 单位时间完成的读写次数 |
+| `disk_read_bytes_per_second`、`disk_write_bytes_per_second` | `bytes/s` | 读写扇区差分按每扇区 512 字节换算 |
+| `disk_read_latency_ms`、`disk_write_latency_ms` | `ms` | 区间读写累计耗时增量除以对应完成次数，不是 P95 |
+
+设备不存在、身份变化或计数回退时返回缺测。没有读写活动时相应 IOPS 和吞吐为零，
+平均延迟缺测，不记为零。通过「资产 → 监控」选择已上报的机器查看按设备分离的曲线；
+管理员可沿用现有阈值规则。也可用 `metric=disk_read_iops&device_id=nvme0n1` 精确读取序列。
+
+## 虚拟机与容器原生隧道采集
+
+在线 Agent 支持由获授权用户经 `POST /v1/assets/monitor`（`action=collect`）直接发起只读采样，无需在目标上部署持 token 的外部脚本：
+
+- **虚拟机 / 主机（`mode=host`，`origin=agent_host`）**：自动关联已绑定机器编号（未登记时使用实例名），一次区间采样写入 `machine` 的 `cpu`、`memory`、物理/虚机网卡 `network`、本地挂载点 `storage_total`/`storage`/`storage_available`、整盘 `disk_*` 六项，以及 Linux `kernel` 的 `cpu` 与 `Slab` 内存。
+- **容器运行时（`mode=containers`，`origin=container_stats`）**：按 `docker`、`nerdctl`、`podman` 顺序自动探测本机容器，按容器名写入 `type=container` 的 `cpu`（`cores`）、`memory`（`bytes`）与 `memory_limit`（`bytes`）；宿主定时脚本亦支持 `--containers`。
+- **应用指标探测（`mode=apps`，`origin=app_probe`）**：读取该目标在网站台账登记的 HTTP(S) 端点探测 `response_time_ms`（`ms`）与 `error_rate`（`%`），并自动检测回环 nginx `stub_status` 采集 `active_connections`（`connections`）与 `requests`（`req/s`）；宿主定时脚本同步支持 `--http-probe` 与 `--nginx-status` 并发连接数采集。
+- **Kubernetes Pod（`mode=k8s_pods` 或省略 `mode`，`origin=k8s_top`）**：在指定命名空间读取 `kubectl top pods`。

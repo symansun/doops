@@ -1,0 +1,148 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.inspect-vm-host
+  name: 主机性能与内核体检
+  description: 采集 CPU、内存、去重磁盘容量、物理块设备 I/O、网卡吞吐、GPU 与 M1–M5 内核安全基线
+  category: observability
+  icon: server
+  scenarios:
+    - host-security-ops
+    - ai-compute-cluster
+    - all-in-one
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - inspect-vm-host
+  companion_agent_skill: shell
+ui:
+  slots:
+    sidebar:
+      enabled: false
+      label: 主机性能体检
+      group: extensions
+      order: 5
+    target_tab:
+      enabled: true
+      label: 主机体检
+      order: 5
+    home_widget:
+      enabled: true
+      title: 主机性能与内核体检
+      span: 1
+      metrics:
+        - key: cpu_percent
+          label: CPU 使用率
+          unit: "%"
+          aggregate: max
+        - key: memory_percent
+          label: 内存使用率
+          unit: "%"
+          aggregate: max
+        - key: disk_percent
+          label: 磁盘最高占比
+          unit: "%"
+          aggregate: max
+        - key: load_1m
+          label: 1 分钟负载
+          unit: ""
+          aggregate: max
+    ask_presets:
+      - title: 排查主机高负载与 I/O 瓶颈
+        description: 结合 CPU、内存、块设备延迟与 Top 进程做只读根因定位
+        prompt: 请使用 inspect-vm-host Skill 检查当前主机的 CPU、内存、去重磁盘、物理块设备延迟、网卡吞吐与 Top 进程，定位主要资源瓶颈并输出只读优化建议。
+  presets:
+    - id: vm-quick-health
+      title: 零 Token 全面主机体检
+      description: 毫秒级采集 CPU、内存、去重磁盘、I/O、网卡与内核安全基线
+      mode: script
+    - id: vm-ai-bottleneck
+      title: AI 深度瓶颈与内核基线分析
+      description: 结合最新主机指标与 sysctl 参数输出优先级治理方案
+      mode: agent
+      prompt: 请运行 inspect-vm-host Skill 采集主机资源水位与内核安全基线，重点排查异常高负载、磁盘高延迟及 sysctl 缺口，给出可落地的排查结论与加固命令。
+  actions:
+    - id: vm-diag
+      label: 只读瓶颈溯源
+      description: 深度核查 Top CPU/内存进程、磁盘 I/O 与网卡丢包线索
+      mode: check
+      skill: shell
+      prompt_template: 请只读排查当前目标主机的 CPU、内存、磁盘挂载空间、块设备延迟与异常进程状态，输出清晰证据与排查建议，严禁修改任何系统配置。
+    - id: vm-sysctl-plan
+      label: 内核安全加固规划
+      description: 针对 M4 sysctl 缺口生成可回滚的内核参数加固脚本（可填入终端执行）
+      mode: plan
+      skill: shell
+      prompt_template: 请根据主机内核安全基线（kptr_restrict/dmesg_restrict/randomize_va_space/protected_hardlinks/protected_symlinks/tcp_syncookies）生成受控加固方案与回滚命令，严禁直接修改系统。
+  views:
+    - type: kpi_grid
+      title: 主机核心资源态势
+      items:
+        - key: cpu_percent
+          label: CPU 使用率
+          unit: "%"
+          warn_threshold: 80
+          crit_threshold: 95
+        - key: memory_percent
+          label: 内存使用率
+          unit: "%"
+          warn_threshold: 85
+          crit_threshold: 95
+        - key: disk_percent
+          label: 磁盘最高占比
+          unit: "%"
+          warn_threshold: 80
+          crit_threshold: 92
+        - key: load_1m
+          label: 1 分钟负载
+          unit: ""
+        - key: process_count
+          label: 进程总数
+          unit: "个"
+        - key: disk_io_latency_ms
+          label: 磁盘最高延迟
+          unit: "ms"
+          warn_threshold: 50
+          crit_threshold: 200
+    - type: charts
+      title: 主机资源水位分布
+    - type: resource_table
+      title: 磁盘挂载点与去重容量明细
+      source_key: mounts
+      row_action_id: vm-diag
+      columns:
+        - key: mount
+          label: 挂载点
+          kind: code
+        - key: source
+          label: 设备源
+          kind: code
+        - key: total_gib
+          label: 总容量(GiB)
+          kind: number
+        - key: used_gib
+          label: 已用(GiB)
+          kind: number
+        - key: used_pct
+          label: 使用率(%)
+          kind: number
+    - type: checks_table
+      title: 资源与 M1–M8 安全基线核查
+    - type: trend_series
+      title: 主机性能历史趋势
+      metric_keys:
+        - cpu_percent
+        - memory_percent
+        - disk_percent
+        - load_1m
+      range: 24h
+    - type: artifact_viewer
+      title: 完整主机巡检产物
+schedule_template:
+  name: 主机性能与内核基线定时体检
+  description: 每 15 分钟零 Token 采集全集群主机 CPU、内存、去重磁盘、I/O 与内核安全基线
+  interval_seconds: 900
+  scope_mode: all_online

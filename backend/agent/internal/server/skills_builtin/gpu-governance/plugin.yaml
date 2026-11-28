@@ -1,0 +1,187 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.gpu-governance
+  name: GPU 算力治理
+  description: 监控 NVIDIA GPU 利用率、显存占用、温度与 ECC 健康，定位异常占卡进程
+  category: infrastructure
+  icon: cpu
+  scenarios:
+    - ai-compute-cluster
+    - all-in-one
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - gpu-governance
+  companion_agent_skill: shell
+ui:
+  slots:
+    sidebar:
+      enabled: true
+      label: GPU 算力治理
+      group: extensions
+      order: 10
+    target_tab:
+      enabled: true
+      label: GPU 治理
+      order: 10
+    home_widget:
+      enabled: true
+      title: GPU 算力治理
+      span: 1
+      metrics:
+        - key: gpu_util_max_pct
+          label: 最高算力利用
+          unit: "%"
+          aggregate: max
+        - key: gpu_mem_max_pct
+          label: 最高显存占用
+          unit: "%"
+          aggregate: max
+        - key: gpu_temp_max_c
+          label: 最高卡温
+          unit: "°C"
+          aggregate: max
+        - key: gpu_count
+          label: 检出卡数
+          unit: "张"
+          aggregate: max
+    ask_presets:
+      - title: 排查异常占卡与显存泄漏
+        description: 结合 nvidia-smi 与进程状态分析高显存低算力占卡
+        prompt: 请使用 gpu-governance Skill 检查当前目标 GPU 利用率、显存占用和占卡进程，重点排查显存占用高但算力利用率低的僵尸任务，并给出安全的只读诊断结论。
+  inputs:
+    - key: WARN_TEMP_C
+      label: 温度告警阈值
+      description: 单卡温度达到该值时触发 warning，+7°C 触发 critical
+      type: number
+      default: 85
+      min: 50
+      max: 105
+      step: 1
+      unit: "°C"
+    - key: WARN_MEM_PCT
+      label: 显存告警阈值
+      description: 单卡显存占用达到该比例时触发 warning
+      type: number
+      default: 90
+      min: 50
+      max: 99
+      step: 1
+      unit: "%"
+    - key: INCLUDE_PROCESSES
+      label: 采集占卡进程
+      description: 只读列出占卡进程的 PID、进程短名与显存用量
+      type: boolean
+      default: true
+  presets:
+    - id: gpu-quick-health
+      title: 快速算力体检
+      description: 按默认阈值秒级巡检 GPU 利用率、显存、温度与 ECC
+      mode: script
+      inputs:
+        WARN_TEMP_C: 85
+        WARN_MEM_PCT: 90
+        INCLUDE_PROCESSES: true
+    - id: gpu-strict-thermal
+      title: 严格温控与显存核查
+      description: 收紧至 78°C / 80% 显存阈值，适合高负载训练前核验
+      mode: script
+      inputs:
+        WARN_TEMP_C: 78
+        WARN_MEM_PCT: 80
+        INCLUDE_PROCESSES: true
+    - id: gpu-zombie-diagnosis
+      title: AI 排查僵尸占卡
+      description: 在 AI 助手中结合实时卡态分析长时间空占显存的训练任务
+      mode: agent
+      prompt: 请运行 gpu-governance Skill 采集全部 GPU 显存与进程占用情况，识别显存占用 > 50% 但 GPU 利用率 < 5% 的疑似空闲占卡进程，并按风险高低汇总建议。
+  actions:
+    - id: gpu-zombie-check
+      label: 只读核查占卡进程与算力
+      description: 查看所选 GPU 上的活跃计算进程、显存占用与容器/Pod 归属，识别空闲占卡
+      mode: check
+      skill: shell
+      prompt_template: 请只读核查所选 GPU 设备的 nvidia-smi 计算进程列表、显存分配、对应宿主机 PID 或 K8s Pod 归属，识别高显存低利用率的疑似僵尸任务，严禁直接终止进程。
+    - id: gpu-thermal-plan
+      label: 生成降载与散热治理方案
+      description: 针对高温、高显存或 ECC 报错单卡输出降载、隔离与维护排障方案（不执行变更）
+      mode: plan
+      skill: shell
+      prompt_template: 请结合所选 GPU 的温度、显存水位与 ECC 未纠正错误计数，制定安全的任务迁移、节点隔离（cordon）或硬件排查方案，严禁直接驱逐或修改集群状态。
+  views:
+    - type: kpi_grid
+      title: 算力关键指标
+      items:
+        - key: gpu_count
+          label: GPU 卡数
+          unit: "张"
+        - key: gpu_util_avg_pct
+          label: 平均利用率
+          unit: "%"
+        - key: gpu_mem_max_pct
+          label: 最高显存占比
+          unit: "%"
+          warn_threshold: 90
+          crit_threshold: 98
+        - key: gpu_temp_max_c
+          label: 最高温度
+          unit: "°C"
+          warn_threshold: 85
+          crit_threshold: 92
+        - key: gpu_ecc_uncorrected
+          label: ECC 未纠正错误
+          unit: "次"
+          warn_threshold: 1
+          crit_threshold: 1
+        - key: gpu_process_count
+          label: 活跃占卡进程
+          unit: "个"
+    - type: resource_table
+      title: GPU 单卡明细与健康状态
+      source_key: gpus
+      row_action_id: gpu-zombie-check
+      columns:
+        - key: index
+          label: 卡号
+          kind: code
+        - key: name
+          label: 型号
+          kind: text
+        - key: util_percent
+          label: 算力(%)
+          kind: number
+        - key: mem_percent
+          label: 显存(%)
+          kind: number
+        - key: temp_c
+          label: 温度(°C)
+          kind: number
+        - key: ecc_uncorrected
+          label: ECC错
+          kind: number
+    - type: charts
+      title: 单卡利用率与显存分布
+    - type: checks_table
+      title: 健康与阈值核查项
+    - type: trend_series
+      title: GPU 指标趋势
+      metric_keys:
+        - gpu_util_max_pct
+        - gpu_mem_max_pct
+        - gpu_temp_max_c
+      range: 24h
+    - type: artifact_viewer
+      title: 原始巡检报告与明细
+schedule_template:
+  name: GPU 算力治理定时巡检
+  description: 每 15 分钟自动采集全集群 NVIDIA GPU 利用率、显存、温度与 ECC 健康指标
+  interval_seconds: 900
+  scope_mode: all_online
+  inputs:
+    WARN_TEMP_C: 85
+    WARN_MEM_PCT: 90
+    INCLUDE_PROCESSES: true

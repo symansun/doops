@@ -1,0 +1,17 @@
+Minimalist editorial technical illustration, flat vector line-art diagram for a professional magazine article. Pure white background (#FFFFFF). Thin uniform black strokes about 2px, geometric construction, no shading, no texture. Large containers filled with very light warm grey (#F2F3F2) and outlined in thin black. Exactly one accent color: deep teal-green #0E7C66, used sparingly for one highlighted element or for a few small arrows. Generous negative space, calm Swiss infographic aesthetic, flat straight-on front elevation view, wide horizontal composition, content centered with wide empty margins on all sides.
+
+LEFT-TO-RIGHT DIAGRAM CROSSING ONE NETWORK BOUNDARY.
+
+A single vertical dashed black line divides the picture into an inner side on the left and an outer side on the right.
+
+INNER SIDE, left: a row of FIVE small database cylinders standing side by side, each cylinder the same size with one thin band, and the single word "DB" underneath the row. To the right of the cylinders stands one website window with a title bar and a small globe in its corner, the single word "Web" underneath it.
+
+ON THE BOUNDARY: a small square node sits exactly on the dashed vertical line, drawn in deep teal-green, with the single word "Edge" underneath it. One solid arrow goes from the outer side, through this node on the boundary, into the website window.
+
+OUTER SIDE, right: two tiny simple human figures with one small laptop, representing remote visitors, and one solid thin arrow from them into the node on the boundary. No arrow points from the inner side back to the outer side.
+
+Everything calm and sparse, one thin ground line, plenty of white space, nothing else written.
+
+TEXT RULE: the only text allowed in the entire image is "DB", "Web", "Edge", spelled exactly like that, rendered in a clean geometric sans-serif, small and neat, lots of space around it. Invent nothing else.
+
+no Chinese characters, no CJK glyphs, no Japanese, no Korean, no Arabic script, no gibberish letters, no fake text, no lorem ipsum, no misspellings, no small captions, no long sentences, no paragraphs, no legend, no annotations beyond the exact labels listed, no extra numerals, no watermarks, no logos, no signatures, no gradients, no drop shadows, no 3D, no isometric view, no photorealism, no neon, no glow, no dark background, no paper texture, no clutter, no dense detail, no emoji, no clip-art, no outer frame or border around the canvas.

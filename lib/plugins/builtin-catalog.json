@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "core_ids": [
+    "home",
+    "overview",
+    "ask",
+    "terminal",
+    "kb",
+    "credentials",
+    "audit",
+    "plugin-center",
+    "deploy-onboard",
+    "deploy-upgrade",
+    "platform-admin"
+  ],
+  "scenarios": [
+    {
+      "id": "all-in-one",
+      "name": "全功能模式",
+      "description": "启用全部内置功能插件，适合综合运维团队与存量实例平滑升级。",
+      "defaults": [
+        "doops.inspection",
+        "doops.k8s",
+        "doops.delivery",
+        "doops.database",
+        "doops.website",
+        "doops.image",
+        "doops.cmdb",
+        "doops.automation"
+      ]
+    },
+    {
+      "id": "ai-compute-cluster",
+      "name": "AI 算力 / 高校集群",
+      "description": "聚焦 GPU 与 K8s 算力集群巡检、态势感知、机器台账与安全治理，隐藏低频业务交付入口。",
+      "defaults": [
+        "doops.inspection",
+        "doops.k8s",
+        "doops.cmdb",
+        "doops.automation"
+      ]
+    },
+    {
+      "id": "app-delivery-web",
+      "name": "应用交付与 Web 运维",
+      "description": "覆盖 Kubernetes、工作负载发布、数据库、网站、镜像与自动化巡检的全链路业务运维视图。",
+      "defaults": [
+        "doops.inspection",
+        "doops.k8s",
+        "doops.delivery",
+        "doops.database",
+        "doops.website",
+        "doops.image",
+        "doops.automation"
+      ]
+    },
+    {
+      "id": "host-security-ops",
+      "name": "主机与安全合规运维",
+      "description": "面向纯物理机/虚机机群的资源监控、补丁合规与安全巡检，彻底隐藏 K8s 与镜像模块。",
+      "defaults": [
+        "doops.inspection",
+        "doops.cmdb",
+        "doops.automation"
+      ]
+    },
+    {
+      "id": "minimal-workbench",
+      "name": "极简 AI + 终端工作台",
+      "description": "仅保留内核能力（首页、AI 助手、终端、知识库、凭据、审计与插件中心），零冗余菜单。",
+      "defaults": []
+    }
+  ],
+  "plugins": [
+    {
+      "id": "doops.inspection",
+      "tier": "builtin",
+      "name": "态势感知与监控",
+      "description": "态势感知大盘、全网与单目标资源及阈值告警监控与 Agent 运行监控。",
+      "category": "observability",
+      "nav_ids": [
+        "situational-awareness",
+        "resource-monitor",
+        "platform-monitor"
+      ],
+      "target_tabs": [
+        "monitor"
+      ],
+      "required_skills": [
+        "inspect-vm-host"
+      ],
+      "required_mcp": []
+    },
+    {
+      "id": "doops.k8s",
+      "tier": "builtin",
+      "name": "Kubernetes 治理",
+      "description": "集群资产台账与目标 Kubernetes 工作负载、Pod、事件和命名空间操作。",
+      "category": "infrastructure",
+      "nav_ids": [
+        "k8s"
+      ],
+      "target_tabs": [
+        "k8s"
+      ],
+      "required_skills": [
+        "inspect-k8s-cluster"
+      ],
+      "required_mcp": [
+        "doops"
+      ],
+      "requires_kubernetes": true
+    },
+    {
+      "id": "doops.delivery",
+      "tier": "builtin",
+      "name": "应用发布与交付",
+      "description": "工作负载发布、目标部署包管理与 CI/CD 接入指引。",
+      "category": "delivery",
+      "nav_ids": [
+        "deploy-workload",
+        "files",
+        "deploy-cicd"
+      ],
+      "target_tabs": [
+        "files"
+      ],
+      "required_skills": [],
+      "required_mcp": [
+        "doops"
+      ]
+    },
+    {
+      "id": "doops.database",
+      "tier": "builtin",
+      "name": "数据库治理",
+      "description": "受管数据库资产目录与 DoSql 查询、Schema 对比、迁移工作台。",
+      "category": "data",
+      "nav_ids": [
+        "database"
+      ],
+      "target_tabs": [
+        "database"
+      ],
+      "required_skills": [
+        "inspect-database"
+      ],
+      "required_mcp": [
+        "dosql"
+      ]
+    },
+    {
+      "id": "doops.website",
+      "tier": "builtin",
+      "name": "网站与服务",
+      "description": "Web 站点与域名资产目录、DoWeb 服务诊断与站点健康检查。",
+      "category": "ops",
+      "nav_ids": [
+        "website"
+      ],
+      "target_tabs": [
+        "website"
+      ],
+      "required_skills": [
+        "inspect-app-web"
+      ],
+      "required_mcp": [
+        "doops"
+      ]
+    },
+    {
+      "id": "doops.image",
+      "tier": "builtin",
+      "name": "镜像构建与仓库",
+      "description": "容器镜像目录、镜像构建任务与容器运行时巡检。",
+      "category": "delivery",
+      "nav_ids": [
+        "image"
+      ],
+      "target_tabs": [
+        "image"
+      ],
+      "required_skills": [
+        "inspect-container-runtime"
+      ],
+      "required_mcp": []
+    },
+    {
+      "id": "doops.cmdb",
+      "tier": "builtin",
+      "name": "资产台账（CMDB）",
+      "description": "机器台账、业务系统拓扑台账及 Agent 概览中的台账分配范围。",
+      "category": "infrastructure",
+      "nav_ids": [
+        "ledger-machines",
+        "ledger-systems"
+      ],
+      "target_tabs": [],
+      "required_skills": [
+        "inspect-vm-host"
+      ],
+      "required_mcp": []
+    },
+    {
+      "id": "doops.automation",
+      "tier": "builtin",
+      "name": "自动化与巡检",
+      "description": "统一管理定时任务与 Skill 智能巡检、执行记录与报告，以及一次性后台执行（exec --bg）。",
+      "category": "ops",
+      "nav_ids": [
+        "tasks"
+      ],
+      "target_tabs": [
+        "tasks"
+      ],
+      "required_skills": [],
+      "required_mcp": []
+    }
+  ]
+}

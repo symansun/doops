@@ -1,0 +1,118 @@
+# doops-agent 设计
+
+本文描述边缘 `doops-agent` 的当前职责。自然语言发布的完整 Agent 原生边界见
+[`NATURAL_LANGUAGE_DEPLOYMENT.md`](../docs/NATURAL_LANGUAGE_DEPLOYMENT.md)。
+
+## 定位
+
+`doops-agent` 是部署在目标节点或集群中的执行网关和 doagent ACP 适配器。它暴露
+WebSocket/MCP 工具、管理工作区和确定性资源边界，并把自然语言或结构化任务交给
+doagent 原生 Agent 引擎。
+
+doops-agent 不是 Agent 框架。上下文、规划、多 Agent、Skill 选择和工具调用都由
+doagent 提供。
+
+```mermaid
+flowchart LR
+    CLIENT["CLI / Gateway"]
+    EDGE["doops-agent"]
+    ACP["doagent ACP HTTP"]
+    ENGINE["doagent\n多 Agent / Skill / 工具"]
+    WS["session workspace"]
+    TARGET["Host / Cluster / External systems"]
+
+    CLIENT -->|"WS / MCP"| EDGE
+    EDGE -->|"session/new / setMode / prompt"| ACP
+    ACP --> ENGINE
+    EDGE <--> WS
+    ENGINE <--> WS
+    ENGINE <--> TARGET
+```
+
+## 两类入口
+
+| 入口 | 用途 | 执行者 |
+| :--- | :--- | :--- |
+| 确定性工具 | 明确的 shell、文件、工作区、节点信息等原子操作 | doops-agent |
+| `doops_agent_prompt` | 需要现场观察、推理、Skill 或多 Agent 协作的任务 | doagent |
+
+两类入口是独立能力，不互相充当失败 fallback。确定性工具失败时返回真实错误；Agent
+任务失败时返回 doagent 或工具的真实错误。doops-agent 不把失败命令自动改写成另一条
+执行路径。
+
+## doagent 会话适配
+
+doops-agent 通过本地 ACP HTTP 调用 `/usr/local/bin/do-agent`：
+
+1. 首次请求调用 `session/new`，将 cwd 绑定到当前 session 工作区，并设置
+   `permissionMode=auto`；DoOps 的每轮 `allowedTools` 才是工具边界。
+2. 复用旧会话时再次调用 `session/new` 刷新 `permissionMode=auto`，每次 prompt
+   再调用 `session/setMode`，避免历史会话继承交互式权限语义。
+3. 调用 `session/prompt`，并通过 SSE 转发 Agent 消息和工具进度。
+4. 结构化请求只接受一个 JSON 对象作为终态结果。
+
+原生模式映射：
+
+| 请求 | 模式 |
+| :--- | :--- |
+| 普通 Ask | `auto` |
+| `ask --apply` | `build` |
+
+## 权限
+
+- DoOps 使用 doagent 的 `auto` 权限模式，按每轮显式 `allowedTools` 限制可见工具；
+  apply 仍额外要求一次性 mutation authority 和结构化工具证据。
+- doops-agent 不调用 `permission/reply`。
+- 收到 `permission.updated` 时操作失败并回传权限详情。
+- target 授权、workspace 锁和审计由 DoOps 控制面负责，不能交给提示词判断。
+
+## 工作区
+
+- 每个 session 使用独立工作区。
+- 文件和同步接口必须校验 session 与路径，禁止目录穿越。
+- Agent UI 的代码工作区通过 `doops_workspace_read` 获取文件树、源码、变更、Diff、搜索和 Git 元数据；
+  该入口只需要目标 `read` 权限，不执行 shell。
+- 发布任务在 workspace 锁内执行，并以真实工具证据判断结果，不由 Agent 网关伪造。
+- 大文件使用 `doops push/pull`；小文本查看使用文件工具。
+
+## Skill 与工具
+
+Skill 由 doagent 原生机制发现和使用。doops-agent 不实现 Registry、关键词匹配、
+依赖级联、上下文预算或 Prompt 拼装器。
+
+Skill 定义目标、不变量、授权和证据，不写死固定命令序列。工具提供可验证的原子能力。
+doagent 可以根据任务创建多 Agent、组合 Skill 并选择工具；DoOps 只验证安全边界和
+最终证据。
+
+## 自然语言发布
+
+部署只走 Gateway 绑定的显式 Agent-native Ask：
+
+```text
+doops ask --apply --credential <resource-name>
+  -> Gateway exact-scope authorization and materialization
+  -> metadata-only doagent task -> apply -> verification and audit
+```
+
+CLI 只传递显式 credential resource name、target、session 和自然语言任务。Gateway
+绑定用户与目标，按 cluster/instance、namespace、use、workload、image 或 Helm
+精确授权和物化；doagent 只接收元数据，不接收 credential payload。
+
+## 安全原则
+
+- 不使用 fallback 或静默降级掩盖真实问题。
+- 不自动扩大权限，不根据目录名或历史状态猜测 target。
+- 不在日志、配置模板或工具参数中暴露凭据。
+- 不把文本成功、零退出码或 Agent 自报完成当作外部验收证据。
+- 直接工具和 Agent 工具都必须受 target 授权、资源锁、超时和审计约束。
+
+## 主要代码
+
+| 能力 | 文件 |
+| :--- | :--- |
+| WebSocket/MCP 与 ACP 适配 | `internal/server/handler_ws.go` |
+| Gateway 隧道、授权和队列 | `internal/server/tunnel_hub.go` |
+| 工作区同步与 commit 绑定 | `internal/server/workspace_upload.go` |
+| 请求类型 | `api/mcp.go` |
+| Agent 全局提示边界 | `skills/system_prompt.md` |
+| 发布入口 | `doops ask --apply` |

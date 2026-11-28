@@ -1,0 +1,94 @@
+# ========================================
+# 编译产物 (绝对禁止入库)
+# ========================================
+# CLI 二进制（勿使用裸 doops，否则会忽略 cli/doops 源码目录）
+/doops
+bin/doops
+bin/doops-gateway
+bin/doops-webui
+/bin/
+backend/bin/
+backend/cli/doops
+# 已误入库的开发机编译产物（2026-11-09 审计清理）
+/backend/gateway/gateway
+/backend/cli/cli/doops/doops
+
+# Agent 二进制 (所有变体)
+**/doops-agent
+**/doops-agent-*
+**/agent-mcp-linux-*
+/agent/agent
+!backend/deploy/helm/doops-agent/
+!backend/deploy/helm/doops-agent/**
+
+# 打包发行物
+dist/*
+backend/cli/bin/
+
+# Frontend dependencies / build output
+node_modules/
+.next/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# ========================================
+# 运行时临时文件
+# ========================================
+*.log
+__pycache__/
+*.py[cod]
+.doops/
+.agents/
+# Installed Skill copy. The canonical source is backend/skills/SKILL.md and
+# backend/docs/*.md; scripts/install.sh copies them into the project from the
+# release commit, so a checked-in copy here would only drift.
+.agent/skills/doops/
+backend/cli/.doops/
+tmp_agent/
+tmp-openwork/
+/backend/.ci-agent-base-image
+
+# Local scratch areas from ad-hoc browser / media tests. Project tests live
+# under backend/test and source examples should be added in a named package.
+/examples/
+/test/
+
+# Local preservation area for untracked historical artifacts and potentially sensitive
+# scan evidence removed from the canonical source tree.
+/.local/
+
+# Internal development process records, scratch reviews, and site-specific cutover logs
+# must never be committed to the public repository.
+/docs/operations/
+/docs/reviews/
+/docs/design/
+/docs/reports/
+/docs/archive/
+/docs/superpowers/
+/backend/docs/reviews/
+/backend/docs/reports/
+/backend/docs/superpowers/
+/backend/deploy/instances/
+/backend/deploy/fleet-*/
+/HELM_GATE_CLEANUP.md
+
+# ========================================
+# 本地环境变量与敏感配置 (仅跟踪 *.env.example 模板)
+# ========================================
+.env
+.env.local
+.env.*.local
+!.env.example
+!*.env.example
+!backend/runtime-versions.env
+
+# ========================================
+# 操作系统 / 编辑器
+# ========================================
+.DS_Store
+*.swp
+*.swo
+
+# Local agent tool state (nested git worktrees; never publish)
+.claude/
+.worktrees/

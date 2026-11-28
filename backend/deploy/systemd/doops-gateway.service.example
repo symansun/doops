@@ -1,0 +1,29 @@
+# ==============================================================================
+# DoOps Gateway systemd 服务单元模板
+# 安装路径：/etc/systemd/system/doops-gateway.service
+# 环境文件：/etc/doops-gateway.env（参考 backend/deploy/config/doops-gateway.env.example）
+# ==============================================================================
+
+[Unit]
+Description=DoOps Gateway Control Plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 仅 root 可读的环境文件（0600），存放主密钥、存储后端、COS、注册策略与超时覆盖
+EnvironmentFile=/etc/doops-gateway.env
+# 默认开放新节点免密钥注册；如需强制注册密钥，请在 /etc/doops-gateway.env 中设置
+# DOOPS_REQUIRE_AGENT_ENROLLMENT=1（或在下方 ExecStart 追加 -require-agent-enrollment）。
+# Gateway 进程持单活数据库锁，禁止同时启动两个共享同一数据库的实例。
+ExecStart=/usr/local/bin/doops-gateway serve -db /var/lib/doops-gateway/gateway.db -port 42222
+Restart=always
+RestartSec=3
+
+# 优雅停机：与默认 DOOPS_SHUTDOWN_DRAIN_TIMEOUT=2m 配套，确保在途操作安全排空
+KillSignal=SIGTERM
+TimeoutStopSec=150
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

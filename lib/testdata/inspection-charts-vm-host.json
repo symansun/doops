@@ -1,0 +1,50 @@
+{
+  "charts": [
+    {
+      "title": "主机核心资源水位",
+      "type": "bar",
+      "unit": "%",
+      "max": 100,
+      "series": [
+        {
+          "label": "CPU",
+          "value": 0.33,
+          "status": "pass"
+        },
+        {
+          "label": "内存",
+          "value": 54.64,
+          "status": "pass"
+        },
+        {
+          "label": "磁盘 (/p)",
+          "value": 90.22,
+          "status": "warning"
+        }
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "key": "cpu_percent",
+      "label": "CPU 使用率",
+      "value": 0.33,
+      "unit": "%",
+      "status": "pass"
+    },
+    {
+      "key": "memory_percent",
+      "label": "内存使用率",
+      "value": 54.64,
+      "unit": "%",
+      "status": "pass"
+    },
+    {
+      "key": "disk_percent",
+      "label": "磁盘最高占比",
+      "value": 90.22,
+      "unit": "%",
+      "status": "warning"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+
+FROM node:24-bookworm-slim AS deps
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY patches ./patches
+RUN pnpm install --frozen-lockfile
+
+FROM node:24-bookworm-slim AS builder
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN corepack enable
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/patches ./patches
+COPY app ./app
+COPY components ./components
+COPY lib ./lib
+# The console reads its release log at build time (lib/server/changelog.ts).
+COPY CHANGELOG.md ./CHANGELOG.md
+# Blog articles are prerendered from blog/ at build time (lib/blog.ts).
+COPY blog ./blog
+# Product documentation pages are prerendered from backend/docs/ (lib/docs.ts).
+COPY backend/docs ./backend/docs
+COPY next.config.mjs package.json pnpm-lock.yaml pnpm-workspace.yaml postcss.config.mjs tsconfig.json ./
+RUN pnpm build
+
+FROM node:24-bookworm-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY public ./public
+# The console prerenders the release log, but keep the file in the runtime image
+# so a future dynamic /console keeps working with the same cwd contract.
+COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md
+# /blog/images/[...path] reads these files at request time (app/blog/images/route.ts),
+# so the folder must exist next to server.js in the runtime image too.
+COPY --from=builder /app/blog ./blog
+COPY --from=builder /app/backend/docs ./backend/docs
+
+USER node
+EXPOSE 3000
+CMD ["node", "server.js"]

@@ -1,0 +1,279 @@
+// 共享的 gateway 协议类型与工具函数
+
+export interface Target {
+  cluster: string
+  instance: string
+  key: string
+  remote?: string
+  connected_at?: string
+  last_seen?: string
+  busy?: boolean
+  status?: string
+  active_ops?: number
+  queued_ops?: number
+  busy_reason?: string
+  resources?: string[]
+  sessions?: string[]
+  mode?: "kubernetes" | "docker" | "linux"
+  kubernetes_available?: boolean
+  manifest_cluster_available?: boolean
+  manifest_revision?: number
+}
+
+export function targetClusterAvailable(target?: Target | null): boolean | undefined {
+  if (target?.kubernetes_available === false) return false
+  return target?.manifest_cluster_available ?? target?.kubernetes_available
+}
+
+export function manifestWarning(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || !("manifest_warning" in value)) return
+  if (typeof value.manifest_warning === "string") return value.manifest_warning.trim() || undefined
+}
+
+const targetModeLabels = { kubernetes: "K8s", docker: "Docker", linux: "Linux" }
+
+export function targetModeLabel(mode?: Target["mode"]): string {
+  return (mode && targetModeLabels[mode]) || "未上报"
+}
+
+export interface AuditEvent {
+  id: number
+  user_id?: string
+  token_id?: string
+  cluster?: string
+  instance?: string
+  action?: string
+  session?: string
+  command_summary?: string
+  status?: string
+  error?: string
+  tail?: string
+  bytes_in?: number
+  bytes_out?: number
+  started_at?: string
+  ended_at?: string
+  correlation_id?: string
+}
+
+export interface AuditSummary {
+  total: number
+  running: number
+  success: number
+  failed: number
+  bytes_in: number
+  bytes_out: number
+  status?: Record<string, number>
+}
+
+export type AuditScope = "target" | "session" | "self" | "global" | "credential" | "operation"
+
+export const AUDIT_ACTIONS = [
+  "exec",
+  "ask",
+  "terminal:ai",
+  "read",
+  "write",
+  "push",
+  "pull",
+  "info",
+  "check",
+  "clean",
+  "proxy",
+  "agent:upgrade",
+  "audit:purge",
+  "targets:list",
+  "credential:create",
+  "credential:metadata",
+  "credential:grant",
+  "credential:use",
+  "credential:verify",
+  "credential:rotate",
+  "credential:revoke",
+  "credential:audit",
+  "admin",
+  "edge:admin",
+  "edge:view",
+] as const
+
+export const AUDIT_STATUSES = [
+  "running",
+  "executing",
+  "accepted",
+  "observing",
+  "outcome_unknown",
+  "success",
+  "error",
+  "forbidden",
+  "blocked",
+  "canceled",
+  "offline",
+  "busy",
+  "rate_limited",
+] as const
+
+export interface AuditQueryInput {
+  scope: AuditScope
+  target: { cluster: string; instance: string }
+  sessionId: string
+  credentialId: string
+  action: string
+  status: string
+  limit: number
+  correlationId?: string
+  beforeId?: number
+  since?: string
+  until?: string
+  hideUpgradeObserve?: boolean
+}
+
+export type AuditQueryPlan =
+  | { ok: true; params: Record<string, string> }
+  | { ok: false; reason: "missing" | "invalid"; message: string }
+
+const CREDENTIAL_ID = /^cred_[0-9a-f]{24}$/
+
+// 审计页的查询参数。凭据的资源级审计（写入版本、激活、授权、验证、吊销）不带目标，
+// session 字段存凭据 ID，所以「按凭据」只发 session=<id>；可见性由 Gateway 按本人和凭据归属判断。
+export function auditQueryParams(input: AuditQueryInput): AuditQueryPlan {
+  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 200) {
+    return { ok: false, reason: "invalid", message: "每页条数须为 1–200" }
+  }
+  const params: Record<string, string> = { limit: String(input.limit) }
+  switch (input.scope) {
+    case "target":
+    case "session":
+      params.cluster = input.target.cluster
+      params.instance = input.target.instance
+      if (input.scope === "session") params.session = input.sessionId
+      break
+    case "self":
+      params.user_id = "self"
+      break
+    case "global":
+      params.view = "global"
+      break
+    case "credential": {
+      const id = input.credentialId.trim()
+      if (!id) return { ok: false, reason: "missing", message: "填写凭据 ID（cred_ 开头）后查询该凭据的审计记录" }
+      if (!CREDENTIAL_ID.test(id)) {
+        return { ok: false, reason: "invalid", message: "凭据 ID 格式应为 cred_ 加 24 位小写十六进制，可在凭据页复制" }
+      }
+      params.session = id
+      break
+    }
+    case "operation":
+      if (!input.correlationId?.trim()) return { ok: false, reason: "missing", message: "填写操作 ID 后查询该操作的审计记录" }
+      params.correlation_id = input.correlationId.trim()
+      break
+  }
+  if (input.beforeId !== undefined) {
+    if (!Number.isSafeInteger(input.beforeId) || input.beforeId <= 0) return { ok: false, reason: "invalid", message: "审计分页游标无效" }
+    params.before_id = String(input.beforeId)
+  }
+  for (const [key, value] of [["since", input.since], ["until", input.until]] as const) {
+    if (!value) continue
+    if (Number.isNaN(Date.parse(value))) return { ok: false, reason: "invalid", message: "审计时间格式无效" }
+    params[key] = new Date(value).toISOString()
+  }
+  if (params.since && params.until && params.since >= params.until) {
+    return { ok: false, reason: "invalid", message: "开始时间必须早于结束时间" }
+  }
+  if (input.hideUpgradeObserve !== undefined) params.hide_upgrade_observe = String(input.hideUpgradeObserve)
+  if (input.action) params.action = input.action
+  if (input.status) params.status = input.status
+  return { ok: true, params }
+}
+
+export interface AuditPaginationSummaryInput {
+  loaded: number
+  pageSize: number
+  hasMore: boolean
+  loading: boolean
+  loadingMore: boolean
+}
+
+export function sliceAuditPage<T>(raw: readonly T[], pageSize: number): { items: T[]; hasMore: boolean } {
+  const hasMore = raw.length > pageSize
+  return { items: hasMore ? raw.slice(0, pageSize) : [...raw], hasMore }
+}
+
+export function formatAuditPaginationSummary({
+  loaded,
+  pageSize,
+  hasMore,
+  loading,
+  loadingMore,
+}: AuditPaginationSummaryInput): string {
+  if (loading && !loadingMore) {
+    return `每页 ${pageSize} 条，正在查询…`
+  }
+  if (loaded === 0) {
+    return `每页 ${pageSize} 条，当前筛选条件无匹配记录。`
+  }
+  if (hasMore) {
+    return loadingMore
+      ? `每页 ${pageSize} 条，已加载 ${loaded} 条，正在加载更早记录…`
+      : `每页 ${pageSize} 条，已加载 ${loaded} 条（还有更早记录，可点击「加载更早记录」继续翻页）。`
+  }
+  return `每页 ${pageSize} 条，已加载全部 ${loaded} 条匹配记录（无更多数据）。`
+}
+
+// gateway 目标动作工具名
+export const TOOLS = {
+  shell: "doops_shell",
+  terminal: "doops_terminal",
+  bg: "doops_bg",
+  prompt: "doops_agent_prompt",
+  fileRead: "doops_file_read",
+  fileWrite: "doops_file_write",
+  kb: "doops_kb",
+  workspaceRead: "doops_workspace_read",
+  nodeInfo: "doops_node_info",
+  checkDeployment: "doops_check_deployment",
+  cleanWorkspace: "doops_clean_workspace",
+  databaseInventory: "doops_database_inventory",
+  k8s: "doops_k8s",
+  web: "doops_web",
+  ssh: "doops_ssh",
+  agentUpgrade: "doops_agent_upgrade",
+} as const
+
+export type WebToolName = (typeof TOOLS)[keyof typeof TOOLS]
+
+// 把 http(s):// 规整成 ws(s):// 基地址，去掉尾部斜杠
+export function toWsBase(gateway: string): string {
+  const trimmed = gateway.trim().replace(/\/+$/, "")
+  if (trimmed.startsWith("https://")) return "wss://" + trimmed.slice("https://".length)
+  if (trimmed.startsWith("http://")) return "ws://" + trimmed.slice("http://".length)
+  if (trimmed.startsWith("wss://") || trimmed.startsWith("ws://")) return trimmed
+  return "ws://" + trimmed
+}
+
+export function resolveDefaultGateway(savedGateway: string | null, currentOrigin: string): string {
+  const localConsole = ["http://127.0.0.1:3000", "http://localhost:3000", "http://[::1]:3000"].includes(currentOrigin)
+  const fallback = localConsole ? "http://127.0.0.1:42222" : currentOrigin
+  const saved = savedGateway?.trim()
+  if (!saved) return fallback
+
+  try {
+    const current = new URL(currentOrigin)
+    const candidate = new URL(saved.includes("://") ? saved : `http://${saved}`)
+    if (localConsole && candidate.origin === current.origin) return fallback
+    if (
+      current.protocol === "https:" &&
+      candidate.protocol !== "https:" &&
+      candidate.protocol !== "wss:"
+    ) {
+      return current.origin
+    }
+  } catch {
+    return fallback
+  }
+
+  return saved
+}
+
+// 生成一个随机 session id
+export function randomSession(prefix = "console"): string {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`
+}

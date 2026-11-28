@@ -1,0 +1,458 @@
+=== RUN   TestGatewayMySQLAgentStatusColumnsMatchExport
+--- PASS: TestGatewayMySQLAgentStatusColumnsMatchExport (0.01s)
+=== RUN   TestGatewayMySQLAgentStatusInsertMatchesSchema
+    gateway_mysql_agent_status_test.go:41: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLAgentStatusInsertMatchesSchema (0.16s)
+=== RUN   TestGatewayMySQLNoDialectSQLBakedAtInit
+    gateway_mysql_baked_sql_test.go:134: scanned 265 package-level vars in internal/server, 0 dialect-initialized
+--- PASS: TestGatewayMySQLNoDialectSQLBakedAtInit (0.05s)
+=== RUN   TestGatewayMySQLInspectionListExecutes
+    gateway_mysql_baked_sql_test.go:253: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLInspectionListExecutes (0.00s)
+=== RUN   TestGatewayMySQLBinaryBoots
+    gateway_mysql_binary_boot_test.go:25: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the MySQL gateway boot test
+--- SKIP: TestGatewayMySQLBinaryBoots (0.00s)
+=== RUN   TestGatewayMySQLTargetPairArgsOrder
+--- PASS: TestGatewayMySQLTargetPairArgsOrder (0.00s)
+=== RUN   TestGatewayMySQLCatalogCallSitesBindThroughConstructor
+--- PASS: TestGatewayMySQLCatalogCallSitesBindThroughConstructor (0.00s)
+=== RUN   TestGatewayMySQLSessionCollationMatchesDatabase
+    gateway_mysql_collation_test.go:80: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLSessionCollationMatchesDatabase (0.00s)
+=== RUN   TestGatewayMySQLStoreRejectsTableWithForeignCollation
+    gateway_mysql_collation_test.go:108: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLStoreRejectsTableWithForeignCollation (0.00s)
+=== RUN   TestGatewayMySQLStoreRejectsDSNCollationOverride
+    gateway_mysql_collation_test.go:134: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLStoreRejectsDSNCollationOverride (0.00s)
+=== RUN   TestGatewayMySQLStoreRejectsColumnWithForeignCollation
+    gateway_mysql_collation_test.go:154: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLStoreRejectsColumnWithForeignCollation (0.00s)
+=== RUN   TestGatewayMySQLSessionCollationAssertionSeesPooledChange
+    gateway_mysql_collation_test.go:188: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLSessionCollationAssertionSeesPooledChange (0.00s)
+=== RUN   TestGatewayMySQLStoreRejectsDatabaseCollationTheDriverCannotSet
+    gateway_mysql_collation_test.go:228: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLStoreRejectsDatabaseCollationTheDriverCannotSet (0.00s)
+=== RUN   TestGatewayMySQLColumnsMatchExport
+--- PASS: TestGatewayMySQLColumnsMatchExport (0.01s)
+=== RUN   TestGatewayMySQLInsertDefaultsMatchSchema
+    gateway_mysql_columns_test.go:60: skip audit_scrub.go:501: SQL assembled from identifiers at runtime names its columns explicitly and is covered by its own tests
+    gateway_mysql_columns_test.go:76: skip credential_bundle_items_v2: transient table created and renamed/dropped inside migrateCredentialBundleItems (never persisted)
+    gateway_mysql_columns_test.go:76: skip credential_verifications_v2: transient table created and renamed/dropped inside migrateCredentialVerifications (never persisted)
+    gateway_mysql_columns_test.go:60: skip dosql_copy.go:71: SQL assembled from identifiers at runtime names its columns explicitly and is covered by its own tests
+    gateway_mysql_columns_test.go:76: skip grants_v2: transient table created and renamed/dropped inside migrateGrantActions (never persisted)
+    gateway_mysql_columns_test.go:102: checked 76 INSERT statements against the MySQL DDL
+--- PASS: TestGatewayMySQLInsertDefaultsMatchSchema (0.16s)
+=== RUN   TestGatewayMySQLUniqueKeysMatchExport
+    gateway_mysql_columns_test.go:357: inspection_runs inspection_cycle (plan_id, due, (expression)) [functional] is enforced by a trigger instead of an index: due is TEXT, so a MySQL unique key would need a prefix and a prefix would merge distinct due values; the native DDL enforces the key with the inspection_cycle_insert and inspection_cycle_update triggers
+    gateway_mysql_columns_test.go:405: matched 18 of 19 exported unique keys, 1 enforced by triggers
+--- PASS: TestGatewayMySQLUniqueKeysMatchExport (0.00s)
+=== RUN   TestGatewayMySQLNumberedParametersBindByTextOrder
+    gateway_mysql_controlflow_test.go:17: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLNumberedParametersBindByTextOrder (0.00s)
+=== RUN   TestGatewayMySQLControlFlowStatementsExecuteOnMySQL
+    gateway_mysql_controlflow_test.go:152: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLControlFlowStatementsExecuteOnMySQL (0.00s)
+=== RUN   TestGatewayMySQLMaterializedCTEStaysSQLiteOnly
+    gateway_mysql_controlflow_test.go:242: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLMaterializedCTEStaysSQLiteOnly (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandDryRunWritesNothing
+    gateway_mysql_copy_command_test.go:456: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandDryRunWritesNothing (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandRejectsUnconfirmedDatabase
+    gateway_mysql_copy_command_test.go:514: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandRejectsUnconfirmedDatabase (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandSnapshotIsReadOnly
+--- PASS: TestGatewayMySQLCopyCommandSnapshotIsReadOnly (0.18s)
+=== RUN   TestGatewayMySQLCopyCommandCopiesPopulatedStore
+    gateway_mysql_copy_command_test.go:591: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandCopiesPopulatedStore (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandRefusesOccupiedDestination
+    gateway_mysql_copy_command_test.go:678: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandRefusesOccupiedDestination (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandRefusesUnpreparedDestination
+    gateway_mysql_copy_command_test.go:710: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandRefusesUnpreparedDestination (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandDryRunOnEmptyDestinationPredictsTheCutover
+    gateway_mysql_copy_command_test.go:735: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandDryRunOnEmptyDestinationPredictsTheCutover (0.00s)
+=== RUN   TestGatewayMySQLCopyPredictEmptyDestination
+--- PASS: TestGatewayMySQLCopyPredictEmptyDestination (0.00s)
+=== RUN   TestGatewayMySQLSchemaSelfReferencesMatchInstalledSchema
+    gateway_mysql_copy_command_test.go:775: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLSchemaSelfReferencesMatchInstalledSchema (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandSelfReferenceIsCopiedDataAware
+    gateway_mysql_copy_command_test.go:811: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandSelfReferenceIsCopiedDataAware (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandMovesDataDirs
+    gateway_mysql_copy_command_test.go:856: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandMovesDataDirs (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandMissingArtifactRollsBack
+    gateway_mysql_copy_command_test.go:960: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandMissingArtifactRollsBack (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandFreshSnapshotCutsOver
+    gateway_mysql_copy_command_test.go:1012: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandFreshSnapshotCutsOver (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandPreviewBucketsMatchTheRun
+    gateway_mysql_copy_command_test.go:1107: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandPreviewBucketsMatchTheRun (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandFreshSnapshotRefusesOccupiedSchemaOnlyTable
+    gateway_mysql_copy_command_test.go:1162: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandFreshSnapshotRefusesOccupiedSchemaOnlyTable (0.00s)
+=== RUN   TestGatewayMySQLCopyCommandFreshSnapshotPreviewMatchesTheRun
+    gateway_mysql_copy_command_test.go:1205: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCommandFreshSnapshotPreviewMatchesTheRun (0.00s)
+=== RUN   TestGatewayCopyLegacyListIsExact
+--- PASS: TestGatewayCopyLegacyListIsExact (0.00s)
+=== RUN   TestGatewayMySQLCopyAcceptsAbsentLegacySchema
+    gateway_mysql_copy_legacy_test.go:82: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyAcceptsAbsentLegacySchema (0.02s)
+=== RUN   TestGatewayMySQLCopySkipsLegacyColumns
+    gateway_mysql_copy_legacy_test.go:124: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopySkipsLegacyColumns (0.00s)
+=== RUN   TestGatewayMySQLCopySnapshot
+--- PASS: TestGatewayMySQLCopySnapshot (0.00s)
+=== RUN   TestGatewayMySQLCopyRehearsalAndFinal
+    gateway_mysql_copy_test.go:134: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyRehearsalAndFinal (0.00s)
+=== RUN   TestGatewayMySQLCopyCarriesSchemaBaseline
+    gateway_mysql_copy_test.go:205: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLCopyCarriesSchemaBaseline (0.00s)
+=== RUN   TestGatewayMySQLCopyFailsClosed
+=== RUN   TestGatewayMySQLCopyFailsClosed/legacy_source_table
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/unknown_source_table_with_rows
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/extra_destination_table
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/legacy_prefix_table
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/legacy_column
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/blob_mapped_as_text
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/nontransactional
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/orphan_source
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/occupied_target
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/empty_stale_allocator
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/storage_class
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/driver_error_redaction
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/equal_count_corruption
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+=== RUN   TestGatewayMySQLCopyFailsClosed/earlier_table_corruption
+    gateway_mysql_copy_test.go:290: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- PASS: TestGatewayMySQLCopyFailsClosed (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/legacy_source_table (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/unknown_source_table_with_rows (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/extra_destination_table (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/legacy_prefix_table (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/legacy_column (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/blob_mapped_as_text (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/nontransactional (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/orphan_source (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/occupied_target (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/empty_stale_allocator (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/storage_class (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/driver_error_redaction (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/equal_count_corruption (0.00s)
+    --- SKIP: TestGatewayMySQLCopyFailsClosed/earlier_table_corruption (0.00s)
+=== RUN   TestGatewayMySQLCredentialLifecycleE2E
+    gateway_mysql_credential_e2e_test.go:238: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLCredentialLifecycleE2E (0.00s)
+=== RUN   TestGatewayMySQLCredentialPromoteRequiresEveryActiveGrant
+    gateway_mysql_credential_e2e_test.go:432: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLCredentialPromoteRequiresEveryActiveGrant (0.00s)
+=== RUN   TestGatewayMySQLCredentialPromoteRequiresActiveGrant
+    gateway_mysql_credential_e2e_test.go:493: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLCredentialPromoteRequiresActiveGrant (0.00s)
+=== RUN   TestGatewayMySQLCredentialPayloadFailsClosedWithoutMasterKey
+    gateway_mysql_credential_e2e_test.go:517: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLCredentialPayloadFailsClosedWithoutMasterKey (0.00s)
+=== RUN   TestGatewayMySQLCutoverRehearsal
+    gateway_mysql_cutover_test.go:56: unset DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to skip this test
+--- SKIP: TestGatewayMySQLCutoverRehearsal (0.00s)
+=== RUN   TestGatewayMySQLDataDirDefault
+--- PASS: TestGatewayMySQLDataDirDefault (0.00s)
+=== RUN   TestGatewayMySQLDataDirFallsBackToDefaultConstant
+--- PASS: TestGatewayMySQLDataDirFallsBackToDefaultConstant (0.00s)
+=== RUN   TestGatewayMySQLDataDirRejectsRelativePath
+--- PASS: TestGatewayMySQLDataDirRejectsRelativePath (0.00s)
+=== RUN   TestGatewayMySQLDataDirRejectsUnwritable
+--- PASS: TestGatewayMySQLDataDirRejectsUnwritable (0.00s)
+=== RUN   TestGatewayMySQLDDLHashWidthHoldsStoredForm
+--- PASS: TestGatewayMySQLDDLHashWidthHoldsStoredForm (0.00s)
+=== RUN   TestGatewayMySQLHashColumnsAcceptIssuedHashes
+    gateway_mysql_hash_width_test.go:225: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the real MySQL hash-width tests
+--- SKIP: TestGatewayMySQLHashColumnsAcceptIssuedHashes (0.00s)
+=== RUN   TestGatewayMySQLHashWidthUpgradeFromLegacyInstall
+    gateway_mysql_hash_width_test.go:284: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the real MySQL hash-width tests
+--- SKIP: TestGatewayMySQLHashWidthUpgradeFromLegacyInstall (0.00s)
+=== RUN   TestGatewayMySQLIdentifierRendering
+--- PASS: TestGatewayMySQLIdentifierRendering (0.00s)
+=== RUN   TestGatewayMySQLMaterializationStatementsExecuteOnMySQL
+    gateway_mysql_identifier_test.go:113: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLMaterializationStatementsExecuteOnMySQL (0.00s)
+=== RUN   TestGatewayMySQLInsertsNameColumns
+    gateway_mysql_insert_order_test.go:116: checked 6 INSERT statements across 3 tables for explicit column lists, export order, DDL order and arity
+--- PASS: TestGatewayMySQLInsertsNameColumns (0.16s)
+=== RUN   TestGatewayMySQLJSONExpansionsExecuteOnMySQL
+    gateway_mysql_json_test.go:18: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLJSONExpansionsExecuteOnMySQL (0.00s)
+=== RUN   TestGatewayMySQLJSONRejectsMalformedInput
+    gateway_mysql_json_test.go:145: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLJSONRejectsMalformedInput (0.00s)
+=== RUN   TestGatewayMySQLRuntimeSQLAudit
+--- PASS: TestGatewayMySQLRuntimeSQLAudit (0.34s)
+=== RUN   TestGatewayMySQLRuntimeDialectExamples
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/numbered_parameter
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/upsert
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/insert_ignore
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/update_ignore
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/JSON_table
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/JSON_aggregate
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/aggregate_filter
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/time
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/epoch
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/materialized
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/concat
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/null
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/introspection
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/sqlite_master_probe
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/explain_plan
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/create_index
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/drop_index
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/auto_increment
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/partial_index
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/reserved_use
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/rowid_order
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/rowid_predicate
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/rowid_in_multi-table_delete
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/rowid_quoted_as_an_identifier
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/limit_in_delete_subquery
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/limit_in_any_subquery
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/scalar_min_of_two_arguments
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/scalar_max_of_two_arguments
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/reserved_bare_key_in_order_by
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/reserved_bare_key_in_predicate
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/reserved_bare_key_in_insert_list
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/without_rowid
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/rowid_in_comment
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/rowid_in_literal
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/limit_in_derived_table
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/plain_limit
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/aggregate_min
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/aggregate_max_of_an_expression
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/backticked_key_column
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/on_duplicate_key_update
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/key_in_comment
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/key_in_literal
+=== RUN   TestGatewayMySQLRuntimeDialectExamples/key_column_of_another_name
+--- PASS: TestGatewayMySQLRuntimeDialectExamples (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/numbered_parameter (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/upsert (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/insert_ignore (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/update_ignore (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/JSON_table (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/JSON_aggregate (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/aggregate_filter (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/time (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/epoch (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/materialized (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/concat (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/null (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/introspection (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/sqlite_master_probe (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/explain_plan (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/create_index (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/drop_index (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/auto_increment (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/partial_index (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/reserved_use (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/rowid_order (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/rowid_predicate (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/rowid_in_multi-table_delete (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/rowid_quoted_as_an_identifier (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/limit_in_delete_subquery (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/limit_in_any_subquery (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/scalar_min_of_two_arguments (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/scalar_max_of_two_arguments (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/reserved_bare_key_in_order_by (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/reserved_bare_key_in_predicate (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/reserved_bare_key_in_insert_list (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/without_rowid (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/rowid_in_comment (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/rowid_in_literal (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/limit_in_derived_table (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/plain_limit (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/aggregate_min (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/aggregate_max_of_an_expression (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/backticked_key_column (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/on_duplicate_key_update (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/key_in_comment (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/key_in_literal (0.00s)
+    --- PASS: TestGatewayMySQLRuntimeDialectExamples/key_column_of_another_name (0.00s)
+=== RUN   TestGatewayMySQLRuntimeEquivalentSyntax
+    gateway_mysql_runtime_test.go:441: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLRuntimeEquivalentSyntax (0.00s)
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/agent_asset_scope.go:214
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/agent_resource_store.go:102
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/agent_resource_store.go:199
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/asset_catalog.go:228
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/asset_coverage.go:333
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/asset_coverage_register.go:104
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/asset_coverage_register.go:214
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/asset_inspection_evidence.go:220
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/asset_monitor_store.go:16
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/asset_monitor_store.go:66
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/asset_monitor_store.go:91
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/asset_topology_runtime.go:218
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/asset_topology_runtime.go:250
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/cluster_inventory_store.go:69
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/cluster_inventory_store.go:91
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/cluster_profiles.go:109
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/credential_materialization_store.go:111
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/credential_store_grants.go:170
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/credential_store_migration.go:88
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/credential_store_verifications.go:59
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/detached_tasks.go:292
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_agents.go:73
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_agents.go:231
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_bootstrap.go:63
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_bootstrap.go:82
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_edge.go:499
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_edge.go:506
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_grants.go:25
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_grants.go:155
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/inventory_node_links.go:158
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/machine_diagnostic_collect.go:198
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/mcp_registry.go:81
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/mcp_registry.go:196
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/personal_asset_records.go:99
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/skills_registry.go:255
+=== RUN   TestGatewayMySQLUpsertsRenderForBothDialects/skills_registry.go:560
+--- PASS: TestGatewayMySQLUpsertsRenderForBothDialects (0.07s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/agent_asset_scope.go:214 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/agent_resource_store.go:102 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/agent_resource_store.go:199 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/asset_catalog.go:228 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/asset_coverage.go:333 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/asset_coverage_register.go:104 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/asset_coverage_register.go:214 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/asset_inspection_evidence.go:220 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/asset_monitor_store.go:16 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/asset_monitor_store.go:66 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/asset_monitor_store.go:91 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/asset_topology_runtime.go:218 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/asset_topology_runtime.go:250 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/cluster_inventory_store.go:69 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/cluster_inventory_store.go:91 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/cluster_profiles.go:109 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/credential_materialization_store.go:111 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/credential_store_grants.go:170 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/credential_store_migration.go:88 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/credential_store_verifications.go:59 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/detached_tasks.go:292 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_agents.go:73 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_agents.go:231 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_bootstrap.go:63 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_bootstrap.go:82 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_edge.go:499 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_edge.go:506 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_grants.go:25 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/gateway_store_grants.go:155 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/inventory_node_links.go:158 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/machine_diagnostic_collect.go:198 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/mcp_registry.go:81 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/mcp_registry.go:196 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/personal_asset_records.go:99 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/skills_registry.go:255 (0.00s)
+    --- PASS: TestGatewayMySQLUpsertsRenderForBothDialects/skills_registry.go:560 (0.00s)
+=== RUN   TestGatewayMySQLUpsertConflictTargetsMatchUniqueKeys
+--- PASS: TestGatewayMySQLUpsertConflictTargetsMatchUniqueKeys (0.06s)
+=== RUN   TestGatewayMySQLUpsertsExecuteOnMySQL
+    gateway_mysql_runtime_test.go:1633: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLUpsertsExecuteOnMySQL (0.00s)
+=== RUN   TestGatewayMySQLUniqueKeysEnforceConflicts
+    gateway_mysql_runtime_test.go:1804: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLUniqueKeysEnforceConflicts (0.00s)
+=== RUN   TestGatewayMySQLInsertIgnoreMigrationExecutes
+=== RUN   TestGatewayMySQLInsertIgnoreMigrationExecutes/sqlite_rendering_keeps_the_duplicates_out
+    gateway_mysql_runtime_test.go:1968: SQLite: credential_store_migration.go:88 inserted 2 of 3 rows twice, INSERT INTO credential_bundle_items_v2 (bundle_id, credential_id)
+        			SELECT bundle_id, credential_id FROM credential_bundle_items WHERE 1 ON CONFLICT(bundle_id,credential_id) DO NOTHING
+=== RUN   TestGatewayMySQLInsertIgnoreMigrationExecutes/mysql_rendering_keeps_the_duplicates_out
+    gateway_mysql_runtime_test.go:1971: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- PASS: TestGatewayMySQLInsertIgnoreMigrationExecutes (0.05s)
+    --- PASS: TestGatewayMySQLInsertIgnoreMigrationExecutes/sqlite_rendering_keeps_the_duplicates_out (0.00s)
+    --- SKIP: TestGatewayMySQLInsertIgnoreMigrationExecutes/mysql_rendering_keeps_the_duplicates_out (0.00s)
+=== RUN   TestGatewayMySQLConcatRendersForBothDialects
+--- PASS: TestGatewayMySQLConcatRendersForBothDialects (0.00s)
+=== RUN   TestGatewayMySQLConcatKeepsNullSemantics
+=== RUN   TestGatewayMySQLConcatKeepsNullSemantics/sqlite
+    gateway_mysql_runtime_test.go:2107: sqlite: stored=prior error || '; ' || ? -> prior; next
+    gateway_mysql_runtime_test.go:2107: sqlite: stored=<NULL> error || '; ' || ? -> <NULL>
+    gateway_mysql_runtime_test.go:2107: sqlite: stored= error || '; ' || ? -> ; next
+    gateway_mysql_runtime_test.go:2107: sqlite: the update left id=1 error=prior; next
+    gateway_mysql_runtime_test.go:2107: sqlite: the update left id=2 error=<NULL>
+    gateway_mysql_runtime_test.go:2107: sqlite: the update left id=3 error=next
+=== RUN   TestGatewayMySQLConcatKeepsNullSemantics/mysql
+    gateway_mysql_runtime_test.go:2110: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+=== RUN   TestGatewayMySQLConcatKeepsNullSemantics/mysql_distinguishes_CONCAT_from_CONCAT_WS
+    gateway_mysql_runtime_test.go:2115: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- PASS: TestGatewayMySQLConcatKeepsNullSemantics (0.00s)
+    --- PASS: TestGatewayMySQLConcatKeepsNullSemantics/sqlite (0.00s)
+    --- SKIP: TestGatewayMySQLConcatKeepsNullSemantics/mysql (0.00s)
+    --- SKIP: TestGatewayMySQLConcatKeepsNullSemantics/mysql_distinguishes_CONCAT_from_CONCAT_WS (0.00s)
+=== RUN   TestGatewayMySQLTimeSQLRendersForBothDialects
+    gateway_mysql_runtime_test.go:2242: inventory grant freshness: sqlite="WITH actor AS (\n SELECT u.id, u.is_admin FROM users u JOIN tokens t ON t.user_id=u.id\n WHERE u.id=? AND t.id=? AND t.kind='user' AND u.disabled=0 AND t.revoked_at=''\n AND (t.expires_at='' OR CAST(strftime('%s', t.expires_at) AS INTEGER) > unixepoch())\n), permitted AS (\n SELECT '*' AS cluster, '*' AS instance, is_admin FROM actor WHERE is_admin=1\n UNION ALL SELECT g.cluster, g.instance, a.is_admin FROM actor a JOIN grants g ON g.user_id=a.id WHERE a.is_admin=0\n) " mysql="WITH actor AS (\n SELECT u.id, u.is_admin FROM users u JOIN tokens t ON t.user_id=u.id\n WHERE u.id=? AND t.id=? AND t.kind='user' AND u.disabled=0 AND t.revoked_at=''\n AND (t.expires_at='' OR TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', STR_TO_DATE(SUBSTRING(t.expires_at, 1, 19), '%Y-%m-%dT%H:%i:%s')) > UNIX_TIMESTAMP())\n), permitted AS (\n SELECT '*' AS cluster, '*' AS instance, is_admin FROM actor WHERE is_admin=1\n UNION ALL SELECT g.cluster, g.instance, a.is_admin FROM actor a JOIN grants g ON g.user_id=a.id WHERE a.is_admin=0\n) "
+    gateway_mysql_runtime_test.go:2242: inspection work window: sqlite="s.opened<=unixepoch() AND s.deadline>unixepoch()" mysql="s.opened<=UNIX_TIMESTAMP() AND s.deadline>UNIX_TIMESTAMP()"
+    gateway_mysql_runtime_test.go:2242: inspection overdue: sqlite="p.next_due+86400<=unixepoch()" mysql="p.next_due+86400<=UNIX_TIMESTAMP()"
+    gateway_mysql_runtime_test.go:2242: inspection state: sqlite="CASE WHEN s.status='pending' AND (s.deadline<=unixepoch() OR CASE WHEN NOT EXISTS(SELECT 1 FROM users u WHERE u.id=p.executor AND u.disabled=0 AND (u.is_admin=1 OR EXISTS(SELECT 1 FROM grants g WHERE g.user_id=u.id AND g.cluster IN ('*',s.cluster) AND g.instance IN ('*',s.instance)))) THEN 'executor_grant_revoked' WHEN NOT EXISTS(SELECT 1 FROM (SELECT asset_id,cluster,instance FROM inventory_machines WHERE cluster<>'' UNION SELECT asset_id,cluster,instance FROM cluster_inventory_sources UNION SELECT d.asset_id,d.cluster,d.instance FROM inventory_business_deployments d JOIN inventory_business_systems b ON b.asset_id=d.asset_id WHERE b.active=1) c WHERE c.asset_id=s.asset_id AND c.cluster=s.cluster AND c.instance=s.instance) THEN 'asset_binding_changed' WHEN NOT EXISTS(SELECT 1 FROM agent_status a WHERE a.cluster=s.cluster AND a.instance=s.instance AND a.status='online' AND a.archived_at='') THEN 'target_offline' ELSE '' END<>'') THEN 'missing' ELSE s.status END" mysql="CASE WHEN s.status='pending' AND (s.deadline<=UNIX_TIMESTAMP() OR CASE WHEN NOT EXISTS(SELECT 1 FROM users u WHERE u.id=p.executor AND u.disabled=0 AND (u.is_admin=1 OR EXISTS(SELECT 1 FROM grants g WHERE g.user_id=u.id AND g.cluster IN ('*',s.cluster) AND g.instance IN ('*',s.instance)))) THEN 'executor_grant_revoked' WHEN NOT EXISTS(SELECT 1 FROM (SELECT asset_id,cluster,instance FROM inventory_machines WHERE cluster<>'' UNION SELECT asset_id,cluster,instance FROM cluster_inventory_sources UNION SELECT d.asset_id,d.cluster,d.instance FROM inventory_business_deployments d JOIN inventory_business_systems b ON b.asset_id=d.asset_id WHERE b.active=1) c WHERE c.asset_id=s.asset_id AND c.cluster=s.cluster AND c.instance=s.instance) THEN 'asset_binding_changed' WHEN NOT EXISTS(SELECT 1 FROM agent_status a WHERE a.cluster=s.cluster AND a.instance=s.instance AND a.status='online' AND a.archived_at='') THEN 'target_offline' ELSE '' END<>'') THEN 'missing' ELSE s.status END"
+    gateway_mysql_runtime_test.go:2242: inspection reason: sqlite="CASE WHEN s.status='pending' AND CASE WHEN NOT EXISTS(SELECT 1 FROM users u WHERE u.id=p.executor AND u.disabled=0 AND (u.is_admin=1 OR EXISTS(SELECT 1 FROM grants g WHERE g.user_id=u.id AND g.cluster IN ('*',s.cluster) AND g.instance IN ('*',s.instance)))) THEN 'executor_grant_revoked' WHEN NOT EXISTS(SELECT 1 FROM (SELECT asset_id,cluster,instance FROM inventory_machines WHERE cluster<>'' UNION SELECT asset_id,cluster,instance FROM cluster_inventory_sources UNION SELECT d.asset_id,d.cluster,d.instance FROM inventory_business_deployments d JOIN inventory_business_systems b ON b.asset_id=d.asset_id WHERE b.active=1) c WHERE c.asset_id=s.asset_id AND c.cluster=s.cluster AND c.instance=s.instance) THEN 'asset_binding_changed' WHEN NOT EXISTS(SELECT 1 FROM agent_status a WHERE a.cluster=s.cluster AND a.instance=s.instance AND a.status='online' AND a.archived_at='') THEN 'target_offline' ELSE '' END<>'' THEN CASE WHEN NOT EXISTS(SELECT 1 FROM users u WHERE u.id=p.executor AND u.disabled=0 AND (u.is_admin=1 OR EXISTS(SELECT 1 FROM grants g WHERE g.user_id=u.id AND g.cluster IN ('*',s.cluster) AND g.instance IN ('*',s.instance)))) THEN 'executor_grant_revoked' WHEN NOT EXISTS(SELECT 1 FROM (SELECT asset_id,cluster,instance FROM inventory_machines WHERE cluster<>'' UNION SELECT asset_id,cluster,instance FROM cluster_inventory_sources UNION SELECT d.asset_id,d.cluster,d.instance FROM inventory_business_deployments d JOIN inventory_business_systems b ON b.asset_id=d.asset_id WHERE b.active=1) c WHERE c.asset_id=s.asset_id AND c.cluster=s.cluster AND c.instance=s.instance) THEN 'asset_binding_changed' WHEN NOT EXISTS(SELECT 1 FROM agent_status a WHERE a.cluster=s.cluster AND a.instance=s.instance AND a.status='online' AND a.archived_at='') THEN 'target_offline' ELSE '' END WHEN s.status='pending' AND s.deadline<=unixepoch() THEN 'collection_deadline_elapsed' ELSE s.reason END" mysql="CASE WHEN s.status='pending' AND CASE WHEN NOT EXISTS(SELECT 1 FROM users u WHERE u.id=p.executor AND u.disabled=0 AND (u.is_admin=1 OR EXISTS(SELECT 1 FROM grants g WHERE g.user_id=u.id AND g.cluster IN ('*',s.cluster) AND g.instance IN ('*',s.instance)))) THEN 'executor_grant_revoked' WHEN NOT EXISTS(SELECT 1 FROM (SELECT asset_id,cluster,instance FROM inventory_machines WHERE cluster<>'' UNION SELECT asset_id,cluster,instance FROM cluster_inventory_sources UNION SELECT d.asset_id,d.cluster,d.instance FROM inventory_business_deployments d JOIN inventory_business_systems b ON b.asset_id=d.asset_id WHERE b.active=1) c WHERE c.asset_id=s.asset_id AND c.cluster=s.cluster AND c.instance=s.instance) THEN 'asset_binding_changed' WHEN NOT EXISTS(SELECT 1 FROM agent_status a WHERE a.cluster=s.cluster AND a.instance=s.instance AND a.status='online' AND a.archived_at='') THEN 'target_offline' ELSE '' END<>'' THEN CASE WHEN NOT EXISTS(SELECT 1 FROM users u WHERE u.id=p.executor AND u.disabled=0 AND (u.is_admin=1 OR EXISTS(SELECT 1 FROM grants g WHERE g.user_id=u.id AND g.cluster IN ('*',s.cluster) AND g.instance IN ('*',s.instance)))) THEN 'executor_grant_revoked' WHEN NOT EXISTS(SELECT 1 FROM (SELECT asset_id,cluster,instance FROM inventory_machines WHERE cluster<>'' UNION SELECT asset_id,cluster,instance FROM cluster_inventory_sources UNION SELECT d.asset_id,d.cluster,d.instance FROM inventory_business_deployments d JOIN inventory_business_systems b ON b.asset_id=d.asset_id WHERE b.active=1) c WHERE c.asset_id=s.asset_id AND c.cluster=s.cluster AND c.instance=s.instance) THEN 'asset_binding_changed' WHEN NOT EXISTS(SELECT 1 FROM agent_status a WHERE a.cluster=s.cluster AND a.instance=s.instance AND a.status='online' AND a.archived_at='') THEN 'target_offline' ELSE '' END WHEN s.status='pending' AND s.deadline<=UNIX_TIMESTAMP() THEN 'collection_deadline_elapsed' ELSE s.reason END"
+    gateway_mysql_runtime_test.go:2242: diagnostic verified_at: sqlite="CAST(strftime('%s', d.verified_at) AS INTEGER) <= ?" mysql="TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', STR_TO_DATE(SUBSTRING(d.verified_at, 1, 19), '%Y-%m-%dT%H:%i:%s')) <= ?"
+--- PASS: TestGatewayMySQLTimeSQLRendersForBothDialects (0.00s)
+=== RUN   TestGatewayMySQLTimeComparisonsExecuteOnMySQL
+    gateway_mysql_runtime_test.go:2266: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLTimeComparisonsExecuteOnMySQL (0.00s)
+=== RUN   TestGatewayMySQLStatementsSplit
+--- PASS: TestGatewayMySQLStatementsSplit (0.00s)
+=== RUN   TestGatewayMySQLExpectedObjects
+--- PASS: TestGatewayMySQLExpectedObjects (0.00s)
+=== RUN   TestGatewayMySQLTablesMatchExport
+--- PASS: TestGatewayMySQLTablesMatchExport (0.00s)
+=== RUN   TestGatewayMySQLTriggersMatchExport
+--- PASS: TestGatewayMySQLTriggersMatchExport (0.00s)
+=== RUN   TestGatewayMySQLPrimaryKeysMatchExport
+--- PASS: TestGatewayMySQLPrimaryKeysMatchExport (0.01s)
+=== RUN   TestGatewayMySQLForeignKeysMatchExport
+--- PASS: TestGatewayMySQLForeignKeysMatchExport (0.01s)
+=== RUN   TestGatewayMySQLAutoIncrementMatchExport
+--- PASS: TestGatewayMySQLAutoIncrementMatchExport (0.01s)
+=== RUN   TestGatewayMySQLInstallAndValidate
+    gateway_mysql_schema_test.go:518: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLInstallAndValidate (0.00s)
+=== RUN   TestGatewayMySQLInstallThenCopierAccepts
+    gateway_mysql_schema_test.go:548: requires a disposable local MySQL 8 (DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT)
+--- SKIP: TestGatewayMySQLInstallThenCopierAccepts (0.00s)
+=== RUN   TestGatewayMySQLSchemaCoversRuntimeDDL
+--- PASS: TestGatewayMySQLSchemaCoversRuntimeDDL (0.06s)
+=== RUN   TestGatewayMySQLTableExistsProbeExecutes
+    gateway_mysql_table_probe_test.go:19: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the disposable MySQL 8.4 syntax test
+--- SKIP: TestGatewayMySQLTableExistsProbeExecutes (0.00s)
+=== RUN   TestGatewayMySQLTableExistsProbeOnSQLite
+--- PASS: TestGatewayMySQLTableExistsProbeOnSQLite (0.03s)
+=== RUN   TestGatewayMySQLRuntimeStartup
+    gateway_store_mysql_runtime_test.go:103: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the MySQL runtime startup test
+--- SKIP: TestGatewayMySQLRuntimeStartup (0.00s)
+=== RUN   TestGatewayMySQLRuntimeAuthFailureDoesNotLeakPassword
+    gateway_store_mysql_runtime_test.go:236: set DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT to run the MySQL runtime auth test
+--- SKIP: TestGatewayMySQLRuntimeAuthFailureDoesNotLeakPassword (0.00s)
+PASS
+ok  	github.com/user/doops/agent/internal/server	3.080s

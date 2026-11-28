@@ -1,0 +1,111 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.inspect-proxy-evasion
+  name: 违规代理与穿透检测
+  description: 零 Token 专项扫描 clash/v2ray/xray/frpc/ngrok 等违规代理进程、常见代理端口与代理环境变量
+  category: security
+  icon: eye
+  scenarios:
+    - host-security-ops
+    - all-in-one
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - inspect-proxy-evasion
+  companion_agent_skill: shell
+ui:
+  slots:
+    sidebar:
+      enabled: false
+      label: 代理与穿透检测
+      group: extensions
+      order: 70
+    target_tab:
+      enabled: true
+      label: 代理检测
+      order: 70
+    home_widget:
+      enabled: false
+      title: 违规代理与穿透检测
+      span: 1
+    ask_presets:
+      - title: 溯源可疑代理与内网穿透
+        description: 只读核查疑似代理进程属主、启动路径、systemd/crontab 持久化与外联目标
+        prompt: 请使用 inspect-proxy-evasion Skill 扫描当前主机的违规代理与内网穿透线索，并对命中的进程或监听端口做只读属主与持久化来源溯源。
+  presets:
+    - id: proxy-quick-scan
+      title: 代理进程与端口快速扫描
+      description: 零 Token 检查代理/穿透进程、1080/7890/3128 等常见端口及脱敏代理环境变量
+      mode: script
+    - id: proxy-forensic-ai
+      title: AI 穿透进程溯源分析
+      description: 结合进程树、二进制路径、启动项与监听连接定位未授权代理来源
+      mode: agent
+      prompt: 请运行 inspect-proxy-evasion Skill 并对所有命中的疑似代理进程、监听端口和环境变量进行只读取证溯源（含父进程、二进制路径、计划任务与外联概况），输出处置建议且严禁自动终止进程。
+  actions:
+    - id: proxy-trace-check
+      label: 只读溯源可疑进程与连接
+      description: 核查所选 PID 的进程树、可执行文件路径、属主账号与外联端口（严格只读）
+      mode: check
+      skill: shell
+      prompt_template: 请只读核查所选疑似代理进程的完整命令行、父进程树、/proc/<pid>/exe 路径、运行用户、关联 systemd 单元或 crontab 以及当前建立的网络连接，严禁中止进程或修改系统。
+    - id: proxy-contain-apply
+      label: 受控隔离与清理违规代理
+      description: 经人工确认后在审计通道内停止未授权代理进程并清理其持久化入口
+      mode: apply
+      skill: shell
+      prompt_template: 请先核对并列出所选违规代理进程的取证证据与影响面，在人工确认后停止目标进程及对应违规持久化服务/启动项，完成后重新执行 inspect-proxy-evasion 复核清零。
+  views:
+    - type: kpi_grid
+      title: 代理穿透态势
+      items:
+        - key: proxy_suspect_procs
+          label: 疑似代理进程
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 1
+        - key: proxy_open_ports
+          label: 代理监听端口
+          unit: "个"
+          warn_threshold: 1
+          crit_threshold: 2
+        - key: proxy_env_count
+          label: 代理环境变量
+          unit: "个"
+          warn_threshold: 1
+    - type: resource_table
+      title: 疑似代理与穿透进程
+      source_key: suspect_processes
+      row_action_id: proxy-trace-check
+      columns:
+        - key: pid
+          label: PID
+          kind: code
+        - key: comm
+          label: 进程名
+          kind: code
+        - key: matched
+          label: 命中特征
+          kind: text
+        - key: status
+          label: 级别
+          kind: badge
+    - type: checks_table
+      title: 进程、端口与环境检查
+    - type: trend_series
+      title: 代理风险趋势
+      metric_keys:
+        - proxy_suspect_procs
+        - proxy_open_ports
+      range: 7d
+    - type: artifact_viewer
+      title: 完整代理检测报告
+schedule_template:
+  name: 违规代理与内网穿透定时巡检
+  description: 每小时自动扫描违规代理进程、代理端口监听与代理环境变量
+  interval_seconds: 3600
+  scope_mode: all_online

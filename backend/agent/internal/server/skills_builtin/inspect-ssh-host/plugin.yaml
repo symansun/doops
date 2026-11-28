@@ -1,0 +1,58 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.inspect-ssh-host
+  name: 远程 SSH 主机巡检
+  description: 按只读契约核查受管 SSH 通道授权与远程主机资源安全基线，通道未授权时如实回报缺口不伪造健康
+  category: ops
+  icon: terminal
+  scenarios:
+    - host-security-ops
+    - all-in-one
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - inspect-ssh-host
+  companion_agent_skill: shell
+ui:
+  slots:
+    sidebar:
+      enabled: false
+      label: SSH 远程巡检
+      group: extensions
+      order: 60
+    target_tab:
+      enabled: true
+      label: SSH 巡检
+      order: 60
+    home_widget:
+      enabled: false
+      title: SSH 远程巡检
+      span: 1
+    ask_presets:
+      - title: 核查受管 SSH 通道与远程主机
+        description: 核验 doops_ssh 受管通道是否已授权，或在具备只读通道时巡检远程主机基线
+        prompt: 请严格遵循 inspect-ssh-host Skill 契约核查当前目标的受管 SSH 通道状态与远程主机基线；若平台未开放 AI 可见受管 SSH 通道，必须如实上报 managed_ssh_channel=unavailable 缺口，禁止伪造指标或索要明文口令。
+  presets:
+    - id: ssh-channel-audit
+      title: 受管 SSH 通道与基线核查
+      description: AI 驱动按契约核查受管 SSH 通道可用性及远程主机只读基线，缺口如实上报告警
+      mode: agent
+      prompt: 请严格按照 inspect-ssh-host Skill 执行只读核查：若当前环境未向 AI 授予受管 SSH 通道，则在 checks 中如实写入 id=managed_ssh_channel、status=warning、value=unavailable 并将 metrics 留空；若已具备合法受管只读通道，则采集远程主机的 CPU、内存、磁盘、运行时间与 SSH 安全基线并输出标准 JSON。
+  actions:
+    - id: ssh-channel-check
+      label: 核查受管 SSH 授权状态
+      description: 只读检查当前目标 SSH 通道边界、托管凭据与前置条件，严禁拼装明文口令 SSH 命令
+      mode: check
+      skill: shell
+      prompt_template: 请只读核查当前目标的 SSH 通道依赖状态与主机侧 sshd/网络连通边界，如实输出受管 SSH 通道可用性说明与后续接入指引，严禁交互输入密码或输出私钥。
+  views:
+    - type: findings_list
+      title: 能力缺口与远程风险
+    - type: checks_table
+      title: SSH 通道与基线检查项
+    - type: artifact_viewer
+      title: SSH 巡检完整报告

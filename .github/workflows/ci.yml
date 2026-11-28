@@ -1,0 +1,520 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  # A manual run is the only way to re-check this gate on demand: push runs of
+  # main are cancelled by the next push (concurrency below), and dispatching a
+  # run of its own is not, so a gate that was cut short can be re-established
+  # without inventing a branch.
+  workflow_dispatch:
+  # Reused by .github/workflows/release.yml as the release gate.
+  workflow_call:
+    inputs:
+      source_commit:
+        description: "Exact source commit selected by the release workflow"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Every push used to queue a full run behind the previous one: a three-commit burst
+# left older trees testing for half an hour after they were already obsolete, and the
+# newest tree waited behind them. A superseded push carries no signal, so cancel it.
+# The release gate (workflow_call) gets its own group and is never cancelled, and a
+# pull_request run is left alone because a review may be reading it.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+jobs:
+  test:
+    name: Go tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: |
+            backend/agent/go.sum
+            backend/gateway/go.sum
+            backend/cli/go.sum
+
+      # gofmt is not part of `go test`, so formatting drift is invisible to every
+      # other gate. Walk every Go module (agent, gateway, cli) with `gofmt -l .`
+      # and fail before running slower test suites.
+      - name: Check gofmt
+        run: |
+          set -euo pipefail
+          failed=0
+          for mod in backend/agent backend/gateway backend/cli; do
+            unformatted=$(cd "${mod}" && gofmt -l .)
+            if [ -n "${unformatted}" ]; then
+              echo "::error::gofmt found unformatted Go files in ${mod}; run gofmt -w on them"
+              printf '%s\n' "${unformatted}"
+              failed=1
+            fi
+          done
+          if [ "${failed}" -ne 0 ]; then
+            exit 1
+          fi
+          echo "gofmt clean across backend/agent, backend/gateway, backend/cli"
+
+      - name: Vet Go modules
+        run: |
+          set -euo pipefail
+          for mod in backend/agent backend/gateway backend/cli; do
+            (cd "${mod}" && go vet ./...)
+          done
+
+      - name: Cross-compile CLI smoke
+        working-directory: backend/cli
+        run: |
+          set -euo pipefail
+          GOOS=darwin GOARCH=arm64 go build -o "${RUNNER_TEMP}/doops-darwin-arm64" ./cli/doops
+          GOOS=windows GOARCH=amd64 go build -o "${RUNNER_TEMP}/doops-windows-amd64.exe" ./cli/doops
+          rm -f "${RUNNER_TEMP}/doops-darwin-arm64" "${RUNNER_TEMP}/doops-windows-amd64.exe"
+
+      - name: Install Go test dependencies
+        run: python3 -m pip install --quiet pytest pyyaml
+
+      - name: Test agent
+        working-directory: backend/agent
+        run: go test -timeout 20m ./...
+
+      - name: Test gateway
+        working-directory: backend/gateway
+        run: go test -timeout 20m ./...
+
+      - name: Test CLI
+        working-directory: backend/cli
+        run: go test -timeout 20m ./...
+
+      - name: Cross-module CLI <-> Gateway <-> Agent E2E
+        run: |
+          set -euo pipefail
+          python3 -m pytest backend/test/test_cli_gateway_agent_e2e.py -v
+
+  mysql-backend:
+    name: Go tests (MySQL backend)
+    # The agent suite skips every MySQL case when DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT
+    # is unset, so `go test ./...` above stays green on a machine (or a CI runner)
+    # with no MySQL at all. 62 of the skips in the QA-07 baseline were exactly those
+    # cases, and that path has caught SQLite-only syntax in runtime SQL (1267),
+    # ambiguous columns (1054/1235), a missing table (1406), unusable subqueries
+    # (1064/1093) and the 1213/1205 retry boundary. A skip proves nothing, so the
+    # MySQL cases get their own job, a real server, and a guard that fails when a
+    # case skips instead of running.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: backend/agent/go.sum
+
+      # The server flags must follow the image name. A services: block cannot carry
+      # them (its options: are docker flags only: "unknown flag: --character-set-server"),
+      # so the container is started here, with utf8mb4_bin baked in: the image default
+      # is "utf8mb4_0900_ai_ci" and a table created under it fails the INT-47
+      # column-collation assertions. Readiness is a real query, never mysqladmin ping:
+      # INT-13 shipped a container that answered ping while refusing statements.
+      - name: Start MySQL 8.4
+        run: |
+          set -euo pipefail
+          docker run -d --name mysql \
+            -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
+            -p 3306:3306 \
+            mysql:8.4 \
+            --character-set-server=utf8mb4 \
+            --collation-server=utf8mb4_bin
+          # The probe must go over TCP, not the container's unix socket. During
+          # initialisation the image runs a temporary mysqld that answers on the
+          # socket only, so a socket probe says "ready" seconds before the real
+          # server binds 3306, and connections opened in between die with
+          # "invalid connection" (reproduced while writing INT-84: 12 top-level
+          # failures). -h127.0.0.1 forces TCP, which that temporary server never
+          # serves.
+          for attempt in $(seq 1 60); do
+            if docker exec mysql mysql -h127.0.0.1 -P 3306 -uroot -e 'SELECT 1' >/dev/null 2>&1; then
+              echo "MySQL answered a real query after $((attempt * 2))s"
+              docker exec mysql mysql -h127.0.0.1 -P 3306 -uroot -N -e 'SELECT @@version, @@character_set_server, @@collation_server'
+              if ! docker exec mysql mysql -h127.0.0.1 -P 3306 -uroot -N -e 'SELECT @@collation_server' | grep -qx utf8mb4_bin; then
+                echo "::error::the server does not report collation_server=utf8mb4_bin"
+                exit 1
+              fi
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::MySQL never answered a real query within 120s"
+          docker logs mysql || true
+          exit 1
+
+      # The gate itself is fail-closed (gateway_mysql_copy_test.go): an unset
+      # DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT skips, a set-but-unreachable one calls
+      # t.Fatalf. This job sets it, so a MySQL that does not answer turns the run
+      # red. Do not add a wait-and-retry around the test command: it would turn
+      # "the server never came up" back into a green run.
+      - name: Run the MySQL-gated Agent tests
+        working-directory: backend/agent
+        env:
+          DOOPS_TEST_GATEWAY_MYSQL_COPY_PORT: "3306"
+        run: |
+          set -euo pipefail
+          listed=$(go test -list 'GatewayMySQL|GatewayCopy' ./internal/server/ | grep -c '^Test')
+          echo "listed ${listed} MySQL-gated tests"
+          status=0
+          go test ./internal/server/ -run 'GatewayMySQL|GatewayCopy' -count=1 -timeout 20m -v 2>&1 | tee /tmp/mysql-backend.log || status=$?
+          echo "go test exited ${status}"
+          # A green exit status is not proof: a skip is reported as success. The
+          # checker reads the -v log and fails when an expected live-server case
+          # did not PASS, when any top-level case skipped, or when the log holds
+          # too few runs (the -run selection stopped matching).
+          python3 ../scripts/check-mysql-test-log.py /tmp/mysql-backend.log
+          if [ "${status}" -ne 0 ]; then
+            echo "::error::go test exited ${status}"
+            exit "${status}"
+          fi
+
+      - name: Stop MySQL
+        if: always()
+        run: docker rm -f mysql || true
+
+  mysql57-backend:
+    name: Go tests (MySQL 5.7 backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: backend/agent/go.sum
+
+      - name: Start MySQL 5.7
+        run: |
+          set -euo pipefail
+          docker run -d --name mysql57 \
+            -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
+            -p 3306:3306 \
+            mysql:5.7 \
+            --character-set-server=utf8mb4 \
+            --collation-server=utf8mb4_general_ci \
+            --innodb-large-prefix=OFF
+          for attempt in $(seq 1 60); do
+            if docker exec mysql57 mysql -h127.0.0.1 -P 3306 -uroot -e 'SELECT 1' >/dev/null 2>&1; then
+              echo "MySQL 5.7 answered a real query after $((attempt * 2))s"
+              docker exec mysql57 mysql -h127.0.0.1 -P 3306 -uroot -N -e 'SELECT @@version, @@character_set_server, @@collation_server, @@innodb_large_prefix'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::MySQL 5.7 never answered a real query within 120s"
+          docker logs mysql57 || true
+          exit 1
+
+      - name: Run MySQL 5.7 Gateway end-to-end tests
+        working-directory: backend/agent
+        env:
+          DOOPS_TEST_GATEWAY_MYSQL57_PORT: "3306"
+        run: |
+          set -euo pipefail
+          go test ./internal/server/ -run 'TestMySQL57GatewayEndToEnd|TestGatewayMySQLVersionParsing|TestGatewayMySQL57' -count=1 -timeout 15m -v 2>&1 | tee /tmp/mysql57-backend.log
+          grep -q '^--- PASS: TestMySQL57GatewayEndToEnd ' /tmp/mysql57-backend.log
+          if grep -q '^--- SKIP:' /tmp/mysql57-backend.log; then
+            echo "::error::a MySQL 5.7 gated test skipped instead of running"
+            exit 1
+          fi
+
+      - name: Stop MySQL 5.7
+        if: always()
+        run: docker rm -f mysql57 || true
+  dosql-realdb:
+    name: DoSql real-DB (MySQL 8.4 + PostgreSQL 16)
+    # Runs the end-to-end DoSql round-trip suites against LIVE MySQL 8.4 and
+    # PostgreSQL 16 servers (inspect -> diff -> DDL replay -> secondary diff
+    # Identical == true, mixed DDL/DML segmentation, CONCURRENTLY, DELIMITER,
+    # backfill, pack -> migrate/resume, and BIT_XOR(MD5) datadiff + fix_sql
+    # replay). Fails closed if any expected live-DB case skips or fails.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: backend/agent/go.sum
+
+      - name: Start MySQL 8.4 and PostgreSQL 16
+        run: |
+          set -euo pipefail
+          docker run -d --name dosql-mysql \
+            -e MYSQL_ROOT_PASSWORD=dosqltestpass \
+            -e MYSQL_DATABASE=dosql_a \
+            -p 127.0.0.1:13306:3306 \
+            mysql:8.4 \
+            --character-set-server=utf8mb4 \
+            --collation-server=utf8mb4_0900_ai_ci
+          docker run -d --name dosql-pg \
+            -e POSTGRES_PASSWORD=dosqltestpass \
+            -e POSTGRES_DB=dosql_a \
+            -p 127.0.0.1:15432:5432 \
+            postgres:16-alpine
+          for attempt in $(seq 1 60); do
+            if docker exec dosql-mysql mysql -h127.0.0.1 -P 3306 -uroot -pdosqltestpass -e "CREATE DATABASE IF NOT EXISTS dosql_b; CREATE DATABASE IF NOT EXISTS testdb; SELECT 1;" >/dev/null 2>&1 \
+               && docker exec dosql-pg pg_isready -h 127.0.0.1 -p 5432 -U postgres >/dev/null 2>&1; then
+              docker exec dosql-pg psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='dosql_b'" | grep -q 1 \
+                || docker exec dosql-pg psql -U postgres -c "CREATE DATABASE dosql_b;"
+              echo "MySQL: $(docker exec dosql-mysql mysql -h127.0.0.1 -P 3306 -uroot -pdosqltestpass -N -e 'SELECT VERSION();')"
+              echo "Postgres: $(docker exec dosql-pg psql -U postgres -tAc 'SELECT version();')"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::MySQL or PostgreSQL failed to become ready within 120s"
+          docker logs dosql-mysql || true
+          docker logs dosql-pg || true
+          exit 1
+
+      - name: Run real-DB DoSql round-trip suites
+        working-directory: backend/agent
+        env:
+          DOOPS_TEST_MYSQL_DSN: "root:dosqltestpass@tcp(127.0.0.1:13306)/dosql_a?parseTime=true&multiStatements=false"
+          DOOPS_TEST_MYSQL_DSN_B: "root:dosqltestpass@tcp(127.0.0.1:13306)/dosql_b?parseTime=true&multiStatements=false"
+          DOOPS_TEST_MYSQL_ADDR: "127.0.0.1:13306"
+          DOOPS_TEST_PG_DSN: "postgres://postgres:dosqltestpass@127.0.0.1:15432/dosql_a?sslmode=disable"
+          DOOPS_TEST_PG_DSN_B: "postgres://postgres:dosqltestpass@127.0.0.1:15432/dosql_b?sslmode=disable"
+          DOOPS_TEST_PG_ADDR: "127.0.0.1:15432"
+        run: |
+          set -euo pipefail
+          status=0
+          go test ./internal/server/ \
+            -run 'TestSQL03RealMySQLMixedDDLDMLInspectAndDataDiff|TestSQL03RealPostgresConcurrentIndex|TestSQL07RealMySQLFullRoundTrip|TestSQL07RealPostgresFullRoundTrip' \
+            -count=1 -timeout 15m -v 2>&1 | tee /tmp/dosql-realdb.log || status=$?
+          python3 - /tmp/dosql-realdb.log <<'PYLOG'
+          import re, sys
+          log = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+          expected = [
+              "TestSQL03RealMySQLMixedDDLDMLInspectAndDataDiff",
+              "TestSQL03RealPostgresConcurrentIndex",
+              "TestSQL07RealMySQLFullRoundTrip",
+              "TestSQL07RealPostgresFullRoundTrip",
+          ]
+          results = {}
+          for line in log.splitlines():
+              m = re.match(r"^--- (PASS|FAIL|SKIP): (\S+) \(", line)
+              if m:
+                  results[m.group(2)] = m.group(1)
+          errors = []
+          for name in expected:
+              st = results.get(name)
+              if st != "PASS":
+                  errors.append(f"{name}: expected PASS, got {st}")
+          skips = [k for k, v in results.items() if v == "SKIP"]
+          if skips:
+              errors.append(f"unexpected SKIPs: {skips}")
+          if errors:
+              for e in errors:
+                  print(f"::error::{e}", file=sys.stderr)
+              sys.exit(1)
+          print(f"Verified {len(expected)}/{len(expected)} real-DB DoSql suites PASSED with 0 SKIPs.")
+          PYLOG
+          exit "${status}"
+
+      - name: Stop DoSql test databases
+        if: always()
+        run: docker rm -f dosql-mysql dosql-pg || true
+
+  web:
+    name: Web console checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Resolve pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "dir=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.dir }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: next-cache-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('app/**', 'components/**', 'lib/**', 'next.config.*') }}
+          restore-keys: |
+            next-cache-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test gateway proxy policy
+        run: pnpm test:gateway-policy
+
+      - name: Test web console
+        run: pnpm test:console
+
+      - name: Test DoSql
+        run: pnpm test:dosql
+
+      - name: Typecheck web console
+        run: pnpm exec tsc --noEmit
+
+      - name: Build web console
+        run: pnpm build
+
+  contract-tests:
+    name: Contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py312-pytest-pyyaml
+          restore-keys: |
+            pip-${{ runner.os }}-py312-
+
+      - name: Install test dependencies
+        run: python3 -m pip install --quiet pytest pyyaml
+
+      # Cross-module CLI <-> Gateway <-> Agent E2E compiles all three Go binaries
+      # and runs under the pinned Go 1.25.14 toolchain in the `Go tests` job so
+      # contract-tests neither requires setup-go nor builds all three binaries twice.
+      - name: Run contract tests
+        working-directory: backend
+        run: python3 -m pytest test --ignore=test/test_cli_gateway_agent_e2e.py -q
+
+  skills-packages:
+    name: Skill packages (real-run)
+    # Runs the bundled inspection Skill packages inside containers (static contracts,
+    # artifact protocol, disk-dedup fixtures and the malformed-environment matrix).
+    # The test image is built here from a public base because the dedup/loop fixtures
+    # need mkfs.ext4 and util-linux; CI verifies script logic and the artifact
+    # protocol, while production image parity is owned by the release flow
+    # (backend/docs/BUILD_DEPLOY_SOP.md, sections 3-4). A failed build or a missing
+    # image fails this job - nothing is skipped silently.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install shellcheck
+
+      - name: Build inspection test image
+        run: |
+          docker buildx build --load --quiet \
+            --cache-from type=gha,scope=sb01-inspect-test \
+            --cache-to type=gha,mode=max,scope=sb01-inspect-test \
+            -t sb01-inspect-test:ci - <<'DOCKERFILE'
+          FROM python:3.12-slim
+          RUN apt-get update \
+              && apt-get install -y --no-install-recommends e2fsprogs util-linux \
+              && rm -rf /var/lib/apt/lists/*
+          DOCKERFILE
+
+      - name: Pull the no-python fallback image
+        # verify.sh treats a missing image as a hard failure rather than pulling
+        # it implicitly, so the fallback image used by the degraded-path checks
+        # has to be present before the verifier runs.
+        run: |
+          for attempt in 1 2 3; do
+            docker pull alpine:3 && exit 0
+            echo "docker pull alpine:3 failed (attempt $attempt)" >&2
+            sleep 5
+          done
+          exit 1
+
+      - name: Verify bundled inspection packages
+        env:
+          SB01_IMG_PYTHON: sb01-inspect-test:ci
+          SB01_IMG_SHELL: alpine:3
+        run: sh backend/agent/internal/server/testdata/skills_builtin_verify/verify.sh
+
+  secret-scan:
+    name: Secret scan
+    # Branch pushes and pull requests carry the commit range gitleaks should scan.
+    # The release workflow reuses this workflow for tag pushes and manual
+    # dispatch, where gitleaks would scan the full history (historical fixtures
+    # and canaries) instead of a change; those commits were already scanned when
+    # they landed on main.
+    if: >-
+      (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

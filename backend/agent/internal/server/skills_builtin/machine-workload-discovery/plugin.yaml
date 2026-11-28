@@ -1,0 +1,171 @@
+apiVersion: doops.sh/v1alpha1
+kind: SkillPlugin
+plugin:
+  id: skill.machine-workload-discovery
+  name: 应用挖掘与自动打标
+  description: 零 Token 只读挖掘机器已部署的数据库、语言运行时（Java/Python/PHP/Node/Go）、中间件与业务系统及版本，生成可一键同步至机器台账的规范标签
+  category: ops
+  icon: sparkles
+  scenarios:
+    - all-in-one
+    - app-delivery-web
+    - host-security-ops
+    - ai-compute-cluster
+capabilities:
+  target_modes:
+    - kubernetes
+    - docker
+    - linux
+  requires_skills:
+    - machine-workload-discovery
+  companion_agent_skill: shell
+ui:
+  slots:
+    sidebar:
+      enabled: true
+      label: 应用挖掘与打标
+      group: extensions
+      order: 8
+    target_tab:
+      enabled: true
+      label: 应用与标签
+      order: 8
+    home_widget:
+      enabled: false
+      title: 应用挖掘与自动打标
+      span: 1
+    ask_presets:
+      - title: 深度识别业务系统与版本并生成标签
+        description: 结合进程、Nginx 站点、容器与构建元数据挖掘自研业务系统及规范 CMDB 标签
+        prompt: 请使用 machine-workload-discovery Skill 只读分析当前机器部署了哪些数据库及版本、Java/Python/PHP/Node/Go 运行时及版本、Web/中间件和具体业务系统及版本，输出规范的 key=value 机器台账标签建议（严禁读取 .env 或密码文件）。
+  inputs:
+    - key: SCAN_CONTAINERS
+      label: 扫描运行中容器
+      description: 只读识别 Docker / nerdctl / Podman 运行中容器的数据库、中间件与业务镜像版本
+      type: boolean
+      default: true
+    - key: SCAN_WEBROOTS
+      label: 扫描站点与应用构建清单
+      description: 只读解析 Nginx 站点与 /var/www、/opt、/srv 下的 package.json/composer.json/MANIFEST.MF（不读 .env）
+      type: boolean
+      default: true
+    - key: INCLUDE_INSTALLED_RUNTIMES
+      label: 包含未常驻的已安装运行时
+      description: 除活跃进程外，同时探测机器已安装的 Java/Python/PHP/Node/Go 版本（可能增加少量非业务运行时）
+      type: boolean
+      default: false
+  presets:
+    - id: workload-fast-mine
+      title: 零 Token 部署挖掘与打标
+      description: 秒级识别正在运行的数据库、语言运行时、中间件、业务系统及版本并生成台账标签
+      mode: script
+      inputs:
+        SCAN_CONTAINERS: true
+        SCAN_WEBROOTS: true
+        INCLUDE_INSTALLED_RUNTIMES: false
+    - id: workload-full-stack
+      title: 全量栈与已安装运行时盘点
+      description: 除活跃服务外同时盘点已安装的 Java/Python/PHP/Node/Go 环境版本
+      mode: script
+      inputs:
+        SCAN_CONTAINERS: true
+        SCAN_WEBROOTS: true
+        INCLUDE_INSTALLED_RUNTIMES: true
+    - id: workload-ai-business
+      title: AI 深度业务系统语义识别
+      description: 结合部署挖掘结果与只读服务上下文，精准识别自研/内部业务系统名、版本与标签体系
+      mode: agent
+      prompt: 请先运行 machine-workload-discovery Skill 获取确定性部署清单，再结合只读 systemd 单元名、Nginx 虚拟主机域名、监听端口与目录结构深度识别这台机器部署的业务系统名称与版本，按 DoOps 机器台账标签规范（<=20 个、<=32 字符、key=value、零凭据）给出最终标签清单与分类说明。
+  actions:
+    - id: workload-deep-inspect
+      label: 深入分析所选部署组件
+      description: 只读核查所选数据库、运行时或业务系统的运行用户、配置文件路径、监听端口与关联依赖
+      mode: check
+      skill: shell
+      prompt_template: 请只读深入分析所选部署组件或服务的启动方式、精确版本号、监听端口、上游/下游依赖（例如连接的数据库或反代站点），严禁输出任何密码、密钥或 .env 内容。
+    - id: workload-tag-plan
+      label: 完善业务标签与分类建议
+      description: 结合机器上全部运行服务与业务上下文，梳理规范化的 CMDB 标签方案（role/db/runtime/app/env 等）
+      mode: plan
+      skill: shell
+      prompt_template: 请结合当前机器已挖掘的工作负载与标签建议，为平台管理员整理一份清晰、无冗余且符合 DoOps 机器台账规范（小写、<=32 字符、最多 20 个、零凭据）的标签治理与业务归类建议，严禁直接修改系统。
+  views:
+    - type: kpi_grid
+      title: 部署与标签挖掘概览
+      items:
+        - key: workloads_total
+          label: 已识别部署项
+          unit: "项"
+        - key: databases_detected
+          label: 数据库与存储
+          unit: "个"
+        - key: runtimes_detected
+          label: 语言运行时
+          unit: "种"
+        - key: apps_detected
+          label: 业务系统/应用
+          unit: "个"
+        - key: suggested_tags_count
+          label: 挖掘推荐标签
+          unit: "个"
+    - type: resource_table
+      title: 已部署数据库、运行时与业务系统清单
+      source_key: workloads
+      row_action_id: workload-deep-inspect
+      columns:
+        - key: category
+          label: 分类
+          kind: badge
+        - key: name
+          label: 组件 / 业务系统
+          kind: code
+        - key: version
+          label: 版本
+          kind: code
+        - key: runtime_stack
+          label: 技术栈
+          kind: badge
+        - key: run_mode
+          label: 部署形态
+          kind: badge
+        - key: ports
+          label: 端口
+          kind: code
+        - key: evidence
+          label: 识别依据
+          kind: text
+    - type: resource_table
+      title: 挖掘标签建议（可直接同步台账）
+      source_key: suggested_tags
+      row_action_id: workload-tag-plan
+      columns:
+        - key: tag
+          label: 推荐标签
+          kind: code
+        - key: category
+          label: 标签维度
+          kind: badge
+        - key: confidence
+          label: 置信度
+          kind: badge
+        - key: source
+          label: 挖掘来源
+          kind: text
+        - key: evidence
+          label: 证据摘要
+          kind: text
+    - type: charts
+      title: 部署组件分类分布
+    - type: checks_table
+      title: 挖掘覆盖度与合规检查
+    - type: artifact_viewer
+      title: 完整部署挖掘产物
+schedule_template:
+  name: 机器部署变更与标签挖掘每日巡检
+  description: 每日自动盘点全集群机器已部署数据库、语言运行时与业务系统变更并刷新标签建议
+  interval_seconds: 86400
+  scope_mode: all_online
+  inputs:
+    SCAN_CONTAINERS: true
+    SCAN_WEBROOTS: true
+    INCLUDE_INSTALLED_RUNTIMES: false
