@@ -105,17 +105,17 @@ type WebhookUpdateInput struct {
 }
 
 type WebhookDelivery struct {
-	ID              string
-	EndpointID      string
-	EventID         string
-	Status          string
-	Attempt         int
-	NextAttemptAtMs int64
-	ResponseStatus  int
-	ErrorCategory   string
-	CreatedAtMs     int64
-	UpdatedAtMs     int64
-	DeliveredAtMs   int64
+	ID              string `json:"id"`
+	EndpointID      string `json:"endpoint_id"`
+	EventID         string `json:"event_id"`
+	Status          string `json:"status"`
+	Attempt         int    `json:"attempt"`
+	NextAttemptAtMs int64  `json:"next_attempt_at_ms"`
+	ResponseStatus  int    `json:"response_status"`
+	ErrorCategory   string `json:"error_category"`
+	CreatedAtMs     int64  `json:"created_at_ms"`
+	UpdatedAtMs     int64  `json:"updated_at_ms"`
+	DeliveredAtMs   int64  `json:"delivered_at_ms"`
 }
 
 type webhookDeliveryJob struct {

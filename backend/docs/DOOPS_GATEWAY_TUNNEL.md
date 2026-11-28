@@ -66,8 +66,15 @@ sequenceDiagram
    `426 Upgrade Required`，后续如需 WebSocket 必须扩展成独立的二进制/帧协议。
 8. 同一路由上的代理请求彼此独立：Gateway 不按路由或方法与它们排序，也没有每路由
    排队上限，并发上限由 Agent 的 HTTP 传输和系统资源决定（与读请求一致），因此不会
-   再出现 `target queue full` 的 `502`；反过来 Agent 升级会先等在途代理请求排空，
-   升级已排队时新的代理请求返回 `502` 并记 `blocked` 审计。
+   再出现 `target queue full` 的 `502`；跨 Agent 断线重连代际的同路由 `proxy:` 请求
+   也不会彼此误报 `409 Conflict (target busy)`。反过来 Agent 升级会先等在途代理请求
+   排空，升级已排队或执行中时新的代理请求返回 `502` 并记 `blocked` 审计。
+9. 代理请求在 Agent 暂离时按 `-target-reconnect-grace` 等待目标重连，宽限期内恢复即
+   无缝转发，超时则返回 `502` 并落盘失败审计；若请求已发往 Agent 后连接中断，读方法
+   记 `error`、写方法（如 `POST`/`PUT`/`PATCH`/`DELETE`）记 `outcome_unknown` 且不
+   自动重放。每个代理请求的终态审计在单次 `FinishExecutionAudit` 事务内原子收口（同时
+   更新 `audit_events`、按需写入 `DOOPS_AUDIT_STORAGE=file` File-First 日志并入队
+   `execution.finished` Webhook 事件），不再对同一请求产生重复终态写库。
 
 ### 审计错误文本去敏
 
@@ -75,7 +82,7 @@ sequenceDiagram
 `http.Client.Do` 用 `*url.Error` 把目标 URL 整段字符串化，所以这条文本会带出客户端
 查询串，以及历史上游 URL 里的 userinfo 和 fragment。因此错误文本在落库前统一经过
 `scrubURLCredentials`（`backend/agent/internal/server/audit_error_scrub.go`），
-代理路径的写入边界是同一个文件里的 `finishProxyAudit`。
+代理路径的写入边界是同一个文件里的 `recordProxyFinish`（及 `finishProxyAudit`）。
 
 - 识别范围：任意符合 RFC 3986 的 `scheme://`（`[A-Za-z][A-Za-z0-9+.-]*`），
   不再限于 http(s)。历史审计行里还留有 `postgres://user:pass@host/db`、
@@ -103,7 +110,7 @@ sequenceDiagram
   在扩展 scheme 后行为不变，单元测试钉住了这个边界。
 - 范围限制：`audit_events` 里改动之前写入的历史行不会由本步骤回填清洗，需要
   `store audit-scrub`（见 `GATEWAY_MYSQL_OPERATIONS.md` §7.1）。
-- 覆盖范围：代理路径的 `finishProxyAudit` 和内部工具调用的终态行
+- 覆盖范围：代理路径的 `recordProxyFinish` / `finishProxyAudit` 和内部工具调用的终态行
   （`internal_call.go`，经 `scrubAuditError` = `scrubURLCredentials` +
   `sanitizeSecretText`）在落库前走这一步。客户端 tools/call 的终态行目前只过
   `sanitizeSecretText`（userinfo 与 `token`/`sig` 这类命名键已掩盖，任意 query 键与

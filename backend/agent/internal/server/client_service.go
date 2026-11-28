@@ -393,6 +393,13 @@ func operationsConflict(left, right GatewayActiveOperation) bool {
 	if isConcurrentQuery(left.Action, left.Resource) || isConcurrentQuery(right.Action, right.Resource) {
 		return false
 	}
+	// Independent proxied HTTP requests never serialize with each other, even
+	// across Agent WebSocket reconnect generations; Agent upgrade fences above
+	// still block/drain proxy traffic via ActionAgentUpgrade / "target:".
+	if left.Action == ActionProxy && right.Action == ActionProxy &&
+		strings.HasPrefix(left.Resource, "proxy:") && strings.HasPrefix(right.Resource, "proxy:") {
+		return false
+	}
 	if left.Resource != "" && left.Resource == right.Resource && !strings.HasPrefix(left.Resource, "target-mutation:") {
 		return true
 	}

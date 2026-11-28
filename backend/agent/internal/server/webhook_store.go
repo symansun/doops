@@ -298,20 +298,59 @@ func (s *GatewayStore) FinishExecutionAudit(ctx context.Context, id int64, finis
 	if id == 0 {
 		return nil
 	}
+	var (
+		docEvent    AuditEvent
+		dbFinish    = finish
+		tailRelPath string
+		docEnabled  = s.auditDocStoreEnabled()
+	)
+	if docEnabled {
+		var err error
+		docEvent, dbFinish, tailRelPath, err = s.prepareAuditDocFinish(id, finish)
+		if err != nil {
+			return err
+		}
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		if tailRelPath != "" {
+			s.removeAuditTailDoc(tailRelPath)
+		}
 		return err
 	}
 	defer tx.Rollback()
-	if err := finishAuditWith(tx, id, finish); err != nil {
+	transitioned, err := finishAuditRow(tx, id, dbFinish)
+	if err != nil {
+		if tailRelPath != "" {
+			s.removeAuditTailDoc(tailRelPath)
+		}
 		return err
 	}
 	_, inserted, err := enqueuePlatformEventTx(ctx, tx, ev)
 	if err != nil {
+		if tailRelPath != "" {
+			s.removeAuditTailDoc(tailRelPath)
+		}
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		if tailRelPath != "" {
+			s.removeAuditTailDoc(tailRelPath)
+		}
 		return err
+	}
+	if docEnabled {
+		s.takeInFlightAudit(id)
+		if transitioned {
+			if err := s.appendAuditDocRecord(docEvent); err != nil {
+				if inserted && s.webhookWake != nil {
+					s.webhookWake()
+				}
+				return err
+			}
+		} else if tailRelPath != "" {
+			s.removeAuditTailDoc(tailRelPath)
+		}
 	}
 	if inserted && s.webhookWake != nil {
 		s.webhookWake()

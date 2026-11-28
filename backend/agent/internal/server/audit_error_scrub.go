@@ -3,6 +3,7 @@ package server
 import (
 	"net/url"
 	"strings"
+	"time"
 )
 
 // unparsableURLPlaceholder replaces a URL that cannot be parsed. The original
@@ -118,6 +119,23 @@ func scrubOneURL(raw string) string {
 // not know about.
 func scrubAuditError(text string) string {
 	return sanitizeSecretText(scrubURLCredentials(text))
+}
+
+// recordProxyFinish attaches a scrubbed terminal AuditFinish to the active
+// proxy operation so finishActiveOperation persists audit_events, File-First
+// audit logs, and any execution.finished webhook event in one atomic commit
+// instead of double-writing audit_events.
+func (c *ClientService) recordProxyFinish(opID string, finish AuditFinish) {
+	finish.Error = scrubURLCredentials(finish.Error)
+	if finish.EndedAt.IsZero() {
+		finish.EndedAt = time.Now().UTC()
+	}
+	c.activeOpsMu.Lock()
+	if op := c.activeOps[opID]; op != nil {
+		copied := finish
+		op.finish = &copied
+	}
+	c.activeOpsMu.Unlock()
 }
 
 // finishProxyAudit is the proxy tunnel's audit write boundary: the tunnel relays

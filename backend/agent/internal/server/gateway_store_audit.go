@@ -119,21 +119,17 @@ func (s *GatewayStore) StartAudit(event AuditEvent) (int64, error) {
 	return id, nil
 }
 
-func (s *GatewayStore) FinishAudit(id int64, finish AuditFinish) error {
-	if id == 0 {
-		return nil
+func (s *GatewayStore) peekInFlightAudit(id int64) (AuditEvent, bool) {
+	if s == nil || id <= 0 {
+		return AuditEvent{}, false
 	}
-	if !s.auditDocStoreEnabled() {
-		return finishAuditWith(gatewayRetryExecer{s.db}, id, finish)
-	}
-	ev, found := s.takeInFlightAudit(id)
-	if !found {
-		if loaded, err := s.loadAuditEventByID(id); err == nil {
-			ev = loaded
-		} else {
-			ev = AuditEvent{ID: id, StartedAt: time.Now().UTC()}
-		}
-	}
+	s.auditDocMu.Lock()
+	defer s.auditDocMu.Unlock()
+	ev, ok := s.auditInFlight[id]
+	return ev, ok
+}
+
+func normalizeAuditFinishDefaults(finish AuditFinish) AuditFinish {
 	if finish.EndedAt.IsZero() {
 		finish.EndedAt = time.Now().UTC()
 	}
@@ -144,6 +140,19 @@ func (s *GatewayStore) FinishAudit(id int64, finish AuditFinish) error {
 			finish.Status = "success"
 		}
 	}
+	return finish
+}
+
+func (s *GatewayStore) prepareAuditDocFinish(id int64, finish AuditFinish) (AuditEvent, AuditFinish, string, error) {
+	finish = normalizeAuditFinishDefaults(finish)
+	ev, found := s.peekInFlightAudit(id)
+	if !found {
+		if loaded, err := s.loadAuditEventByID(id); err == nil {
+			ev = loaded
+		} else {
+			ev = AuditEvent{ID: id, StartedAt: time.Now().UTC()}
+		}
+	}
 	cleanError := strings.ToValidUTF8(utf8Tail(redactSecretText(finish.Error), 1200), "\uFFFD")
 	cleanTail := strings.ToValidUTF8(trimTail(finish.Tail, 8192), "\uFFFD")
 
@@ -152,21 +161,12 @@ func (s *GatewayStore) FinishAudit(id int64, finish AuditFinish) error {
 	if cleanTail != "" && auditActionExternalizesTail(ev.Action) {
 		ptrJSON, relPath, err := s.writeAuditTailDoc(id, ev.StartedAt, cleanTail)
 		if err != nil {
-			return err
+			return AuditEvent{}, AuditFinish{}, "", err
 		}
 		dbFinish.Tail = ptrJSON
 		tailRelPath = relPath
 	}
 
-	if err := finishAuditWith(gatewayRetryExecer{s.db}, id, dbFinish); err != nil {
-		if tailRelPath != "" {
-			s.removeAuditTailDoc(tailRelPath)
-		}
-		return err
-	}
-
-	// Merge terminal fields into the full document record and append to the
-	// daily File-First audit document log.
 	ev.ID = id
 	ev.Status = finish.Status
 	ev.Error = cleanError
@@ -214,6 +214,35 @@ func (s *GatewayStore) FinishAudit(id int64, finish AuditFinish) error {
 		ev.Digest = finish.Digest
 	}
 	ev.EndedAt = finish.EndedAt.UTC()
+	return ev, dbFinish, tailRelPath, nil
+}
+
+func (s *GatewayStore) FinishAudit(id int64, finish AuditFinish) error {
+	if id == 0 {
+		return nil
+	}
+	if !s.auditDocStoreEnabled() {
+		return finishAuditWith(gatewayRetryExecer{s.db}, id, finish)
+	}
+	ev, dbFinish, tailRelPath, err := s.prepareAuditDocFinish(id, finish)
+	if err != nil {
+		return err
+	}
+	transitioned, err := finishAuditRow(gatewayRetryExecer{s.db}, id, dbFinish)
+	if err != nil {
+		if tailRelPath != "" {
+			s.removeAuditTailDoc(tailRelPath)
+		}
+		return err
+	}
+	if !transitioned {
+		if tailRelPath != "" {
+			s.removeAuditTailDoc(tailRelPath)
+		}
+		s.takeInFlightAudit(id)
+		return nil
+	}
+	s.takeInFlightAudit(id)
 	return s.appendAuditDocRecord(ev)
 }
 
@@ -222,19 +251,15 @@ type auditExecer interface {
 }
 
 func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
-	if finish.EndedAt.IsZero() {
-		finish.EndedAt = time.Now().UTC()
-	}
-	if finish.Status == "" {
-		if finish.Error != "" {
-			finish.Status = "error"
-		} else {
-			finish.Status = "success"
-		}
-	}
+	_, err := finishAuditRow(execer, id, finish)
+	return err
+}
+
+func finishAuditRow(execer auditExecer, id int64, finish AuditFinish) (bool, error) {
+	finish = normalizeAuditFinishDefaults(finish)
 	scopeJSON, err := credentialAuditScopeJSON(finish.Scope)
 	if err != nil {
-		return err
+		return false, err
 	}
 	model := strings.TrimSpace(finish.Model)
 	totalTokens := finish.TotalTokens
@@ -269,11 +294,11 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 		finish.ResourceVersion, finish.ResourceVersion, finish.Digest, finish.Digest,
 		formatTime(finish.EndedAt.UTC()), id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if affected != 1 {
 		// Terminal audit state is immutable. A late completion may race with
@@ -282,20 +307,21 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 			QueryRow(string, ...any) *sql.Row
 		})
 		if !ok {
-			return sql.ErrNoRows
+			return false, sql.ErrNoRows
 		}
 		var status string
 		if err := querier.QueryRow("SELECT status FROM audit_events WHERE id = ?", id).Scan(&status); err != nil {
-			return err
+			return false, err
 		}
 		if status == "running" || status == "executing" {
-			return sql.ErrNoRows
+			return false, sql.ErrNoRows
 		}
 		if status != finish.Status {
-			return fmt.Errorf("%w: audit-%d is %s, requested %s", errAuditTerminalConflict, id, status, finish.Status)
+			return false, fmt.Errorf("%w: audit-%d is %s, requested %s", errAuditTerminalConflict, id, status, finish.Status)
 		}
+		return false, nil
 	}
-	return nil
+	return true, nil
 }
 
 func (s *GatewayStore) ListAudit(limit int) ([]AuditEvent, error) {

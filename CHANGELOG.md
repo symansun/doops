@@ -6,6 +6,19 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [Unreleased]
+
+### Changed
+
+- 优化 Gateway 公网 Proxy 终态审计落库路径并补齐断链重连与真实 MySQL 并发回归门禁（`GW-01`，零数据库 Schema 变更）：
+  - **单次原子终态审计**：Proxy 请求改为通过 `recordProxyFinish` 记录去敏终态并统一交由 `finishActiveOperation` → `FinishExecutionAudit` 在单次数据库事务内完成 `audit_events` 更新、`DOOPS_AUDIT_STORAGE=file` File-First 日志写入与 `execution.finished` Webhook 入队，消除每请求的重复终态写库（保留同步落盘、去敏与终态一致性语义）。
+  - **断链重连与真实 MySQL 并发覆盖**：新增 Proxy `-target-reconnect-grace` 重连恢复/超时、在途断链写方法 `outcome_unknown`/读方法 `error`、File-First 单次写入去重以及真实 MySQL 8.4 并发写/读与断链重连集成测试（自动纳入 CI MySQL 8.4 门禁）。
+
+### Fixed
+
+- 修复 Gateway `WebhookDelivery` 结构体缺少 JSON tag 导致 `GET /v1/admin/webhooks/<id>/deliveries` 与 `doops admin webhook deliveries` 返回 PascalCase 字段的后端 API 契约缺陷（`GW-01`）：为 11 个投递字段统一补充稳定 `snake_case` JSON tag，新增 HTTP 契约测试（覆盖 401/403、空列表 `[]`、成功/失败字段集合与脱敏约束）并更新 [DOOPS_API_GUIDE.md](backend/docs/DOOPS_API_GUIDE.md)。
+- 修复 Agent 断线重连后旧代际在途 Proxy 写操作与新代际同路由 Proxy 写操作在 `operationsConflict` 触发误判 `409 Conflict (target busy)` 的并发缺陷（`GW-01`），同时严格保留 `ActionAgentUpgrade` / `target:` 升级隔离围栏。
+
 ## [0.3.77] — 2026-11-28
 
 ### Added

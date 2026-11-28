@@ -107,9 +107,10 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	defer h.client.finishActiveOperation(opID)
 	if holderID != "" {
 		errMsg := "target busy: active operation " + holderID
-		_ = h.client.finishProxyAudit(auditID, AuditFinish{
+		h.client.recordProxyFinish(opID, AuditFinish{
 			Status: "blocked", Error: errMsg, EndedAt: time.Now().UTC(),
 		})
+		h.client.finishActiveOperation(opID)
 		http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
 		return
 	}
@@ -119,9 +120,10 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	// (an upgrade still waits for in-flight proxied traffic to drain).
 	lease, err := agent.acquireProxyLease()
 	if err != nil {
-		_ = h.client.finishProxyAudit(auditID, AuditFinish{
+		h.client.recordProxyFinish(opID, AuditFinish{
 			Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
 		})
+		h.client.finishActiveOperation(opID)
 		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 		return
 	}
@@ -129,9 +131,10 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	h.client.markOperationRunning(opID)
 	if !proxyRequestIsReadOnly(r.Method) {
 		if err := h.client.beginExecution(agent, opID, auditID); err != nil {
-			_ = h.client.finishProxyAudit(auditID, AuditFinish{
+			h.client.recordProxyFinish(opID, AuditFinish{
 				Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
 			})
+			h.client.finishActiveOperation(opID)
 			http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
 			return
 		}
@@ -150,15 +153,17 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(relayErr, errExecutionOutcomeUnknown) {
 			status, errorText = "outcome_unknown", errExecutionOutcomeUnknown.Error()
 		}
-		if !response.committed {
-			http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
-		}
 	}
-	_ = h.client.finishProxyAudit(auditID, AuditFinish{
+	h.client.recordProxyFinish(opID, AuditFinish{
 		Status: status, Error: errorText, BytesIn: r.ContentLength, BytesOut: bytesOut,
 		EndedAt: time.Now().UTC(),
 	})
-	if relayErr != nil && response.committed {
+	h.client.finishActiveOperation(opID)
+	if relayErr != nil {
+		if !response.committed {
+			http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+			return
+		}
 		panic(http.ErrAbortHandler)
 	}
 }

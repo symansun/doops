@@ -381,13 +381,13 @@
   },
   {
     "file": "gateway_store_audit.go",
-    "func": "finishAuditWith",
+    "func": "finishAuditRow",
     "occurrence": 1,
     "category": "exists",
     "same_value_possible": false,
     "mysql_reachable": true,
     "mitigation": "not-needed",
-    "note": "0 falls back to SELECT status to detect a conflict; terminal states always change."
+    "note": "0 falls back to SELECT status to detect a conflict; terminal states always change and affected>0 returns transitioned=true to gate File-First audit append."
   },
   {
     "file": "gateway_store_edge.go",

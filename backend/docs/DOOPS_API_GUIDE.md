@@ -379,7 +379,31 @@ Content-Type: application/json
 | `DELETE /v1/admin/webhooks/<id>` | 软删除并把 pending/delivering 投递标记失败 |
 | `POST /v1/admin/webhooks/<id>/rotate-secret` | 轮换 secret；旧 secret 继续有效 24h |
 | `POST /v1/admin/webhooks/<id>/test` | 入队一条 `webhook.test`，body 只含 `endpoint_id` 和 `requested_by` |
-| `GET /v1/admin/webhooks/<id>/deliveries?limit=N` | 查看最近投递状态 |
+| `GET /v1/admin/webhooks/<id>/deliveries?limit=N` | 查看最近投递状态（固定 `snake_case` 字段） |
+
+`GET /v1/admin/webhooks/<id>/deliveries?limit=N` 返回 `Cache-Control: no-store`，空记录返回空数组 `[]`（绝不返回 `null`），不包含上游响应正文、完整 URL 或 Secret；每条投递记录固定使用以下 11 个 `snake_case` 字段：
+
+```json
+{
+  "deliveries": [
+    {
+      "id": "whd_0123456789abcdef01234567",
+      "endpoint_id": "wh_0123456789abcdef01234567",
+      "event_id": "evt_0123456789abcdef01234567",
+      "status": "delivered",
+      "attempt": 1,
+      "next_attempt_at_ms": 1732536000000,
+      "response_status": 204,
+      "error_category": "",
+      "created_at_ms": 1732536000000,
+      "updated_at_ms": 1732536000120,
+      "delivered_at_ms": 1732536000120
+    }
+  ]
+}
+```
+
+其中尚无 HTTP 响应时 `response_status` 为 `0`，尚未送达或已失败时 `delivered_at_ms` 为 `0`，失败时 `error_category` 仅记录稳定错误分类（如 `endpoint_disabled`、`http_5xx`、`timeout` 等）。
 
 P0 可订阅的事件：`execution.finished`、`execution.outcome_unknown`、`agent.connected`、`agent.disconnected`、`monitor.alert.opened`、`monitor.alert.resolved`、`inspection.run.finished`。事件 body 是 JSON envelope：
 
